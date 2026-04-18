@@ -5,7 +5,7 @@ import type { Property, ServiceLocation, MapFilter } from '../../types'
 import { CATEGORY_COLORS } from '../../lib/constants'
 import 'mapbox-gl/dist/mapbox-gl.css'
 
-mapboxgl.accessToken = import.meta.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ?? ''
+mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ?? ''
 
 interface MapPin {
   property: Property
@@ -81,7 +81,7 @@ export default function MapView({
       radius: 60,
       maxZoom: 16,
     })
-    clusterRef.current.load(geojsonFeatures)
+    clusterRef.current.load(geojsonFeatures as any)
 
     const m = map.current
     const sourceId = 'properties'

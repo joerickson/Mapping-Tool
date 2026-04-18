@@ -22,7 +22,7 @@ export default function ShareLinkModal({
   const [copied, setCopied] = useState(false)
 
   const shareUrl = token
-    ? `${import.meta.env.NEXT_PUBLIC_APP_URL}/portfolio/${token}`
+    ? `${import.meta.env.VITE_APP_URL}/portfolio/${token}`
     : null
 
   const generate = async () => {

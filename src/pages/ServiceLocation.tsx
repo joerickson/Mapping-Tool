@@ -36,7 +36,7 @@ export default function ServiceLocationPage() {
   const [overrideCategory, setOverrideCategory] = useState('')
   const [winteamJobNumber, setWinteamJobNumber] = useState('')
 
-  const crmBaseUrl = import.meta.env.NEXT_PUBLIC_CRM_BASE_URL
+  const crmBaseUrl = import.meta.env.VITE_RBM_CRM_BASE_URL
 
   useEffect(() => {
     async function load() {
@@ -173,7 +173,7 @@ export default function ServiceLocationPage() {
 
               {/* Editable fields */}
               {EDITABLE_PROPERTY_FIELDS.map(({ label, field }) => {
-                const val = (property as Record<string, unknown>)[field as string]
+                const val = (property as unknown as Record<string, unknown>)[field as string]
                 return (
                   <InlineEdit
                     key={field as string}
