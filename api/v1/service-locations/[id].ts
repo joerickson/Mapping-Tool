@@ -1,13 +1,16 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createAdminClient } from '../../_lib/supabase'
-import { verifyAuth, unauthorized } from '../../_lib/auth'
+import { authenticateRequest } from '../../_lib/auth'
 import { fireWebhook } from '../../_lib/webhooks'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end()
 
-  const auth = await verifyAuth(req)
-  if (!auth.ok) return unauthorized(res, auth.error)
+  try {
+    await authenticateRequest(req)
+  } catch (err: any) {
+    return res.status(err.statusCode ?? 401).json({ error: err.message ?? 'Unauthorized' })
+  }
 
   const { id } = req.query
   const db = createAdminClient()

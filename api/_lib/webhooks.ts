@@ -7,37 +7,52 @@ export type WebhookEvent =
   | 'service_location.created'
   | 'service_location.status_changed'
 
-interface WebhookPayload {
-  event: WebhookEvent
-  data: Record<string, unknown>
-  timestamp: string
+type Consumer = 'crm' | 'bid_manager'
+
+interface ConsumerConfig {
+  url: string
+  secret: string
 }
 
-const WEBHOOK_URLS: Partial<Record<WebhookEvent, string[]>> = {
-  'property.enriched': [
-    process.env.RBM_CRM_WEBHOOK_URL,
-    process.env.RBM_BID_MANAGER_WEBHOOK_URL,
-  ].filter(Boolean) as string[],
-  'property.updated': [
-    process.env.RBM_CRM_WEBHOOK_URL,
-  ].filter(Boolean) as string[],
-  'service_location.created': [
-    process.env.RBM_CRM_WEBHOOK_URL,
-  ].filter(Boolean) as string[],
-  'service_location.status_changed': [
-    process.env.RBM_CRM_WEBHOOK_URL,
-  ].filter(Boolean) as string[],
+function getConsumers(event: WebhookEvent): ConsumerConfig[] {
+  const configs: ConsumerConfig[] = []
+
+  const crmUrl = process.env.RBM_CRM_WEBHOOK_URL
+  const crmSecret = process.env.RBM_CRM_WEBHOOK_SECRET ?? process.env.SERVICE_API_KEY ?? ''
+  const bidUrl = process.env.RBM_BID_MANAGER_WEBHOOK_URL
+  const bidSecret = process.env.RBM_BID_MANAGER_WEBHOOK_SECRET ?? process.env.SERVICE_API_KEY ?? ''
+
+  const crmEvents: WebhookEvent[] = [
+    'property.enriched',
+    'property.updated',
+    'service_location.created',
+    'service_location.status_changed',
+  ]
+  const bidEvents: WebhookEvent[] = ['property.enriched']
+
+  if (crmUrl && crmEvents.includes(event)) configs.push({ url: crmUrl, secret: crmSecret })
+  if (bidUrl && bidEvents.includes(event)) configs.push({ url: bidUrl, secret: bidSecret })
+
+  return configs
 }
 
-const SHARED_SECRET = process.env.SERVICE_API_KEY ?? ''
+function consumerLabel(url: string): Consumer {
+  if (url === process.env.RBM_CRM_WEBHOOK_URL) return 'crm'
+  return 'bid_manager'
+}
+
+function sign(body: string, secret: string): string {
+  return 'sha256=' + crypto.createHmac('sha256', secret).update(body).digest('hex')
+}
+
+const BACKOFF_MS = [60_000, 300_000, 1_800_000, 7_200_000, 43_200_000] // 1m,5m,30m,2h,12h
 const MAX_ATTEMPTS = 5
-const BACKOFF_BASE_MS = 1000
 
-function sign(body: string): string {
-  return 'sha256=' + crypto.createHmac('sha256', SHARED_SECRET).update(body).digest('hex')
-}
-
-async function deliverOnce(url: string, body: string, signature: string): Promise<boolean> {
+async function deliverOnce(
+  url: string,
+  body: string,
+  signature: string
+): Promise<{ ok: boolean; statusCode: number | null; responseBody: string }> {
   try {
     const res = await fetch(url, {
       method: 'POST',
@@ -48,9 +63,10 @@ async function deliverOnce(url: string, body: string, signature: string): Promis
       body,
       signal: AbortSignal.timeout(10_000),
     })
-    return res.ok
+    const responseBody = await res.text().catch(() => '')
+    return { ok: res.ok, statusCode: res.status, responseBody }
   } catch {
-    return false
+    return { ok: false, statusCode: null, responseBody: '' }
   }
 }
 
@@ -58,44 +74,45 @@ export async function fireWebhook(
   event: WebhookEvent,
   data: Record<string, unknown>
 ): Promise<void> {
-  const urls = WEBHOOK_URLS[event] ?? []
-  if (!urls.length) return
+  const consumers = getConsumers(event)
+  if (!consumers.length) return
 
-  const payload: WebhookPayload = {
+  const eventId = crypto.randomUUID()
+  const payload = {
     event,
-    data,
+    event_id: eventId,
     timestamp: new Date().toISOString(),
+    data,
   }
   const body = JSON.stringify(payload)
-  const signature = sign(body)
 
-  for (const url of urls) {
-    let attempt = 0
-    let delivered = false
+  for (const { url, secret } of consumers) {
+    const signature = sign(body, secret)
+    const consumer = consumerLabel(url)
 
-    while (attempt < MAX_ATTEMPTS && !delivered) {
-      if (attempt > 0) {
-        const delay = Math.min(BACKOFF_BASE_MS * 2 ** (attempt - 1), 24 * 60 * 60 * 1000)
-        await new Promise((r) => setTimeout(r, delay))
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      if (attempt > 1) {
+        await new Promise((r) => setTimeout(r, BACKOFF_MS[attempt - 2]))
       }
 
-      delivered = await deliverOnce(url, body, signature)
-      attempt++
-    }
+      const { ok, statusCode, responseBody } = await deliverOnce(url, body, signature)
 
-    // Log delivery attempt to Supabase
-    try {
-      const db = createAdminClient()
-      await db.from('webhook_deliveries').insert({
-        event,
-        url,
-        payload: payload,
-        delivered,
-        attempts: attempt,
-        last_attempted_at: new Date().toISOString(),
-      })
-    } catch {
-      // Non-fatal — don't let logging failure break webhook delivery
+      try {
+        const db = createAdminClient()
+        await db.from('webhook_deliveries').insert({
+          event_id: eventId,
+          consumer,
+          url,
+          attempt_number: attempt,
+          status_code: statusCode,
+          response_body: responseBody.slice(0, 2000),
+          delivered_at: ok ? new Date().toISOString() : null,
+        })
+      } catch {
+        // Non-fatal
+      }
+
+      if (ok) break
     }
   }
 }

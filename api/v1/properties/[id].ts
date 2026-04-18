@@ -1,13 +1,17 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createAdminClient } from '../../_lib/supabase'
-import { verifyAuth, unauthorized } from '../../_lib/auth'
+import { authenticateRequest } from '../../_lib/auth'
 import { fireWebhook } from '../../_lib/webhooks'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end()
 
-  const auth = await verifyAuth(req)
-  if (!auth.ok) return unauthorized(res, auth.error)
+  let ctx: Awaited<ReturnType<typeof authenticateRequest>>
+  try {
+    ctx = await authenticateRequest(req)
+  } catch (err: any) {
+    return res.status(err.statusCode ?? 401).json({ error: err.message ?? 'Unauthorized' })
+  }
 
   const { id } = req.query
   const db = createAdminClient()
@@ -15,7 +19,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'GET') {
     const { data, error } = await db
       .from('properties')
-      .select('*, service_locations(*)')
+      .select(`
+        *,
+        service_locations(*),
+        enrichment_jobs(enrichment_job_id, status, completed_at, created_at)
+      `)
       .eq('property_id', id)
       .single()
 
@@ -27,7 +35,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const updates = req.body ?? {}
     const changedFields = Object.keys(updates)
 
-    // Write audit trail for manual overrides
     if (changedFields.includes('rbm_category')) {
       const { data: current } = await db
         .from('properties')
@@ -40,7 +47,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         field_name: 'rbm_category',
         old_value: current?.rbm_category,
         new_value: updates.rbm_category,
-        changed_by: auth.userId,
+        changed_by: ctx.userId,
         changed_at: new Date().toISOString(),
       })
     }
@@ -57,7 +64,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     await fireWebhook('property.updated', {
       property_id: id,
       changed_fields: changedFields,
-      changed_by: auth.userId,
+      changed_by: ctx.userId ?? 'service',
     })
 
     return res.status(200).json({ property: data })

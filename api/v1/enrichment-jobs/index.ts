@@ -1,35 +1,28 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createAdminClient } from '../../_lib/supabase'
-import { verifyAuth, unauthorized } from '../../_lib/auth'
+import { authenticateRequest } from '../../_lib/auth'
 import { runEnrichmentJob } from '../../../src/lib/enrichment/orchestrator'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end()
 
-  const auth = await verifyAuth(req)
-  if (!auth.ok) return unauthorized(res, auth.error)
+  try {
+    await authenticateRequest(req)
+  } catch (err: any) {
+    return res.status(err.statusCode ?? 401).json({ error: err.message ?? 'Unauthorized' })
+  }
 
   const db = createAdminClient()
 
-  if (req.method === 'GET') {
-    const { job_id } = req.query
-    if (!job_id) return res.status(400).json({ error: 'job_id required' })
-
-    const { data, error } = await db
-      .from('enrichment_jobs')
-      .select('*')
-      .eq('enrichment_job_id', job_id)
-      .single()
-
-    if (error || !data) return res.status(404).json({ error: 'Not found' })
-    return res.status(200).json(data)
-  }
-
   if (req.method === 'POST') {
-    const { property_ids } = req.body ?? {}
+    const { property_ids, job_type = 'full' } = req.body ?? {}
     if (!property_ids?.length) return res.status(400).json({ error: 'property_ids required' })
 
-    // Reset enrichment status for re-enrichment
+    const VALID_JOB_TYPES = ['full', 'geocode', 'places', 'parcel', 'ai_classify']
+    if (!VALID_JOB_TYPES.includes(job_type)) {
+      return res.status(400).json({ error: `job_type must be one of: ${VALID_JOB_TYPES.join(', ')}` })
+    }
+
     await db
       .from('properties')
       .update({ enrichment_status: 'pending', enrichment_errors: null })
@@ -39,6 +32,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .from('enrichment_jobs')
       .insert({
         property_ids,
+        job_type,
         status: 'queued',
         total_properties: property_ids.length,
         processed_properties: 0,
@@ -84,15 +78,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .from('enrichment_jobs')
           .update({ status: 'completed', completed_at: new Date().toISOString() })
           .eq('enrichment_job_id', jobId)
-      } catch (err) {
-        await db
-          .from('enrichment_jobs')
-          .update({ status: 'failed' })
-          .eq('enrichment_job_id', jobId)
+      } catch {
+        await db.from('enrichment_jobs').update({ status: 'failed' }).eq('enrichment_job_id', jobId)
       }
     })()
 
-    return res.status(202).json({ jobId, status: 'queued' })
+    return res.status(202).json({ job_id: jobId, status: 'queued' })
   }
 
   return res.status(405).json({ error: 'Method not allowed' })
