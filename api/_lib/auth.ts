@@ -1,4 +1,4 @@
-import { createClerkClient } from '@clerk/backend'
+import { createClerkClient, verifyToken } from '@clerk/backend'
 import crypto from 'crypto'
 import type { VercelRequest } from '@vercel/node'
 import { createAdminClient } from './supabase'
@@ -59,14 +59,12 @@ export async function authenticateRequest(req: VercelRequest): Promise<AuthConte
         null
       db.from('service_api_key_logs')
         .insert({ key_id: keyId, endpoint: req.url ?? '', ip })
-        .then(() => {})
-        .catch(() => {})
+        .then(null, () => {})
 
       db.from('service_api_keys')
         .update({ last_used_at: new Date().toISOString() })
         .eq('key_id', keyId)
-        .then(() => {})
-        .catch(() => {})
+        .then(null, () => {})
     }
 
     return { mode: 'service' }
@@ -76,7 +74,7 @@ export async function authenticateRequest(req: VercelRequest): Promise<AuthConte
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice(7)
     try {
-      const payload = await clerk.verifyToken(token)
+      const payload = await verifyToken(token, { secretKey: process.env.CLERK_SECRET_KEY })
       return {
         mode: 'user',
         userId: payload.sub,
@@ -122,7 +120,7 @@ export async function verifyAuth(req: any): Promise<AuthResult> {
 
   const token = authHeader.slice(7)
   try {
-    const payload = await clerk.verifyToken(token)
+    const payload = await verifyToken(token, { secretKey: process.env.CLERK_SECRET_KEY })
     return { ok: true, userId: payload.sub, type: 'clerk' }
   } catch {
     return { ok: false, error: 'Invalid token' }
