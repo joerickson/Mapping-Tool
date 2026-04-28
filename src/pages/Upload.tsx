@@ -132,6 +132,7 @@ export default function UploadPage() {
   const startProcessing = useCallback(async (id: string) => {
     try {
       const token = await getToken()
+      if (!token) throw new Error('Not authenticated')
       // Kick off processing in the background
       fetch(`/api/uploads/${id}/process`, {
         method: 'POST',
