@@ -11,7 +11,7 @@ import Button from '../components/ui/Button'
 import { REQUIRED_COLUMNS, US_STATES } from '../lib/constants'
 import type { ColumnMapping } from '../types'
 
-type Step = 'upload' | 'map' | 'validate' | 'confirm'
+type Step = 'upload' | 'map' | 'validate'
 
 interface ParsedData {
   columns: string[]
@@ -88,7 +88,6 @@ export default function UploadPage() {
   const [mapping, setMapping] = useState<Partial<ColumnMapping>>({})
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
   const [submitting, setSubmitting] = useState(false)
-  const [jobId, setJobId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const handleFile = useCallback((file: File) => {
@@ -155,9 +154,8 @@ export default function UploadPage() {
         }),
       })
       if (!res.ok) throw new Error(await res.text())
-      const { jobId: id } = await res.json()
-      setJobId(id)
-      setStep('confirm')
+      const { batchId } = await res.json()
+      navigate(`/upload/${batchId}/review`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed')
     } finally {
@@ -176,18 +174,18 @@ export default function UploadPage() {
 
           {/* Steps indicator */}
           <div className="flex items-center gap-2 mb-8">
-            {(['upload', 'map', 'validate', 'confirm'] as Step[]).map((s, i) => (
+            {(['upload', 'map', 'validate'] as Step[]).map((s, i) => (
               <div key={s} className="flex items-center gap-2">
                 <div
                   className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-medium
-                    ${step === s ? 'bg-blue-600 text-white' : i < (['upload','map','validate','confirm'] as Step[]).indexOf(step) ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-500'}`}
+                    ${step === s ? 'bg-blue-600 text-white' : i < (['upload','map','validate'] as Step[]).indexOf(step) ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-500'}`}
                 >
                   {i + 1}
                 </div>
                 <span className={`text-sm ${step === s ? 'text-gray-900 font-medium' : 'text-gray-400'}`}>
                   {s.charAt(0).toUpperCase() + s.slice(1)}
                 </span>
-                {i < 3 && <div className="w-8 h-px bg-gray-300" />}
+                {i < 2 && <div className="w-8 h-px bg-gray-300" />}
               </div>
             ))}
           </div>
@@ -263,29 +261,8 @@ export default function UploadPage() {
               <div className="flex justify-end gap-3">
                 <Button variant="secondary" onClick={() => setStep('map')}>Back</Button>
                 <Button onClick={handleConfirm} loading={submitting}>
-                  {validationErrors.length > 0 ? 'Continue with Valid Rows' : 'Start Enrichment'}
+                  {validationErrors.length > 0 ? 'Continue with Valid Rows' : 'Scrub & Review'}
                 </Button>
-              </div>
-            </div>
-          )}
-
-          {step === 'confirm' && (
-            <div className="bg-white rounded-xl p-8 shadow-sm border text-center">
-              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg className="w-8 h-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-              <h2 className="text-xl font-bold text-gray-900 mb-2">Upload Successful</h2>
-              <p className="text-gray-500 mb-6">
-                Enrichment job <code className="bg-gray-100 px-1 rounded">{jobId}</code> is running.
-                Properties will appear on the map as they are enriched.
-              </p>
-              <div className="flex justify-center gap-3">
-                <Button variant="secondary" onClick={() => { setStep('upload'); setParsed(null); setMapping({}) }}>
-                  Upload Another
-                </Button>
-                <Button onClick={() => navigate('/map')}>View Map</Button>
               </div>
             </div>
           )}

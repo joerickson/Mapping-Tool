@@ -62,3 +62,15 @@ API routes accept two authentication modes:
 | `SERVICE_API_KEY` | ✓ | Service-to-service API key (legacy fallback) |
 | `ADMIN_NOTIFICATION_EMAIL` | ✓ | Email for admin alerts |
 | `RESEND_API_KEY` | | Resend API key for transactional email |
+| `SMARTY_AUTH_ID` | | Smarty Streets auth ID (Stage 0c address validation) |
+| `SMARTY_AUTH_TOKEN` | | Smarty Streets auth token (Stage 0c address validation) |
+
+## Address Scrubbing (Stage 0)
+
+Before geocoding, every uploaded address passes through a local scrub pipeline:
+
+1. **Local scrub** (Stage 0) — always runs, zero API cost. Normalizes country, state, postal code, casing, and street suffixes. Generates a SHA-256 dedupe hash.
+2. **Dedup detection** (Stage 0b) — flags exact duplicates within the batch and matches against existing `properties` records.
+3. **Smarty validation** (Stage 0c) — optional, runs only if `SMARTY_AUTH_ID` and `SMARTY_AUTH_TOKEN` are set. Verifies US/CA addresses against the Smarty Streets API. MX addresses are skipped (Smarty US/CA tier only).
+
+After Stage 0 completes, the upload redirects to `/upload/{batchId}/review` where you can inspect clean, auto-corrected, needs-review, and duplicate addresses before starting enrichment.

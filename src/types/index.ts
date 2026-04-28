@@ -198,6 +198,61 @@ export interface ParcelApiFallback {
   called_at: string
 }
 
+export type ScrubStatus =
+  | 'clean'
+  | 'auto_corrected'
+  | 'needs_review'
+  | 'rejected'
+  | 'duplicate'
+  | 'existing_property'
+
+export interface ScrubCorrection {
+  field: string
+  original: string
+  corrected: string
+  reason: string
+  severity: 'minor' | 'major'
+}
+
+export interface ValidatedAddress {
+  address_line1: string
+  address_line2?: string
+  city: string
+  state: string
+  postal_code: string
+  country: string
+}
+
+export interface StagedAddress {
+  staged_id: string
+  upload_batch_id: string
+  row_index: number
+  original_row: Record<string, unknown>
+  scrub_status: ScrubStatus
+  scrub_corrections: ScrubCorrection[] | null
+  scrub_confidence: number | null
+  scrub_issues: string[] | null
+  dedupe_hash: string | null
+  canonical_staged_id: string | null
+  existing_property_id: string | null
+  usps_verified: boolean | null
+  usps_response: unknown
+  validated_address: ValidatedAddress | null
+  user_action: 'approved' | 'skip' | 'merge' | 'treat_as_new' | null
+  user_edited_address: ValidatedAddress | null
+  created_at: string
+}
+
+export interface ScrubSummary {
+  total: number
+  clean: number
+  auto_corrected: number
+  needs_review: number
+  duplicate: number
+  existing_property: number
+  rejected: number
+}
+
 export interface ParcelFallbackSummary {
   county_fips: string
   county_name: string | null
