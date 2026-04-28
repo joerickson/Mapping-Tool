@@ -246,7 +246,7 @@ function computeCentroid(
 }
 
 function buildParcelRow(
-  geom: Record<string, unknown> | null | undefined,
+  geom: unknown,
   mapped: ReturnType<typeof mapRegridFields>,
   opts: ProcessImportOptions
 ): Record<string, unknown> {

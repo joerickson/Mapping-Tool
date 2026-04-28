@@ -8,8 +8,8 @@
  * Response: { covered: boolean, county_fips: string|null, source_refresh_date: string|null }
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { createAdminClient } from '../../_lib/supabase'
-import { authenticateRequest } from '../../_lib/auth'
+import { createAdminClient } from '../../../_lib/supabase'
+import { authenticateRequest } from '../../../_lib/auth'
 import { getCountyFips } from '../../../../src/lib/parcel/fips'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
