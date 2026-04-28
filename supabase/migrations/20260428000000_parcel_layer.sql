@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS parcels (
 
 -- Nearest-parcel lookup via Haversine (PostGIS-free).
 -- Returns the single nearest parcel within p_max_distance_m metres, or empty set.
+-- Uses plpgsql so column references are resolved at execution time, not creation time.
 CREATE OR REPLACE FUNCTION find_nearest_parcel(
   p_county_fips    TEXT,
   p_lat            DOUBLE PRECISION,
@@ -75,7 +76,9 @@ RETURNS TABLE (
   imported_at           TIMESTAMPTZ,
   distance_m            DOUBLE PRECISION
 )
-LANGUAGE sql STABLE AS $$
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+  RETURN QUERY
   SELECT
     p.id,
     p.regrid_ll_uuid,
@@ -116,5 +119,6 @@ LANGUAGE sql STABLE AS $$
                            AND p_lng + (p_max_distance_m / (111320.0 * cos(radians(p_lat))))
   ) p
   ORDER BY distance_m ASC
-  LIMIT 1
+  LIMIT 1;
+END;
 $$;
