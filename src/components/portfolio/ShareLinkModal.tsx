@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useAuth } from '@clerk/clerk-react'
+import { useAuth } from '../../hooks/useAuth'
 import Modal from '../ui/Modal'
 import Button from '../ui/Button'
 

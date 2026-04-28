@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { useNavigate } from 'react-router-dom'
-import { useAuth } from '@clerk/clerk-react'
+import { useAuth } from '../../../hooks/useAuth'
 
 interface ImportJob {
   id: string

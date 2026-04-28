@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useAuth } from '@clerk/clerk-react'
+import { useAuth } from '../../hooks/useAuth'
 import type { MapFilter, RbmCategory, ServiceLocationStatus } from '../../types'
 import { STATUS_LABELS } from '../../lib/constants'
 

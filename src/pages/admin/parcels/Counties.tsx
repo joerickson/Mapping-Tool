@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { useAuth } from '@clerk/clerk-react'
+import { useAuth } from '../../../hooks/useAuth'
 import { formatDistanceToNow, differenceInMonths } from 'date-fns'
 
 interface County {

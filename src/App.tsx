@@ -1,7 +1,10 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { SignedIn, SignedOut, RedirectToSignIn } from '@clerk/clerk-react'
-import SignInPage from './pages/SignIn'
-import SignUpPage from './pages/SignUp'
+import AuthGuard from './components/auth/AuthGuard'
+import LoginPage from './pages/Login'
+import SignupPage from './pages/Signup'
+import LogoutPage from './pages/Logout'
+import ForgotPasswordPage from './pages/ForgotPassword'
+import UpdatePasswordPage from './pages/UpdatePassword'
 import UploadPage from './pages/Upload'
 import MapPage from './pages/Map'
 import ServiceLocationPage from './pages/ServiceLocation'
@@ -11,87 +14,85 @@ import ParcelImportPage from './pages/admin/parcels/Import'
 import CountiesPage from './pages/admin/parcels/Counties'
 import FallbacksPage from './pages/admin/parcels/Fallbacks'
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  return (
-    <>
-      <SignedIn>{children}</SignedIn>
-      <SignedOut>
-        <RedirectToSignIn />
-      </SignedOut>
-    </>
-  )
-}
-
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/sign-in" element={<SignInPage />} />
-        <Route path="/sign-up" element={<SignUpPage />} />
+        {/* Public auth routes */}
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/login/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/login/update-password" element={<UpdatePasswordPage />} />
+        <Route path="/signup" element={<SignupPage />} />
+        <Route path="/logout" element={<LogoutPage />} />
+
+        {/* Public share / embed routes — no auth required */}
         <Route path="/portfolio/:shareToken" element={<SharedPortfolioPage />} />
+
+        {/* Protected app routes */}
         <Route
           path="/"
           element={
-            <ProtectedRoute>
+            <AuthGuard>
               <Navigate to="/map" replace />
-            </ProtectedRoute>
+            </AuthGuard>
           }
         />
         <Route
           path="/map"
           element={
-            <ProtectedRoute>
+            <AuthGuard>
               <MapPage />
-            </ProtectedRoute>
+            </AuthGuard>
           }
         />
         <Route
           path="/upload"
           element={
-            <ProtectedRoute>
+            <AuthGuard>
               <UploadPage />
-            </ProtectedRoute>
+            </AuthGuard>
           }
         />
         <Route
           path="/locations/:serviceLocationId"
           element={
-            <ProtectedRoute>
+            <AuthGuard>
               <ServiceLocationPage />
-            </ProtectedRoute>
+            </AuthGuard>
           }
         />
         <Route
           path="/portfolios/:portfolioId"
           element={
-            <ProtectedRoute>
+            <AuthGuard>
               <PortfolioPage />
-            </ProtectedRoute>
+            </AuthGuard>
           }
         />
+
         {/* Admin — Parcel data layer */}
         <Route
           path="/admin/parcels/import"
           element={
-            <ProtectedRoute>
+            <AuthGuard>
               <ParcelImportPage />
-            </ProtectedRoute>
+            </AuthGuard>
           }
         />
         <Route
           path="/admin/parcels/counties"
           element={
-            <ProtectedRoute>
+            <AuthGuard>
               <CountiesPage />
-            </ProtectedRoute>
+            </AuthGuard>
           }
         />
         <Route
           path="/admin/parcels/fallbacks"
           element={
-            <ProtectedRoute>
+            <AuthGuard>
               <FallbacksPage />
-            </ProtectedRoute>
+            </AuthGuard>
           }
         />
       </Routes>
