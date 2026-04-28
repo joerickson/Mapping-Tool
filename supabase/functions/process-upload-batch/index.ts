@@ -329,7 +329,10 @@ Deno.serve(async (req) => {
       const columnMapping = processingConfig.column_mappings[sheetName] ?? {}
       const serviceOfferingId = sheetMapping.service_offering_id
 
-      const allRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
+      const sheets = (batch.sheets ?? []) as Array<{ name: string; header_row_index?: number }>
+      const sheetMeta = sheets.find((s) => s.name === sheetName)
+      const headerRowIndex = sheetMeta?.header_row_index ?? 0
+      const allRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', range: headerRowIndex })
       const batchDedupeSet = new Map<string, string>()
 
       // Update current sheet
