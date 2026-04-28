@@ -102,6 +102,8 @@ export default function UploadPage() {
   const [selectedUploadAccountId, setSelectedUploadAccountId] = useState<string>('')
   const [selectedUploadClientId, setSelectedUploadClientId] = useState<string>(selectedClientId ?? '')
   const [accountClients, setAccountClients] = useState<Client[]>([])
+  const [loadingClients, setLoadingClients] = useState(false)
+  const [clientsError, setClientsError] = useState<string | null>(null)
   const [showNewClientModal, setShowNewClientModal] = useState(false)
   const [newClientName, setNewClientName] = useState('')
   const [creatingClient, setCreatingClient] = useState(false)
@@ -128,17 +130,28 @@ export default function UploadPage() {
 
   // Load clients for selected account
   useEffect(() => {
-    if (!selectedUploadAccountId) { setAccountClients([]); return }
+    if (!selectedUploadAccountId) {
+      setAccountClients([])
+      setClientsError(null)
+      return
+    }
+    let cancelled = false
+    const controller = new AbortController()
+    const abortTimeout = setTimeout(() => controller.abort(), 10000)
+
     async function loadAccountClients() {
+      setLoadingClients(true)
+      setClientsError(null)
       try {
         const token = await getToken()
-        const res = await fetch(`/api/v1/clients?account_id=${selectedUploadAccountId}&status=active`, {
+        const res = await fetch(`/api/v1/accounts/${selectedUploadAccountId}/clients`, {
           headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
         })
-        if (res.ok) {
+        if (!res.ok) throw new Error(`Server error (${res.status})`)
+        if (!cancelled) {
           const data: Client[] = await res.json()
           setAccountClients(data)
-          // Auto-resolve for self_managed (single client)
           const account = accounts.find((a) => a.id === selectedUploadAccountId)
           if (account?.account_type === 'self_managed' && data.length === 1) {
             setSelectedUploadClientId(data[0].id)
@@ -146,9 +159,18 @@ export default function UploadPage() {
             setSelectedUploadClientId('')
           }
         }
-      } catch { /* ignore */ }
+      } catch (err) {
+        if (!cancelled) {
+          const isTimeout = err instanceof DOMException && err.name === 'AbortError'
+          setClientsError(isTimeout ? 'Request timed out' : 'Failed to load clients')
+        }
+      } finally {
+        clearTimeout(abortTimeout)
+        if (!cancelled) setLoadingClients(false)
+      }
     }
     loadAccountClients()
+    return () => { cancelled = true; clearTimeout(abortTimeout); controller.abort() }
   }, [selectedUploadAccountId, accounts, getToken])
 
   // Sync selected client when nav switcher changes
@@ -401,35 +423,67 @@ export default function UploadPage() {
                 </Link>
               </div>
 
-              {/* Client selector — only for property_manager with 2+ clients */}
+              {/* Client selector */}
               {selectedUploadAccountId && (() => {
                 const acct = accounts.find((a) => a.id === selectedUploadAccountId)
                 if (!acct) return null
+
+                if (loadingClients) {
+                  return <div className="text-sm text-gray-400 py-1">Loading clients…</div>
+                }
+
+                if (clientsError) {
+                  return (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                      {clientsError}
+                    </div>
+                  )
+                }
+
                 if (acct.account_type === 'self_managed') {
                   const selfClient = accountClients[0]
                   return selfClient ? (
                     <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700">
                       Client: <strong>{selfClient.display_name ?? selfClient.name}</strong> (auto-resolved)
                     </div>
-                  ) : null
+                  ) : (
+                    <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800">
+                      This account has no clients yet.{' '}
+                      <Link to={`/accounts/${selectedUploadAccountId}/clients/new`} className="underline font-medium">
+                        + Add Client
+                      </Link>
+                    </div>
+                  )
                 }
+
                 // property_manager
                 return (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Client</label>
-                    <select
-                      value={selectedUploadClientId}
-                      onChange={(e) => setSelectedUploadClientId(e.target.value)}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="">— select client —</option>
-                      {accountClients.map((c) => (
-                        <option key={c.id} value={c.id}>{c.display_name ?? c.name}</option>
-                      ))}
-                    </select>
-                    <Link to={`/accounts/${selectedUploadAccountId}/clients/new`} className="text-xs text-blue-600 hover:underline mt-1 inline-block">
-                      + New Client
-                    </Link>
+                    {accountClients.length === 0 ? (
+                      <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800">
+                        This account has no clients yet.{' '}
+                        <Link to={`/accounts/${selectedUploadAccountId}/clients/new`} className="underline font-medium">
+                          + Add Client
+                        </Link>
+                      </div>
+                    ) : (
+                      <>
+                        <select
+                          value={selectedUploadClientId}
+                          onChange={(e) => setSelectedUploadClientId(e.target.value)}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          <option value="">— select client —</option>
+                          {accountClients.map((c) => (
+                            <option key={c.id} value={c.id}>{c.display_name ?? c.name}</option>
+                          ))}
+                        </select>
+                        <Link to={`/accounts/${selectedUploadAccountId}/clients/new`} className="text-xs text-blue-600 hover:underline mt-1 inline-block">
+                          + New Client
+                        </Link>
+                      </>
+                    )}
                   </div>
                 )
               })()}

@@ -1,3 +1,4 @@
+import React from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ClientProvider } from './context/ClientContext'
 import AuthGuard from './components/auth/AuthGuard'
@@ -25,8 +26,45 @@ import NewClientPage from './pages/clients/NewClient'
 import ClientDetailPage from './pages/clients/ClientDetail'
 import ClientSetupPage from './pages/clients/ClientSetup'
 
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props)
+    this.state = { hasError: false, error: null }
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center h-screen bg-gray-50 p-8 text-center">
+          <div className="max-w-md">
+            <h1 className="text-xl font-semibold text-gray-900 mb-2">Something went wrong</h1>
+            <p className="text-sm text-gray-500 mb-4">
+              {this.state.error?.message ?? 'An unexpected error occurred.'}
+            </p>
+            <button
+              onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload() }}
+              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700"
+            >
+              Reload Page
+            </button>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 export default function App() {
   return (
+    <ErrorBoundary>
     <BrowserRouter>
       <ClientProvider>
         <Routes>
@@ -68,5 +106,6 @@ export default function App() {
         </Routes>
       </ClientProvider>
     </BrowserRouter>
+    </ErrorBoundary>
   )
 }
