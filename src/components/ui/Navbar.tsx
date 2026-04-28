@@ -1,5 +1,4 @@
 import { Link, useLocation } from 'react-router-dom'
-import { UserButton } from '@clerk/clerk-react'
 import { clsx } from 'clsx'
 
 const links = [
@@ -35,7 +34,12 @@ export default function Navbar() {
         ))}
       </div>
       <div className="ml-auto">
-        <UserButton afterSignOutUrl="/sign-in" />
+        <Link
+          to="/logout"
+          className="px-3 py-1.5 rounded-md text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors"
+        >
+          Sign out
+        </Link>
       </div>
     </nav>
   )

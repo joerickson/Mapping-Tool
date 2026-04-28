@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useAuth } from '@clerk/clerk-react'
+import { useAuth } from '../hooks/useAuth'
 import Papa from 'papaparse'
 import * as XLSX from 'xlsx'
 import Navbar from '../components/ui/Navbar'

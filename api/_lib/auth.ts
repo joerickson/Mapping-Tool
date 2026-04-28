@@ -1,19 +1,16 @@
-import { createClerkClient, verifyToken } from '@clerk/backend'
 import crypto from 'crypto'
 import type { VercelRequest } from '@vercel/node'
 import { createAdminClient } from './supabase'
 
-const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY })
-
 // Legacy return type kept for backward compat with upload.ts
 export type AuthResult =
-  | { ok: true; userId: string; type: 'clerk' | 'service' }
+  | { ok: true; userId: string; type: 'supabase' | 'service' }
   | { ok: false; error: string }
 
 export interface AuthContext {
   mode: 'user' | 'service'
   userId?: string
-  orgId?: string
+  email?: string
 }
 
 function hashKey(raw: string): string {
@@ -74,13 +71,18 @@ export async function authenticateRequest(req: VercelRequest): Promise<AuthConte
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice(7)
     try {
-      const payload = await verifyToken(token, { secretKey: process.env.CLERK_SECRET_KEY })
+      const db = createAdminClient()
+      const { data, error } = await db.auth.getUser(token)
+      if (error || !data.user) {
+        throw { statusCode: 401, message: 'Invalid token' }
+      }
       return {
         mode: 'user',
-        userId: payload.sub,
-        orgId: (payload as any).org_id as string | undefined,
+        userId: data.user.id,
+        email: data.user.email,
       }
-    } catch {
+    } catch (err: any) {
+      if (err.statusCode) throw err
       throw { statusCode: 401, message: 'Invalid token' }
     }
   }
@@ -120,8 +122,12 @@ export async function verifyAuth(req: any): Promise<AuthResult> {
 
   const token = authHeader.slice(7)
   try {
-    const payload = await verifyToken(token, { secretKey: process.env.CLERK_SECRET_KEY })
-    return { ok: true, userId: payload.sub, type: 'clerk' }
+    const db = createAdminClient()
+    const { data, error } = await db.auth.getUser(token)
+    if (error || !data.user) {
+      return { ok: false, error: 'Invalid token' }
+    }
+    return { ok: true, userId: data.user.id, type: 'supabase' }
   } catch {
     return { ok: false, error: 'Invalid token' }
   }

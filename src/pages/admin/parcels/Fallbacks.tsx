@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { useAuth } from '@clerk/clerk-react'
+import { useAuth } from '../../../hooks/useAuth'
 import { formatDistanceToNow } from 'date-fns'
 
 interface FallbackSummary {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { useAuth } from '@clerk/clerk-react'
+import { useAuth } from '../hooks/useAuth'
 import Navbar from '../components/ui/Navbar'
 import MapView from '../components/map/MapView'
 import FilterSidebar from '../components/map/FilterSidebar'
