@@ -23,7 +23,6 @@
     }
   ],
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/embed/map", "destination": "/api/embed/map" },
     { "source": "/portfolio/:share_token", "destination": "/api/portfolio/[share_token]" }
   ],
