@@ -1,6 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { scrubAddress, type FieldMapping } from './scrubAddress'
-import { smartyVerifyUs, smartyVerifyInternational } from './smarty'
+import {
+  googleValidateAddress,
+  granularityConfidence,
+  type ValidationGranularity,
+} from './googleAddressValidation'
 
 export interface StagedRow {
   staged_id?: string
@@ -17,6 +21,11 @@ export interface StagedRow {
   usps_verified?: boolean | null
   usps_response?: unknown
   validated_address: unknown
+  validation_granularity?: string | null
+  latitude?: number | null
+  longitude?: number | null
+  geocoded_at?: string | null
+  geocode_source?: string | null
 }
 
 export interface PipelineSummary {
@@ -26,6 +35,7 @@ export interface PipelineSummary {
   needs_review: number
   duplicate: number
   existing_property: number
+  address_validation_calls: number
 }
 
 export async function runScrubPipeline(
@@ -34,8 +44,7 @@ export async function runScrubPipeline(
   mapping: FieldMapping,
   db: SupabaseClient,
   opts: {
-    smartyAuthId?: string
-    smartyAuthToken?: string
+    googleAddressValidationKey?: string
   } = {},
 ): Promise<PipelineSummary> {
   // Stage 0 — local scrub
@@ -130,38 +139,70 @@ export async function runScrubPipeline(
       .eq('staged_id', u.staged_id)
   }
 
-  // Stage 0c — Smarty validation (optional)
-  if (opts.smartyAuthId && opts.smartyAuthToken) {
-    await runSmartyValidation(batchId, db, opts.smartyAuthId, opts.smartyAuthToken)
+  // Stage 0c — Google Address Validation (optional)
+  let addressValidationCalls = 0
+  if (opts.googleAddressValidationKey) {
+    addressValidationCalls = await runGoogleAddressValidation(
+      batchId,
+      db,
+      opts.googleAddressValidationKey,
+    )
   }
+
+  // Re-read final statuses from in-memory staged array for summary
+  // (statuses may have changed during dedup — Google validation updates come from DB)
+  const { data: finalRows } = await db
+    .from('staged_addresses')
+    .select('scrub_status')
+    .eq('upload_batch_id', batchId)
+
+  const finalStatuses = finalRows?.map((r) => r.scrub_status) ?? staged.map((r) => r.scrub_status)
 
   const summary: PipelineSummary = {
     total: staged.length,
-    clean: staged.filter((r) => r.scrub_status === 'clean').length,
-    auto_corrected: staged.filter((r) => r.scrub_status === 'auto_corrected').length,
-    needs_review: staged.filter((r) => r.scrub_status === 'needs_review').length,
-    duplicate: staged.filter((r) => r.scrub_status === 'duplicate').length,
-    existing_property: staged.filter((r) => r.scrub_status === 'existing_property').length,
+    clean: finalStatuses.filter((s) => s === 'clean').length,
+    auto_corrected: finalStatuses.filter((s) => s === 'auto_corrected').length,
+    needs_review: finalStatuses.filter((s) => s === 'needs_review').length,
+    duplicate: finalStatuses.filter((s) => s === 'duplicate').length,
+    existing_property: finalStatuses.filter((s) => s === 'existing_property').length,
+    address_validation_calls: addressValidationCalls,
   }
 
   return summary
 }
 
-async function runSmartyValidation(
+function resolveNewStatus(
+  currentStatus: string,
+  granularity: ValidationGranularity | string,
+  hasUnconfirmedComponents: boolean,
+): string {
+  if (granularity === 'OTHER' || hasUnconfirmedComponents) return 'needs_review'
+  return currentStatus
+}
+
+function resolveNewConfidence(
+  granularity: ValidationGranularity | string,
+  addressComplete: boolean,
+  uspsVerified: boolean,
+): number {
+  if (granularity === 'PREMISE' && addressComplete && uspsVerified) return 1.0
+  return granularityConfidence(granularity)
+}
+
+async function runGoogleAddressValidation(
   batchId: string,
   db: SupabaseClient,
-  authId: string,
-  authToken: string,
-): Promise<void> {
+  apiKey: string,
+): Promise<number> {
   const { data: rows } = await db
     .from('staged_addresses')
     .select('staged_id, dedupe_hash, validated_address, scrub_status')
     .eq('upload_batch_id', batchId)
     .in('scrub_status', ['clean', 'auto_corrected'])
 
-  if (!rows?.length) return
+  if (!rows?.length) return 0
 
-  // Dedupe by hash so we don't call Smarty twice for the same address
+  // Dedupe by hash — one API call per unique address
   const hashToRow = new Map<string, typeof rows[0]>()
   for (const row of rows) {
     if (row.dedupe_hash && !hashToRow.has(row.dedupe_hash)) {
@@ -169,13 +210,13 @@ async function runSmartyValidation(
     }
   }
 
-  // Check cache: existing usps_response entries (same hash already validated)
+  // Cache: reuse results for hashes validated in previous batches
   const hashes = [...hashToRow.keys()]
   const { data: cached } = await db
     .from('staged_addresses')
-    .select('dedupe_hash, usps_verified, usps_response, validated_address')
+    .select('dedupe_hash, usps_verified, usps_response, validated_address, validation_granularity, latitude, longitude, geocoded_at, geocode_source, scrub_confidence')
     .in('dedupe_hash', hashes)
-    .not('usps_response', 'is', null)
+    .not('validation_granularity', 'is', null)
 
   const cacheMap = new Map((cached ?? []).map((r) => [r.dedupe_hash, r]))
 
@@ -184,56 +225,65 @@ async function runSmartyValidation(
     usps_verified: boolean
     usps_response: unknown
     validated_address: unknown
+    validation_granularity: string
     scrub_status: string
+    scrub_confidence: number
+    latitude: number | null
+    longitude: number | null
+    geocoded_at: string | null
+    geocode_source: string | null
   }> = []
+
+  let apiCallCount = 0
 
   for (const [hash, row] of hashToRow) {
     const addr = row.validated_address as Record<string, string> | null
     if (!addr) continue
 
-    const country = addr.country ?? 'US'
-    if (country === 'MX') continue // skip MX
-
-    let smartyResult: Awaited<ReturnType<typeof smartyVerifyUs>>
-
     if (cacheMap.has(hash)) {
       const c = cacheMap.get(hash)!
-      // Apply cached result to all rows with this hash (handled in bulk below)
       for (const r of rows) {
-        if (r.dedupe_hash === hash) {
-          updates.push({
-            staged_id: r.staged_id,
-            usps_verified: c.usps_verified ?? false,
-            usps_response: c.usps_response,
-            validated_address: c.validated_address,
-            scrub_status: r.scrub_status,
-          })
-        }
+        if (r.dedupe_hash !== hash) continue
+        updates.push({
+          staged_id: r.staged_id,
+          usps_verified: c.usps_verified ?? false,
+          usps_response: c.usps_response,
+          validated_address: c.validated_address,
+          validation_granularity: c.validation_granularity,
+          scrub_status: resolveNewStatus(r.scrub_status, c.validation_granularity, false),
+          scrub_confidence: c.scrub_confidence ?? granularityConfidence(c.validation_granularity),
+          latitude: c.latitude ?? null,
+          longitude: c.longitude ?? null,
+          geocoded_at: c.geocoded_at ?? null,
+          geocode_source: c.geocode_source ?? null,
+        })
       }
       continue
     }
 
+    let gResult: Awaited<ReturnType<typeof googleValidateAddress>>
     try {
-      if (country === 'US') {
-        smartyResult = await smartyVerifyUs(addr as any, authId, authToken)
-      } else {
-        smartyResult = await smartyVerifyInternational(addr as any, authId, authToken)
-      }
+      gResult = await googleValidateAddress(addr as any, apiKey)
     } catch {
       continue
     }
+    if (!gResult) continue
+    apiCallCount++
 
     for (const r of rows) {
       if (r.dedupe_hash !== hash) continue
-      const newStatus = !smartyResult.verified && r.scrub_status === 'clean'
-        ? 'needs_review'
-        : r.scrub_status
       updates.push({
         staged_id: r.staged_id,
-        usps_verified: smartyResult.verified,
-        usps_response: smartyResult.raw,
-        validated_address: smartyResult.standardized ?? r.validated_address,
-        scrub_status: newStatus,
+        usps_verified: gResult.uspsVerified,
+        usps_response: gResult.uspsResponse,
+        validated_address: gResult.postalAddress ?? r.validated_address,
+        validation_granularity: gResult.granularity,
+        scrub_status: resolveNewStatus(r.scrub_status, gResult.granularity, gResult.hasUnconfirmedComponents),
+        scrub_confidence: resolveNewConfidence(gResult.granularity, gResult.addressComplete, gResult.uspsVerified),
+        latitude: gResult.latitude ?? null,
+        longitude: gResult.longitude ?? null,
+        geocoded_at: gResult.geocodedAt ?? null,
+        geocode_source: gResult.latitude != null ? 'google_address_validation' : null,
       })
     }
   }
@@ -245,8 +295,16 @@ async function runSmartyValidation(
         usps_verified: u.usps_verified,
         usps_response: u.usps_response,
         validated_address: u.validated_address,
+        validation_granularity: u.validation_granularity,
         scrub_status: u.scrub_status,
+        scrub_confidence: u.scrub_confidence,
+        latitude: u.latitude,
+        longitude: u.longitude,
+        geocoded_at: u.geocoded_at,
+        geocode_source: u.geocode_source,
       })
       .eq('staged_id', u.staged_id)
   }
+
+  return apiCallCount
 }

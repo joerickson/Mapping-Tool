@@ -93,6 +93,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const originalRow = row.original_row as Record<string, unknown>
       const mapping = columnMapping
 
+      // Carry forward geocode data from Stage 0c if Google Address Validation already geocoded this address
+      const geocodeFromStage0 = row.latitude && row.longitude
+        ? {
+            latitude: row.latitude as number,
+            longitude: row.longitude as number,
+            geocoded_at: (row.geocoded_at as string | null) ?? new Date().toISOString(),
+            geocode_source: (row.geocode_source as string | null) ?? 'google_address_validation',
+          }
+        : {}
+
       const { data: newProp, error: propErr } = await db
         .from('properties')
         .insert({
@@ -102,7 +112,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           state,
           postal_code: zip,
           address_hash: addressHash,
-          enrichment_status: 'pending',
+          ...geocodeFromStage0,
+          enrichment_status: row.latitude && row.longitude ? 'geocoded' : 'pending',
         })
         .select('property_id')
         .single()
@@ -125,6 +136,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     propertyIds.push(propertyId)
   }
 
+  // Count how many address validation calls were made for this batch (for cost tracking)
+  const { count: validationCallCount } = await db
+    .from('staged_addresses')
+    .select('staged_id', { count: 'exact', head: true })
+    .eq('upload_batch_id', batchId)
+    .not('validation_granularity', 'is', null)
+
   const { data: job, error: jobErr } = await db
     .from('enrichment_jobs')
     .insert({
@@ -133,6 +151,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       status: 'queued',
       total_properties: propertyIds.length,
       processed_properties: 0,
+      ...(validationCallCount ? { api_calls: { address_validation: validationCallCount } } : {}),
     })
     .select('enrichment_job_id')
     .single()
