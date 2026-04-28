@@ -13,6 +13,8 @@ const STATUS_BADGE: Record<string, string> = {
 }
 
 interface ClientDetail extends Client {
+  account?: { id: string; name: string; display_name?: string | null; account_type: string } | null
+  is_configured?: boolean
   stats: { service_location_count: number; portfolio_count: number; total_serviceable_sqft: number }
   recent_uploads: { upload_batch_id: string; filename: string; created_at: string; status: string; row_count: number }[]
 }
@@ -150,33 +152,67 @@ export default function ClientDetailPage() {
             <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>
           )}
 
-          {/* Header */}
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-3">
-              <div
-                className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-lg"
-                style={{ backgroundColor: clientColor }}
-              >
-                {(client.display_name ?? client.name).charAt(0).toUpperCase()}
+          {/* Breadcrumb + Header */}
+          <div>
+            {/* Account breadcrumb */}
+            {client.account && client.account.account_type === 'property_manager' && (
+              <div className="flex items-center gap-2 text-sm text-gray-400 mb-2">
+                <Link to="/accounts" className="hover:text-gray-600">Accounts</Link>
+                <span>›</span>
+                <Link to={`/accounts/${client.account.id}`} className="hover:text-gray-600">
+                  {client.account.display_name ?? client.account.name}
+                </Link>
+                <span>›</span>
+                <span className="text-gray-700 font-medium">{client.display_name ?? client.name}</span>
               </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h1 className="text-2xl font-bold text-gray-900">{client.display_name ?? client.name}</h1>
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_BADGE[client.status] ?? 'bg-gray-100 text-gray-500'}`}>
-                    {client.status}
-                  </span>
+            )}
+
+            {/* Setup banner */}
+            {client.is_configured === false && (
+              <div className="mb-4 flex items-center justify-between p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <p className="text-sm text-yellow-800">This client hasn't been set up yet.</p>
+                <Link
+                  to={`/clients/${client.id}/setup`}
+                  className="text-sm font-medium text-yellow-900 underline hover:no-underline"
+                >
+                  Configure Client →
+                </Link>
+              </div>
+            )}
+
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div
+                  className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-lg"
+                  style={{ backgroundColor: clientColor }}
+                >
+                  {(client.display_name ?? client.name).charAt(0).toUpperCase()}
                 </div>
-                {client.display_name && <p className="text-sm text-gray-400">{client.name}</p>}
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h1 className="text-2xl font-bold text-gray-900">{client.display_name ?? client.name}</h1>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_BADGE[client.status] ?? 'bg-gray-100 text-gray-500'}`}>
+                      {client.status}
+                    </span>
+                  </div>
+                  {client.display_name && <p className="text-sm text-gray-400">{client.name}</p>}
+                </div>
               </div>
-            </div>
-            <div className="flex gap-2">
-              <Link
-                to={`/map?client_id=${client.id}`}
-                className="px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
-              >
-                View on map
-              </Link>
-              <Button size="sm" onClick={() => setEditing(true)}>Edit</Button>
+              <div className="flex gap-2">
+                <Link
+                  to={`/map?client_id=${client.id}`}
+                  className="px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+                >
+                  View on map
+                </Link>
+                <Link
+                  to={`/clients/${client.id}/setup`}
+                  className="px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+                >
+                  Setup
+                </Link>
+                <Button size="sm" onClick={() => setEditing(true)}>Edit</Button>
+              </div>
             </div>
           </div>
 

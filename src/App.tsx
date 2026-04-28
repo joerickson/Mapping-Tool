@@ -16,9 +16,14 @@ import ParcelImportPage from './pages/admin/parcels/Import'
 import CountiesPage from './pages/admin/parcels/Counties'
 import FallbacksPage from './pages/admin/parcels/Fallbacks'
 import DangerousAdminPage from './pages/admin/Dangerous'
+import AccountsListPage from './pages/accounts/AccountsList'
+import NewAccountPage from './pages/accounts/NewAccount'
+import AccountDetailPage from './pages/accounts/AccountDetail'
+import NewAccountClientPage from './pages/accounts/NewAccountClient'
 import ClientsListPage from './pages/clients/ClientsList'
 import NewClientPage from './pages/clients/NewClient'
 import ClientDetailPage from './pages/clients/ClientDetail'
+import ClientSetupPage from './pages/clients/ClientSetup'
 
 export default function App() {
   return (
@@ -36,114 +41,30 @@ export default function App() {
           <Route path="/portfolio/:shareToken" element={<SharedPortfolioPage />} />
 
           {/* Protected app routes */}
-          <Route
-            path="/"
-            element={
-              <AuthGuard>
-                <Navigate to="/map" replace />
-              </AuthGuard>
-            }
-          />
-          <Route
-            path="/map"
-            element={
-              <AuthGuard>
-                <MapPage />
-              </AuthGuard>
-            }
-          />
-          <Route
-            path="/upload"
-            element={
-              <AuthGuard>
-                <UploadPage />
-              </AuthGuard>
-            }
-          />
-          <Route
-            path="/upload/:batchId/review"
-            element={
-              <AuthGuard>
-                <UploadReviewPage />
-              </AuthGuard>
-            }
-          />
-          <Route
-            path="/locations/:serviceLocationId"
-            element={
-              <AuthGuard>
-                <ServiceLocationPage />
-              </AuthGuard>
-            }
-          />
-          <Route
-            path="/portfolios/:portfolioId"
-            element={
-              <AuthGuard>
-                <PortfolioPage />
-              </AuthGuard>
-            }
-          />
+          <Route path="/" element={<AuthGuard><Navigate to="/map" replace /></AuthGuard>} />
+          <Route path="/map" element={<AuthGuard><MapPage /></AuthGuard>} />
+          <Route path="/upload" element={<AuthGuard><UploadPage /></AuthGuard>} />
+          <Route path="/upload/:batchId/review" element={<AuthGuard><UploadReviewPage /></AuthGuard>} />
+          <Route path="/locations/:serviceLocationId" element={<AuthGuard><ServiceLocationPage /></AuthGuard>} />
+          <Route path="/portfolios/:portfolioId" element={<AuthGuard><PortfolioPage /></AuthGuard>} />
+
+          {/* Accounts */}
+          <Route path="/accounts" element={<AuthGuard><AccountsListPage /></AuthGuard>} />
+          <Route path="/accounts/new" element={<AuthGuard><NewAccountPage /></AuthGuard>} />
+          <Route path="/accounts/:id" element={<AuthGuard><AccountDetailPage /></AuthGuard>} />
+          <Route path="/accounts/:id/clients/new" element={<AuthGuard><NewAccountClientPage /></AuthGuard>} />
 
           {/* Clients */}
-          <Route
-            path="/clients"
-            element={
-              <AuthGuard>
-                <ClientsListPage />
-              </AuthGuard>
-            }
-          />
-          <Route
-            path="/clients/new"
-            element={
-              <AuthGuard>
-                <NewClientPage />
-              </AuthGuard>
-            }
-          />
-          <Route
-            path="/clients/:id"
-            element={
-              <AuthGuard>
-                <ClientDetailPage />
-              </AuthGuard>
-            }
-          />
+          <Route path="/clients" element={<AuthGuard><ClientsListPage /></AuthGuard>} />
+          <Route path="/clients/new" element={<AuthGuard><NewClientPage /></AuthGuard>} />
+          <Route path="/clients/:id" element={<AuthGuard><ClientDetailPage /></AuthGuard>} />
+          <Route path="/clients/:id/setup" element={<AuthGuard><ClientSetupPage /></AuthGuard>} />
 
           {/* Admin */}
-          <Route
-            path="/admin/dangerous"
-            element={
-              <AuthGuard>
-                <DangerousAdminPage />
-              </AuthGuard>
-            }
-          />
-          <Route
-            path="/admin/parcels/import"
-            element={
-              <AuthGuard>
-                <ParcelImportPage />
-              </AuthGuard>
-            }
-          />
-          <Route
-            path="/admin/parcels/counties"
-            element={
-              <AuthGuard>
-                <CountiesPage />
-              </AuthGuard>
-            }
-          />
-          <Route
-            path="/admin/parcels/fallbacks"
-            element={
-              <AuthGuard>
-                <FallbacksPage />
-              </AuthGuard>
-            }
-          />
+          <Route path="/admin/dangerous" element={<AuthGuard><DangerousAdminPage /></AuthGuard>} />
+          <Route path="/admin/parcels/import" element={<AuthGuard><ParcelImportPage /></AuthGuard>} />
+          <Route path="/admin/parcels/counties" element={<AuthGuard><CountiesPage /></AuthGuard>} />
+          <Route path="/admin/parcels/fallbacks" element={<AuthGuard><FallbacksPage /></AuthGuard>} />
         </Routes>
       </ClientProvider>
     </BrowserRouter>

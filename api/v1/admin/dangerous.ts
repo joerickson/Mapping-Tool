@@ -21,18 +21,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { action, confirmation } = req.body ?? {}
 
   if (action === 'reset_service_location_data') {
-    if (confirmation !== 'delete all service locations') {
+    if (confirmation !== 'delete all data') {
       return res.status(400).json({ error: 'Invalid confirmation phrase' })
     }
 
     const db = createAdminClient()
 
-    // Truncate in dependency order; clients table is NOT touched
+    // Truncate in FK dependency order
     try {
       await db.from('staged_addresses').delete().neq('staged_id', '00000000-0000-0000-0000-000000000000')
       await db.from('upload_batches').delete().neq('upload_batch_id', '00000000-0000-0000-0000-000000000000')
       await db.from('service_locations').delete().neq('service_location_id', '00000000-0000-0000-0000-000000000000')
       await db.from('properties').delete().neq('property_id', '00000000-0000-0000-0000-000000000000')
+      await db.from('client_templates').delete().neq('id', '00000000-0000-0000-0000-000000000000')
+      await db.from('custom_field_definitions').delete().neq('id', '00000000-0000-0000-0000-000000000000')
+      await db.from('service_offerings').delete().neq('id', '00000000-0000-0000-0000-000000000000')
+      await db.from('portfolios').delete().neq('portfolio_id', '00000000-0000-0000-0000-000000000000')
+      await db.from('clients').delete().neq('id', '00000000-0000-0000-0000-000000000000')
+      await db.from('accounts').delete().neq('id', '00000000-0000-0000-0000-000000000000')
     } catch (err: any) {
       return res.status(500).json({ error: err.message ?? 'Reset failed' })
     }
@@ -48,7 +54,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return res.status(200).json({
       ok: true,
-      message: 'All service location data has been wiped. Clients table was not affected.',
+      message: 'All data has been wiped: accounts, clients, service offerings, custom fields, templates, properties, service locations, upload batches, and portfolios.',
       performed_by: ctx.email ?? ctx.userId,
       performed_at: new Date().toISOString(),
     })

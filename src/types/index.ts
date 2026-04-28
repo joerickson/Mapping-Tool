@@ -1,5 +1,24 @@
+export interface Account {
+  id: string
+  name: string
+  display_name?: string | null
+  account_type: 'self_managed' | 'property_manager'
+  status: string
+  notes?: string | null
+  primary_contact_name?: string | null
+  primary_contact_email?: string | null
+  primary_contact_phone?: string | null
+  brand_color?: string | null
+  logo_url?: string | null
+  metadata?: Record<string, unknown>
+  created_at: string
+  updated_at: string
+  created_by?: string | null
+}
+
 export interface Client {
   id: string
+  account_id?: string | null
   name: string
   display_name?: string | null
   status: 'active' | 'prospect' | 'churned'
@@ -13,6 +32,54 @@ export interface Client {
   created_at: string
   updated_at: string
   created_by?: string | null
+}
+
+export type PricingModel = 'fixed_per_visit' | 'monthly_recurring' | 'hourly' | 'per_sqft' | 'custom'
+
+export interface ServiceOffering {
+  id: string
+  name: string
+  display_name?: string | null
+  description?: string | null
+  pricing_model: PricingModel
+  default_frequency_label?: string | null
+  default_visits_per_year?: number | null
+  default_hours_per_visit?: number | null
+  default_crew_size?: number | null
+  is_archived: boolean
+  account_id?: string | null
+  client_id?: string | null
+  metadata?: Record<string, unknown>
+  created_at: string
+  created_by?: string | null
+}
+
+export type CustomFieldType = 'text' | 'number' | 'date' | 'select'
+
+export interface CustomFieldDefinition {
+  id: string
+  field_key: string
+  field_label: string
+  field_type: CustomFieldType
+  select_options?: string[] | null
+  account_id?: string | null
+  client_id?: string | null
+  appears_in_filters: boolean
+  appears_in_groups: boolean
+  sort_order: number
+  created_at: string
+}
+
+export interface ClientTemplate {
+  id: string
+  client_id: string
+  upload_column_mapping: Record<string, { target: string; required?: boolean }>
+  sheet_to_offering_mapping: Record<string, string>
+  default_country?: string | null
+  is_configured: boolean
+  notes?: string | null
+  created_at: string
+  updated_at: string
 }
 
 export type ColumnMapping = {

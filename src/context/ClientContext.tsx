@@ -1,3 +1,5 @@
+// Backward-compatible shim: existing code that imports useClient still works.
+// New code should prefer useAccount() from AccountContext.
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import type { Client } from '../types'
@@ -6,7 +8,7 @@ const STORAGE_KEY = 'selectedClientId'
 
 interface ClientContextValue {
   clients: Client[]
-  selectedClientId: string | null // null = "all"
+  selectedClientId: string | null
   selectedClient: Client | null
   setSelectedClientId: (id: string | null) => void
   reloadClients: () => Promise<void>
@@ -37,7 +39,6 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       if (res.ok) {
         const data: Client[] = await res.json()
         setClients(data)
-        // If selected client no longer exists or is churned, clear selection
         if (selectedClientId) {
           const found = data.find((c) => c.id === selectedClientId)
           if (!found || found.status === 'churned') {
@@ -46,14 +47,10 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           }
         }
       }
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
   }, [getToken, selectedClientId])
 
-  useEffect(() => {
-    reloadClients()
-  }, []) // only on mount; callers can trigger reloadClients
+  useEffect(() => { reloadClients() }, [])
 
   const setSelectedClientId = useCallback((id: string | null) => {
     setSelectedClientIdState(id)
