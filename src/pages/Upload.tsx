@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useClient } from '../context/ClientContext'
+import { apiFetch } from '../lib/api'
 import Navbar from '../components/ui/Navbar'
 import UploadDropzone from '../components/upload/UploadDropzone'
 import SheetMappingStep from '../components/upload/SheetMappingStep'
@@ -144,7 +145,7 @@ export default function UploadPage() {
     if (!cid) return
     try {
       const token = await getToken()
-      const res = await fetch(`/api/v1/clients/${cid}/template`, {
+      const res = await apiFetch(`/api/v1/clients/${cid}/template`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (res.ok) setClientTemplate(await res.json())
@@ -158,7 +159,7 @@ export default function UploadPage() {
       const params = new URLSearchParams({ include_related: 'true' })
       if (accountId) params.set('account_id', accountId)
       if (clientId) params.set('client_id', clientId)
-      const res = await fetch(`/api/v1/service-offerings?${params}`, {
+      const res = await apiFetch(`/api/v1/service-offerings?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (res.ok) setServiceOfferings(await res.json())
@@ -172,7 +173,7 @@ export default function UploadPage() {
       const params = new URLSearchParams()
       if (accountId) params.set('account_id', accountId)
       if (clientId) params.set('client_id', clientId)
-      const res = await fetch(`/api/v1/custom-field-definitions?${params}`, {
+      const res = await apiFetch(`/api/v1/custom-field-definitions?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (res.ok) setCustomFields(await res.json())
@@ -181,11 +182,14 @@ export default function UploadPage() {
 
   const handleClientConfirmed = async () => {
     setError(null)
-    await Promise.all([
+    const results = await Promise.allSettled([
       loadClientTemplate(selectedClientIdLocal),
       loadServiceOfferings(selectedAccountId, selectedClientIdLocal),
       loadCustomFields(selectedAccountId, selectedClientIdLocal),
     ])
+    results.forEach((r) => {
+      if (r.status === 'rejected') console.error('Preload failed:', r.reason)
+    })
     setStep('upload')
   }
 
