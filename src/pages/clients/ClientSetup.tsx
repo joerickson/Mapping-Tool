@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import Navbar from '../../components/ui/Navbar'
 import Button from '../../components/ui/Button'
+import Papa from 'papaparse'
+import * as XLSX from 'xlsx'
 import type { Client, ServiceOffering, CustomFieldDefinition, ClientTemplate, PricingModel, CustomFieldType } from '../../types'
 
 type WizardStep = 1 | 2 | 3 | 4 | 5
@@ -71,6 +73,13 @@ export default function ClientSetupPage() {
   const [colMappingRows, setColMappingRows] = useState<{ src: string; target: string; required: boolean }[]>([])
   const [sheetMappingRows, setSheetMappingRows] = useState<{ pattern: string; offeringId: string }[]>([])
   const [defaultCountry, setDefaultCountry] = useState('')
+
+  // Step 4: Sample file validation
+  const [sampleFile, setSampleFile] = useState<File | null>(null)
+  const [sampleMappedCols, setSampleMappedCols] = useState<string[]>([])
+  const [sampleUnmappedCols, setSampleUnmappedCols] = useState<string[]>([])
+  const [isDragging, setIsDragging] = useState(false)
+  const sampleInputRef = useRef<HTMLInputElement>(null)
 
   async function loadData() {
     setLoading(true)
@@ -189,6 +198,45 @@ export default function ClientSetupPage() {
         is_configured: isConfigured,
       }),
     })
+  }
+
+  function parseSampleFile(file: File) {
+    setSampleFile(file)
+    setSampleMappedCols([])
+    setSampleUnmappedCols([])
+    const templateSrcCols = new Set(colMappingRows.map((r) => r.src.toLowerCase()))
+
+    function processCols(cols: string[]) {
+      const mapped: string[] = []
+      const unmapped: string[] = []
+      cols.forEach((c) => {
+        if (templateSrcCols.has(c.toLowerCase())) mapped.push(c)
+        else unmapped.push(c)
+      })
+      setSampleMappedCols(mapped)
+      setSampleUnmappedCols(unmapped)
+    }
+
+    const ext = file.name.split('.').pop()?.toLowerCase()
+    if (ext === 'csv') {
+      Papa.parse(file, {
+        header: true,
+        preview: 1,
+        skipEmptyLines: true,
+        complete: (results) => processCols(results.meta.fields ?? []),
+      })
+    } else {
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        try {
+          const wb = XLSX.read(e.target?.result, { type: 'binary' })
+          const ws = wb.Sheets[wb.SheetNames[0]]
+          const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
+          processCols(rows.length ? Object.keys(rows[0]) : [])
+        } catch { /* ignore parse errors */ }
+      }
+      reader.readAsBinaryString(file)
+    }
   }
 
   async function goToStep(next: WizardStep) {
@@ -524,12 +572,76 @@ export default function ClientSetupPage() {
             <div className="bg-white rounded-xl shadow-sm border p-6 space-y-4">
               <div>
                 <h2 className="text-lg font-semibold text-gray-900">Validate Template (Optional)</h2>
-                <p className="text-sm text-gray-500 mt-1">Drop a sample file here to preview how the template maps to it. You can skip this step.</p>
+                <p className="text-sm text-gray-500 mt-1">Drop a sample file to preview how the template maps to it. You can skip this step.</p>
               </div>
 
-              <div className="flex items-center justify-center h-32 border-2 border-dashed border-gray-300 rounded-xl text-sm text-gray-400">
-                Sample file upload (optional) — skip to continue
-              </div>
+              <input
+                ref={sampleInputRef}
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) parseSampleFile(f) }}
+              />
+
+              {!sampleFile ? (
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => sampleInputRef.current?.click()}
+                  onKeyDown={(e) => e.key === 'Enter' && sampleInputRef.current?.click()}
+                  onDragEnter={(e) => { e.preventDefault(); setIsDragging(true) }}
+                  onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }}
+                  onDragLeave={(e) => { e.preventDefault(); setIsDragging(false) }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    setIsDragging(false)
+                    const f = e.dataTransfer.files[0]
+                    if (f) parseSampleFile(f)
+                  }}
+                  className={`flex items-center justify-center h-32 border-2 border-dashed rounded-xl cursor-pointer transition-colors text-sm select-none
+                    ${isDragging
+                      ? 'border-blue-400 bg-blue-50 text-blue-600'
+                      : 'border-gray-300 text-gray-400 hover:border-gray-400 hover:text-gray-500'
+                    }`}
+                >
+                  {isDragging ? 'Drop file here' : 'Click or drag a sample file (.csv, .xlsx) — optional'}
+                </div>
+              ) : (
+                <div className="border border-gray-200 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium text-gray-700">{sampleFile.name}</p>
+                    <button
+                      onClick={() => { setSampleFile(null); setSampleMappedCols([]); setSampleUnmappedCols([]) }}
+                      className="text-xs text-gray-400 hover:text-gray-600"
+                    >
+                      ✕ Remove
+                    </button>
+                  </div>
+                  {sampleMappedCols.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-green-700 mb-1">Auto-mapped ({sampleMappedCols.length})</p>
+                      <div className="flex flex-wrap gap-1">
+                        {sampleMappedCols.map((c) => (
+                          <span key={c} className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">{c}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {sampleUnmappedCols.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 mb-1">Unmapped ({sampleUnmappedCols.length})</p>
+                      <div className="flex flex-wrap gap-1">
+                        {sampleUnmappedCols.map((c) => (
+                          <span key={c} className="px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded-full">{c}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {sampleMappedCols.length === 0 && sampleUnmappedCols.length === 0 && (
+                    <p className="text-sm text-gray-400">No columns detected — file may be empty.</p>
+                  )}
+                </div>
+              )}
 
               <div className="flex justify-between pt-2">
                 <Button variant="secondary" onClick={() => setStep(3)}>← Back</Button>

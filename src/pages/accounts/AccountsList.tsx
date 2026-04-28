@@ -22,27 +22,51 @@ export default function AccountsListPage() {
   const { getToken } = useAuth()
   const [accounts, setAccounts] = useState<AccountRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
+  const [retryCount, setRetryCount] = useState(0)
 
   useEffect(() => {
     let cancelled = false
+    const controller = new AbortController()
+    const abortTimeout = setTimeout(() => controller.abort(), 10000)
+
     async function load() {
       setLoading(true)
+      setError(null)
       try {
         const token = await getToken()
         const params = new URLSearchParams()
         if (search) params.set('search', search)
         const res = await fetch(`/api/v1/accounts?${params}`, {
           headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
         })
-        if (res.ok && !cancelled) setAccounts(await res.json())
+        if (!res.ok) throw new Error(`Server error (${res.status})`)
+        if (!cancelled) setAccounts(await res.json())
+      } catch (err) {
+        if (!cancelled) {
+          const isTimeout = err instanceof DOMException && err.name === 'AbortError'
+          setError(
+            isTimeout
+              ? 'Request timed out — the server is taking too long to respond.'
+              : err instanceof Error ? err.message : 'Failed to load accounts'
+          )
+        }
       } finally {
+        clearTimeout(abortTimeout)
         if (!cancelled) setLoading(false)
       }
     }
-    const t = setTimeout(load, search ? 300 : 0)
-    return () => { cancelled = true; clearTimeout(t) }
-  }, [search, getToken])
+
+    const debounce = setTimeout(load, search ? 300 : 0)
+    return () => {
+      cancelled = true
+      clearTimeout(debounce)
+      clearTimeout(abortTimeout)
+      controller.abort()
+    }
+  }, [search, getToken, retryCount])
 
   return (
     <div className="flex flex-col h-full bg-gray-50">
@@ -72,9 +96,19 @@ export default function AccountsListPage() {
           <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
             {loading ? (
               <div className="flex items-center justify-center py-16 text-gray-400 text-sm">Loading…</div>
+            ) : error ? (
+              <div className="flex flex-col items-center justify-center py-16 gap-3">
+                <p className="text-red-600 text-sm">{error}</p>
+                <button
+                  onClick={() => setRetryCount((c) => c + 1)}
+                  className="text-blue-600 text-sm hover:underline"
+                >
+                  Retry
+                </button>
+              </div>
             ) : accounts.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 gap-3">
-                <p className="text-gray-500">No accounts yet.</p>
+                <p className="text-gray-500">No accounts yet — create your first account</p>
                 <Link to="/accounts/new" className="text-blue-600 text-sm hover:underline">
                   Create your first account →
                 </Link>
