@@ -3,6 +3,7 @@ import crypto from 'crypto'
 import { createAdminClient } from './_lib/supabase'
 import { verifyAuth, unauthorized } from './_lib/auth'
 import { runEnrichmentJob } from '../src/lib/enrichment/orchestrator'
+import { parcelLookup } from '../src/lib/parcel/lookup'
 
 function hashAddress(addr: string, city: string, state: string, zip: string): string {
   const normalized = [addr, city, state, zip]
@@ -129,7 +130,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       await runEnrichmentJob(jobId, propertyIds, {
         googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY!,
         anthropicApiKey: process.env.ANTHROPIC_API_KEY!,
-        regridApiKey: process.env.REGRID_API_KEY!,
+        parcelLookupFn: (propertyId, lat, lng) =>
+          parcelLookup(lat, lng, {
+            db,
+            regridApiKey: process.env.REGRID_API_KEY ?? '',
+            propertyId,
+          }),
         supabaseUpdate: async (id, data) => {
           await db.from('properties').update(data).eq('property_id', id)
         },

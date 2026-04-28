@@ -7,6 +7,9 @@ import MapPage from './pages/Map'
 import ServiceLocationPage from './pages/ServiceLocation'
 import PortfolioPage from './pages/Portfolio'
 import SharedPortfolioPage from './pages/SharedPortfolio'
+import ParcelImportPage from './pages/admin/parcels/Import'
+import CountiesPage from './pages/admin/parcels/Counties'
+import FallbacksPage from './pages/admin/parcels/Fallbacks'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return (
@@ -63,6 +66,31 @@ export default function App() {
           element={
             <ProtectedRoute>
               <PortfolioPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* Admin — Parcel data layer */}
+        <Route
+          path="/admin/parcels/import"
+          element={
+            <ProtectedRoute>
+              <ParcelImportPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/parcels/counties"
+          element={
+            <ProtectedRoute>
+              <CountiesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/parcels/fallbacks"
+          element={
+            <ProtectedRoute>
+              <FallbacksPage />
             </ProtectedRoute>
           }
         />

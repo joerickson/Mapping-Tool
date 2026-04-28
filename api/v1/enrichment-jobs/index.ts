@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createAdminClient } from '../../_lib/supabase'
 import { authenticateRequest } from '../../_lib/auth'
 import { runEnrichmentJob } from '../../../src/lib/enrichment/orchestrator'
+import { parcelLookup } from '../../../src/lib/parcel/lookup'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end()
@@ -20,7 +21,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const VALID_JOB_TYPES = ['full', 'geocode', 'places', 'parcel', 'ai_classify']
     if (!VALID_JOB_TYPES.includes(job_type)) {
-      return res.status(400).json({ error: `job_type must be one of: ${VALID_JOB_TYPES.join(', ')}` })
+      return res
+        .status(400)
+        .json({ error: `job_type must be one of: ${VALID_JOB_TYPES.join(', ')}` })
     }
 
     await db
@@ -36,6 +39,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         status: 'queued',
         total_properties: property_ids.length,
         processed_properties: 0,
+        api_calls: {},
       })
       .select('enrichment_job_id')
       .single()
@@ -54,23 +58,53 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         await runEnrichmentJob(jobId, property_ids, {
           googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY!,
           anthropicApiKey: process.env.ANTHROPIC_API_KEY!,
-          regridApiKey: process.env.REGRID_API_KEY!,
+          parcelLookupFn: (propertyId, lat, lng) =>
+            parcelLookup(lat, lng, {
+              db,
+              regridApiKey: process.env.REGRID_API_KEY ?? '',
+              propertyId,
+            }),
           supabaseUpdate: async (id, data) => {
             await db.from('properties').update(data).eq('property_id', id)
           },
           supabaseGet: async (id) => {
-            const { data } = await db.from('properties').select('*').eq('property_id', id).single()
+            const { data } = await db
+              .from('properties')
+              .select('*')
+              .eq('property_id', id)
+              .single()
             return data
           },
           getCategories: async () => {
             const { data } = await db.from('rbm_categories').select('*')
             return data ?? []
           },
-          updateJobProgress: async (jid, processed, cost) => {
-            await db
-              .from('enrichment_jobs')
-              .update({ processed_properties: processed, estimated_cost_usd: cost })
-              .eq('enrichment_job_id', jid)
+          updateJobProgress: async (jid, processed, cost, apiCallsDelta) => {
+            if (apiCallsDelta) {
+              const { data: current } = await db
+                .from('enrichment_jobs')
+                .select('api_calls, estimated_cost_usd')
+                .eq('enrichment_job_id', jid)
+                .single()
+              const existing: Record<string, number> = (current?.api_calls as Record<string, number>) ?? {}
+              const merged: Record<string, number> = { ...existing }
+              for (const [k, v] of Object.entries(apiCallsDelta)) {
+                merged[k] = (merged[k] ?? 0) + v
+              }
+              await db
+                .from('enrichment_jobs')
+                .update({
+                  processed_properties: processed,
+                  estimated_cost_usd: (current?.estimated_cost_usd ?? 0) + cost,
+                  api_calls: merged,
+                })
+                .eq('enrichment_job_id', jid)
+            } else {
+              await db
+                .from('enrichment_jobs')
+                .update({ processed_properties: processed, estimated_cost_usd: cost })
+                .eq('enrichment_job_id', jid)
+            }
           },
         })
 
