@@ -38,7 +38,7 @@ export default function UploadSummaryPage() {
 
         if (!mounted) return
         setData({
-          batch_id: batchId,
+          batch_id: batchId!,
           status: statusData.status,
           source_filename: previewData.source_filename ?? 'Upload',
           total_rows: statusData.total_rows ?? 0,

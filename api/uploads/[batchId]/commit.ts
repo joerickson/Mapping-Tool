@@ -98,7 +98,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (!propertyId) continue
       } else {
         propertyId = prop.property_id
-        if (row.dedupe_hash) dedupeCache.set(row.dedupe_hash as string, propertyId)
+        if (row.dedupe_hash) dedupeCache.set(row.dedupe_hash as string, propertyId!)
         newProperties++
       }
     }

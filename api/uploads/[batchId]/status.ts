@@ -2,6 +2,24 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createAdminClient } from '../../_lib/supabase.js'
 import { authenticateRequest } from '../../_lib/auth.js'
 
+interface UploadBatchRow {
+  upload_batch_id: string
+  status: string | null
+  total_rows: number | null
+  row_count: number | null
+  rows_processed: number | null
+  errors_count: number | null
+  validation_errors_count: number | null
+  auto_corrections_count: number | null
+  current_sheet: string | null
+  summary_stats: Record<string, unknown> | null
+  completed_at: string | null
+  committed_at: string | null
+  cancelled_at: string | null
+  error_message: string | null
+  sheets: unknown
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
@@ -16,7 +34,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const batchId = req.query.batchId as string
   const db = createAdminClient()
 
-  const { data: batch, error } = await db
+  const { data: batchRaw, error } = await db
     .from('upload_batches')
     .select(
       'upload_batch_id, status, total_rows, row_count, rows_processed, errors_count, ' +
@@ -26,7 +44,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     .eq('upload_batch_id', batchId)
     .single()
 
-  if (error || !batch) return res.status(404).json({ error: 'Batch not found' })
+  if (error || !batchRaw) return res.status(404).json({ error: 'Batch not found' })
+  const batch = batchRaw as unknown as UploadBatchRow
 
   const totalRows = (batch.total_rows ?? batch.row_count ?? 0) as number
 
