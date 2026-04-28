@@ -14,6 +14,20 @@ interface SheetMeta {
   name: string
   row_count: number
   columns: string[]
+  header_row_index: number
+}
+
+function detectHeaderRow(allRows: unknown[][]): number {
+  for (let i = 0; i < Math.min(5, allRows.length); i++) {
+    const row = allRows[i]
+    const nonNull = row.filter((c) => c !== null && c !== undefined && c !== '')
+    if (nonNull.length < 3) continue
+    const stringLike = nonNull.filter(
+      (c) => typeof c === 'string' && !/^\d+\.\d+$/.test(c),
+    )
+    if (stringLike.length >= nonNull.length * 0.7) return i
+  }
+  return 0
 }
 
 function parseSheetsFromBuffer(buf: Buffer, ext: string): SheetMeta[] {
@@ -21,27 +35,32 @@ function parseSheetsFromBuffer(buf: Buffer, ext: string): SheetMeta[] {
     const text = buf.toString('utf-8')
     const result = Papa.parse<Record<string, unknown>>(text, { header: true, skipEmptyLines: true })
     const columns = (result.meta.fields ?? []).filter(Boolean)
-    return [{ name: 'Sheet1', row_count: result.data.length, columns }]
+    return [{ name: 'Sheet1', row_count: result.data.length, columns, header_row_index: 0 }]
   }
 
   const wb = XLSX.read(buf, { type: 'buffer' })
   return wb.SheetNames.map((name) => {
     const sheet = wb.Sheets[name]
-    const ref = sheet['!ref']
-    const range = ref ? XLSX.utils.decode_range(ref) : null
-    const rowCount = range ? Math.max(0, range.e.r) : 0 // 0-based last row index = data row count
+    const allRows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+      header: 1,
+      defval: null,
+      blankrows: false,
+    })
 
-    let columns: string[] = []
-    if (range) {
-      const headerRange = XLSX.utils.encode_range({
-        s: { r: 0, c: range.s.c },
-        e: { r: 0, c: range.e.c },
-      })
-      const rows = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, { header: 1, range: headerRange })
-      columns = (rows[0] ?? []).map((v) => String(v ?? '')).filter(Boolean)
+    if (allRows.length === 0) {
+      return { name, columns: [], row_count: 0, header_row_index: -1 }
     }
 
-    return { name, row_count: rowCount, columns }
+    const headerIndex = detectHeaderRow(allRows)
+    const columns = (allRows[headerIndex] ?? [])
+      .map((h) => (h === null || h === undefined ? '' : String(h).trim()))
+      .filter(Boolean)
+
+    const dataRows = allRows
+      .slice(headerIndex + 1)
+      .filter((row) => row.some((cell) => cell !== null && cell !== undefined && cell !== ''))
+
+    return { name, columns, row_count: dataRows.length, header_row_index: headerIndex }
   })
 }
 
