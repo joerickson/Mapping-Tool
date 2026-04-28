@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useAuth } from '../hooks/useAuth'
+import { useClient } from '../context/ClientContext'
 import Navbar from '../components/ui/Navbar'
 import MapView from '../components/map/MapView'
 import FilterSidebar from '../components/map/FilterSidebar'
@@ -19,6 +20,7 @@ const DEFAULT_FILTER: MapFilter = {
 
 export default function MapPage() {
   const { getToken } = useAuth()
+  const { clients, selectedClientId } = useClient()
   const [propertiesWithLocations, setPropertiesWithLocations] = useState<PropertyWithLocations[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<MapFilter>(DEFAULT_FILTER)
@@ -30,13 +32,30 @@ export default function MapPage() {
   const [portfolioName, setPortfolioName] = useState('')
   const [savingPortfolio, setSavingPortfolio] = useState(false)
 
+  // Build a client color map for pin coloring
+  const clientColorMap = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const c of clients) {
+      map[c.id] = c.brand_color ?? hashColor(c.id)
+    }
+    return map
+  }, [clients])
+
   useEffect(() => {
     async function load() {
       setLoading(true)
       try {
         const token = await getToken()
         const params = new URLSearchParams()
-        if (filter.clients.length) params.set('client_id', filter.clients.join(','))
+
+        // Apply nav-level client switcher as a filter baseline
+        const effectiveClients = filter.clients.length
+          ? filter.clients
+          : selectedClientId
+          ? [selectedClientId]
+          : []
+
+        if (effectiveClients.length) params.set('client_id', effectiveClients.join(','))
         if (filter.categories.length) params.set('category', filter.categories.join(','))
         if (filter.statuses.length) params.set('status', filter.statuses.join(','))
         if (filter.portfolios.length) params.set('portfolio_id', filter.portfolios.join(','))
@@ -55,15 +74,18 @@ export default function MapPage() {
       }
     }
     load()
-  }, [filter, getToken])
+  }, [filter, getToken, selectedClientId])
 
   const pins = useMemo(
     () =>
       propertiesWithLocations.map((p) => ({
         property: p as Property,
         locations: p.service_locations,
+        clientColor: p.service_locations[0]?.client_id
+          ? (clientColorMap[p.service_locations[0].client_id] ?? null)
+          : null,
       })),
-    [propertiesWithLocations]
+    [propertiesWithLocations, clientColorMap]
   )
 
   const selectedProperty = useMemo(
@@ -168,6 +190,7 @@ export default function MapPage() {
             bulkSelectMode={bulkSelectMode}
             selectedIds={selectedIds}
             filter={filter}
+            showClientColors={!selectedClientId && clients.length > 1}
           />
 
           {/* Bulk select toggle */}
@@ -236,4 +259,14 @@ export default function MapPage() {
       </Modal>
     </div>
   )
+}
+
+function hashColor(str: string): string {
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash)
+    hash |= 0
+  }
+  const h = Math.abs(hash) % 360
+  return `hsl(${h}, 65%, 50%)`
 }

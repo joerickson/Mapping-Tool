@@ -1,3 +1,20 @@
+export interface Client {
+  id: string
+  name: string
+  display_name?: string | null
+  status: 'active' | 'prospect' | 'churned'
+  notes?: string | null
+  primary_contact_name?: string | null
+  primary_contact_email?: string | null
+  primary_contact_phone?: string | null
+  brand_color?: string | null
+  logo_url?: string | null
+  metadata?: Record<string, unknown>
+  created_at: string
+  updated_at: string
+  created_by?: string | null
+}
+
 export type ColumnMapping = {
   address_line1: string
   address_line2?: string

@@ -15,11 +15,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const db = createAdminClient()
 
   if (req.method === 'GET') {
-    const { data, error } = await db
+    const { client_id } = req.query
+
+    // Service-key callers must scope to a client
+    if (ctx.mode === 'service' && !client_id) {
+      return res.status(400).json({ error: 'client_id is required for service-key auth' })
+    }
+
+    let query = db
       .from('portfolios')
       .select('*')
       .order('created_at', { ascending: false })
 
+    if (client_id) query = query.eq('client_id', String(client_id))
+
+    const { data, error } = await query
     if (error) return res.status(500).json({ error: error.message })
     return res.status(200).json(data ?? [])
   }
