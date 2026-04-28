@@ -329,10 +329,30 @@ Deno.serve(async (req) => {
       const columnMapping = processingConfig.column_mappings[sheetName] ?? {}
       const serviceOfferingId = sheetMapping.service_offering_id
 
-      const sheets = (batch.sheets ?? []) as Array<{ name: string; header_row_index?: number }>
-      const sheetMeta = sheets.find((s) => s.name === sheetName)
+      const batchSheets = (batch.sheets ?? []) as Array<{ name: string; header_row_index?: number }>
+      const sheetMeta = batchSheets.find((s) => s.name === sheetName)
       const headerRowIndex = sheetMeta?.header_row_index ?? 0
-      const allRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', range: headerRowIndex })
+
+      // Issue A: use blankrows:false consistent with how header_row_index was computed during upload
+      const allRawRows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', blankrows: false })
+      const headerRow = (allRawRows[headerRowIndex] ?? []) as unknown[]
+
+      // Issue B: build column-name → column-index map for deterministic index-based lookups
+      const colNameToIndex = new Map<string, number>()
+      headerRow.forEach((cell, idx) => {
+        const name = cell != null ? String(cell).trim() : ''
+        if (name) colNameToIndex.set(name, idx)
+      })
+
+      // Data rows start after the header; convert each raw array to a column-name–keyed object
+      const allRows = allRawRows.slice(headerRowIndex + 1).map((rawArr) => {
+        const arr = rawArr as unknown[]
+        const obj: Record<string, unknown> = {}
+        colNameToIndex.forEach((colIdx, name) => {
+          obj[name] = arr[colIdx] ?? ''
+        })
+        return obj
+      })
       const batchDedupeSet = new Map<string, string>()
 
       // Update current sheet
