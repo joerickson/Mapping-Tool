@@ -1,3 +1,16 @@
+-- Base table stub: created here for preview-branch compatibility (production already has this table)
+CREATE TABLE IF NOT EXISTS upload_batches (
+  upload_batch_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  filename        TEXT,
+  row_count       INTEGER NOT NULL DEFAULT 0,
+  raw_data        JSONB NOT NULL DEFAULT '[]',
+  column_mapping  JSONB NOT NULL DEFAULT '{}',
+  client_id       TEXT,
+  portfolio_id    UUID,
+  uploaded_by     TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Stage 0 scrub results: one row per uploaded row, persisted before any geocoding
 CREATE TABLE IF NOT EXISTS staged_addresses (
   staged_id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
