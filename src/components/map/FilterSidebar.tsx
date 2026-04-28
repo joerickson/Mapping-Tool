@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 import { useClient } from '../../context/ClientContext'
-import type { MapFilter, RbmCategory, ServiceLocationStatus, Client } from '../../types'
+import type { MapFilter, ServiceLocationStatus, Client } from '../../types'
 import { STATUS_LABELS } from '../../lib/constants'
 
 interface FilterSidebarProps {
@@ -14,7 +14,6 @@ const STATUSES: ServiceLocationStatus[] = ['active', 'paused', 'terminated', 'pr
 export default function FilterSidebar({ filter, onChange }: FilterSidebarProps) {
   const { getToken } = useAuth()
   const { clients: allClients } = useClient()
-  const [categories, setCategories] = useState<RbmCategory[]>([])
   const [portfolios, setPortfolios] = useState<{ portfolio_id: string; name: string }[]>([])
 
   // Only show active+prospect clients in filter
@@ -24,12 +23,14 @@ export default function FilterSidebar({ filter, onChange }: FilterSidebarProps) 
     async function load() {
       const token = await getToken()
       const headers = { Authorization: `Bearer ${token}` }
-      const [catsRes, portsRes] = await Promise.all([
-        fetch('/api/v1/categories', { headers }),
+      const [portsResult] = await Promise.allSettled([
         fetch('/api/v1/portfolios', { headers }),
       ])
-      if (catsRes.ok) setCategories(await catsRes.json())
-      if (portsRes.ok) setPortfolios(await portsRes.json())
+      if (portsResult.status === 'fulfilled' && portsResult.value.ok) {
+        setPortfolios(await portsResult.value.json())
+      } else if (portsResult.status === 'rejected') {
+        console.error('Failed to load portfolios:', portsResult.reason)
+      }
     }
     load()
   }, [getToken])
@@ -43,11 +44,10 @@ export default function FilterSidebar({ filter, onChange }: FilterSidebarProps) 
   }
 
   const clearAll = () =>
-    onChange({ clients: [], categories: [], cityState: '', statuses: [], portfolios: [] })
+    onChange({ clients: [], cityState: '', statuses: [], portfolios: [] })
 
   const hasActive =
     filter.clients.length > 0 ||
-    filter.categories.length > 0 ||
     filter.cityState !== '' ||
     filter.statuses.length > 0 ||
     filter.portfolios.length > 0
@@ -97,32 +97,6 @@ export default function FilterSidebar({ filter, onChange }: FilterSidebarProps) 
             ))}
           </div>
         </section>
-
-        {/* Categories */}
-        {categories.length > 0 && (
-          <section>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-              Category
-            </label>
-            <div className="space-y-1.5 max-h-48 overflow-y-auto">
-              {categories.map((c) => (
-                <label key={c.code} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={filter.categories.includes(c.code)}
-                    onChange={() => toggleMulti('categories', c.code)}
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  />
-                  <span
-                    className="w-3 h-3 rounded-full shrink-0"
-                    style={{ backgroundColor: c.color ?? '#9ca3af' }}
-                  />
-                  <span className="text-sm text-gray-700">{c.label}</span>
-                </label>
-              ))}
-            </div>
-          </section>
-        )}
 
         {/* Client */}
         {clients.length > 0 && (

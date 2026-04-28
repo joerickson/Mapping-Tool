@@ -292,7 +292,6 @@ export interface GeoJSONPolygon {
 
 export interface MapFilter {
   clients: string[]
-  categories: string[]
   cityState: string
   statuses: ServiceLocationStatus[]
   portfolios: string[]
