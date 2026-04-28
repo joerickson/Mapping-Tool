@@ -238,6 +238,11 @@ export interface StagedAddress {
   usps_verified: boolean | null
   usps_response: unknown
   validated_address: ValidatedAddress | null
+  validation_granularity: string | null
+  latitude: number | null
+  longitude: number | null
+  geocoded_at: string | null
+  geocode_source: string | null
   user_action: 'approved' | 'skip' | 'merge' | 'treat_as_new' | null
   user_edited_address: ValidatedAddress | null
   created_at: string

@@ -35,21 +35,40 @@ export async function runEnrichmentJob(
   let processed = 0
   let totalCost = 0
 
-  // Stage 1: Geocode all properties in batch
   const properties = await Promise.all(propertyIds.map((id) => config.supabaseGet(id)))
   const validProps = properties.filter((p): p is Property => p !== null)
 
-  const geocodeResults = await geocodeBatch(validProps, config.googleMapsApiKey, 10)
+  // Stage 1: Geocode — skip any property that Stage 0c already geocoded
+  const needsGeocode = validProps.filter((p) => !p.latitude || !p.longitude)
+  const alreadyGeocoded = validProps.filter((p) => p.latitude && p.longitude)
+
+  const geocodeResults = await geocodeBatch(needsGeocode, config.googleMapsApiKey, 10)
+
+  // Inject already-geocoded properties so the rest of the pipeline can use them uniformly
+  for (const property of alreadyGeocoded) {
+    geocodeResults.set(property.property_id, {
+      latitude: property.latitude!,
+      longitude: property.longitude!,
+      geocode_confidence: (property.geocode_confidence as 'rooftop' | 'range_interpolated' | 'approximate') ?? 'approximate',
+      geocode_source: (property.geocode_source as 'google' | 'google_address_validation') ?? 'google_address_validation',
+      geocoded_at: property.geocoded_at ?? new Date().toISOString(),
+    })
+    if (property.enrichment_status === 'pending') {
+      await config.supabaseUpdate(property.property_id, { enrichment_status: 'geocoded' })
+    }
+  }
 
   for (const property of validProps) {
     const geoResult = geocodeResults.get(property.property_id)
 
     if (geoResult) {
-      await config.supabaseUpdate(property.property_id, {
-        ...geoResult,
-        enrichment_status: 'geocoded',
-      })
-      totalCost += 0.005
+      if (!alreadyGeocoded.includes(property)) {
+        await config.supabaseUpdate(property.property_id, {
+          ...geoResult,
+          enrichment_status: 'geocoded',
+        })
+        totalCost += 0.005
+      }
     } else {
       await config.supabaseUpdate(property.property_id, {
         enrichment_errors: {

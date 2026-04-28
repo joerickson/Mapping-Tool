@@ -31,12 +31,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const batchId: string = batch.upload_batch_id
 
-  // Stage 0: local scrub + dedup (always runs), + optional Smarty validation
+  // Stage 0: local scrub + dedup (always runs), + optional Google Address Validation
   let summary
   try {
     summary = await runScrubPipeline(batchId, rows, mapping, db, {
-      smartyAuthId: process.env.SMARTY_AUTH_ID,
-      smartyAuthToken: process.env.SMARTY_AUTH_TOKEN,
+      googleAddressValidationKey: process.env.GOOGLE_ADDRESS_VALIDATION_KEY,
     })
   } catch (err) {
     return res.status(500).json({ error: err instanceof Error ? err.message : 'Scrub pipeline failed' })

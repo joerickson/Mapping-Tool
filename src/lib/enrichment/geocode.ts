@@ -4,7 +4,7 @@ export interface GeocodeResult {
   latitude: number
   longitude: number
   geocode_confidence: 'rooftop' | 'range_interpolated' | 'approximate'
-  geocode_source: 'google'
+  geocode_source: 'google' | 'google_address_validation'
   geocoded_at: string
 }
 
