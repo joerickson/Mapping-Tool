@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import Papa from 'papaparse'
@@ -8,10 +8,11 @@ import UploadDropzone from '../components/upload/UploadDropzone'
 import PreviewTable from '../components/upload/PreviewTable'
 import ColumnMapper from '../components/upload/ColumnMapper'
 import Button from '../components/ui/Button'
-import { REQUIRED_COLUMNS, US_STATES } from '../lib/constants'
-import type { ColumnMapping } from '../types'
+import { REQUIRED_COLUMNS } from '../lib/constants'
+import { normalizeCountry, validateState, validatePostalCode } from '../lib/constants/addressValidation'
+import type { ColumnMapping, BatchStatusResponse } from '../types'
 
-type Step = 'upload' | 'map' | 'validate'
+type Step = 'upload' | 'map' | 'validate' | 'processing'
 
 interface ParsedData {
   columns: string[]
@@ -38,8 +39,9 @@ function guessMapping(columns: string[]): Partial<ColumnMapping> {
     address_line1: find([/^address.?line.?1/i, /^address1/i, /^addr1/i, /^street/i, /^address$/i]),
     address_line2: find([/^address.?line.?2/i, /^address2/i, /^addr2/i]),
     city: find([/^city$/i, /^city.?name/i]),
-    state: find([/^state$/i, /^state.?code/i, /^st$/i]),
+    state: find([/^state$/i, /^state.?code/i, /^province/i, /^st$/i]),
     postal_code: find([/^postal/i, /^zip/i, /^postcode/i]),
+    country: find([/^country/i, /^country.?code/i]),
     location_code: find([/^location.?code/i, /^loc.?code/i, /^code$/i]),
     display_name: find([/^display.?name/i, /^name$/i, /^location.?name/i]),
     suite_or_floor: find([/^suite/i, /^floor/i, /^unit/i]),
@@ -54,7 +56,7 @@ function validateRows(
   const errors: ValidationError[] = []
 
   rows.forEach((row, i) => {
-    const rowNum = i + 2 // 1-indexed + header
+    const rowNum = i + 2
 
     const addr = String(row[mapping.address_line1] ?? '').trim()
     if (!addr) errors.push({ row: rowNum, field: 'address_line1', message: 'Required' })
@@ -62,18 +64,27 @@ function validateRows(
     const city = String(row[mapping.city] ?? '').trim()
     if (!city) errors.push({ row: rowNum, field: 'city', message: 'Required' })
 
-    const state = String(row[mapping.state] ?? '').trim().toUpperCase()
+    const rawCountry = mapping.country ? String(row[mapping.country] ?? '').trim() : ''
+    const country = rawCountry ? (normalizeCountry(rawCountry) ?? 'US') : 'US'
+
+    const state = String(row[mapping.state] ?? '').trim()
     if (!state) {
       errors.push({ row: rowNum, field: 'state', message: 'Required' })
-    } else if (!US_STATES.includes(state)) {
-      errors.push({ row: rowNum, field: 'state', message: `Invalid state code: ${state}` })
+    } else {
+      const stateResult = validateState(state, country)
+      if (!stateResult.valid) {
+        errors.push({ row: rowNum, field: 'state', message: stateResult.error ?? `Invalid state: ${state}` })
+      }
     }
 
-    const zip = String(row[mapping.postal_code] ?? '').trim()
-    if (!zip) {
+    const postal = String(row[mapping.postal_code] ?? '').trim()
+    if (!postal) {
       errors.push({ row: rowNum, field: 'postal_code', message: 'Required' })
-    } else if (!/^\d{5}(-\d{4})?$/.test(zip)) {
-      errors.push({ row: rowNum, field: 'postal_code', message: `Invalid format: ${zip}` })
+    } else {
+      const postalResult = validatePostalCode(postal, country)
+      if (!postalResult.valid) {
+        errors.push({ row: rowNum, field: 'postal_code', message: postalResult.error ?? `Invalid postal code: ${postal}` })
+      }
     }
   })
 
@@ -89,6 +100,53 @@ export default function UploadPage() {
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [batchId, setBatchId] = useState<string | null>(null)
+  const [batchStatus, setBatchStatus] = useState<BatchStatusResponse | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+  }, [])
+
+  useEffect(() => () => stopPolling(), [stopPolling])
+
+  const pollStatus = useCallback(async (id: string, token: string) => {
+    try {
+      const res = await fetch(`/api/uploads/${id}/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) return
+      const data: BatchStatusResponse = await res.json()
+      setBatchStatus(data)
+      if (data.status === 'completed' || data.status === 'failed') {
+        stopPolling()
+      }
+    } catch {
+      // ignore poll errors
+    }
+  }, [stopPolling])
+
+  const startProcessing = useCallback(async (id: string) => {
+    try {
+      const token = await getToken()
+      if (!token) throw new Error('Not authenticated')
+      // Kick off processing in the background
+      fetch(`/api/uploads/${id}/process`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {})
+
+      // Begin polling
+      pollRef.current = setInterval(() => pollStatus(id, token), 2000)
+      // Poll immediately too
+      pollStatus(id, token)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start processing')
+    }
+  }, [getToken, pollStatus])
 
   const handleFile = useCallback((file: File) => {
     setError(null)
@@ -119,7 +177,7 @@ export default function UploadPage() {
           setParsed({ columns, rows, filename: file.name })
           setMapping(guessMapping(columns))
           setStep('map')
-        } catch (err) {
+        } catch {
           setError('Failed to parse file')
         }
       }
@@ -154,8 +212,11 @@ export default function UploadPage() {
         }),
       })
       if (!res.ok) throw new Error(await res.text())
-      const { batchId } = await res.json()
-      navigate(`/upload/${batchId}/review`)
+      const { batchId: id } = await res.json()
+      setBatchId(id)
+      setBatchStatus(null)
+      setStep('processing')
+      await startProcessing(id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed')
     } finally {
@@ -163,7 +224,33 @@ export default function UploadPage() {
     }
   }
 
+  const handleDownloadInvalid = () => {
+    if (!batchStatus?.summary || !parsed) return
+    // Build CSV of rows that have validation errors from client-side pass
+    const invalidRows = validationErrors
+      .map((e) => e.row - 2)
+      .filter((v, i, a) => a.indexOf(v) === i)
+      .map((idx) => parsed.rows[idx])
+      .filter(Boolean)
+    if (!invalidRows.length) return
+    const cols = Object.keys(invalidRows[0])
+    const csv = [
+      cols.join(','),
+      ...invalidRows.map((r) =>
+        cols.map((c) => JSON.stringify(r[c] ?? '')).join(',')
+      ),
+    ].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'invalid_rows.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const isMappingComplete = REQUIRED_COLUMNS.every((col) => mapping[col])
+  const STEP_LABELS: Step[] = ['upload', 'map', 'validate', 'processing']
 
   return (
     <div className="flex flex-col h-full bg-gray-50">
@@ -174,18 +261,18 @@ export default function UploadPage() {
 
           {/* Steps indicator */}
           <div className="flex items-center gap-2 mb-8">
-            {(['upload', 'map', 'validate'] as Step[]).map((s, i) => (
+            {STEP_LABELS.map((s, i) => (
               <div key={s} className="flex items-center gap-2">
                 <div
                   className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-medium
-                    ${step === s ? 'bg-blue-600 text-white' : i < (['upload','map','validate'] as Step[]).indexOf(step) ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-500'}`}
+                    ${step === s ? 'bg-blue-600 text-white' : i < STEP_LABELS.indexOf(step) ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-500'}`}
                 >
                   {i + 1}
                 </div>
                 <span className={`text-sm ${step === s ? 'text-gray-900 font-medium' : 'text-gray-400'}`}>
-                  {s.charAt(0).toUpperCase() + s.slice(1)}
+                  {s === 'processing' ? 'Processing' : s.charAt(0).toUpperCase() + s.slice(1)}
                 </span>
-                {i < 2 && <div className="w-8 h-px bg-gray-300" />}
+                {i < STEP_LABELS.length - 1 && <div className="w-8 h-px bg-gray-300" />}
               </div>
             ))}
           </div>
@@ -241,7 +328,7 @@ export default function UploadPage() {
                 ) : (
                   <div className="space-y-2">
                     <div className="p-3 bg-yellow-50 rounded-lg text-yellow-800 text-sm">
-                      {validationErrors.length} validation error(s) found. Rows with errors will be skipped.
+                      {validationErrors.length} validation error(s) found. Rows with errors will be flagged for review.
                     </div>
                     <div className="max-h-64 overflow-y-auto space-y-1">
                       {validationErrors.slice(0, 50).map((e, i) => (
@@ -255,19 +342,125 @@ export default function UploadPage() {
                         </div>
                       )}
                     </div>
+                    {validationErrors.length > 0 && (
+                      <button
+                        onClick={handleDownloadInvalid}
+                        className="text-sm text-blue-600 hover:underline px-2"
+                      >
+                        Download invalid rows as CSV
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
               <div className="flex justify-end gap-3">
                 <Button variant="secondary" onClick={() => setStep('map')}>Back</Button>
                 <Button onClick={handleConfirm} loading={submitting}>
-                  {validationErrors.length > 0 ? 'Continue with Valid Rows' : 'Scrub & Review'}
+                  {validationErrors.length > 0 ? 'Continue with Valid Rows' : 'Upload & Process'}
                 </Button>
               </div>
             </div>
           )}
+
+          {step === 'processing' && (
+            <ProcessingStep
+              batchStatus={batchStatus}
+              totalRows={parsed?.rows.length ?? 0}
+              onReview={() => batchId && navigate(`/upload/${batchId}/review`)}
+            />
+          )}
         </div>
       </div>
+    </div>
+  )
+}
+
+function ProcessingStep({
+  batchStatus,
+  totalRows,
+  onReview,
+}: {
+  batchStatus: BatchStatusResponse | null
+  totalRows: number
+  onReview: () => void
+}) {
+  const status = batchStatus?.status ?? 'queued'
+  const processed = batchStatus?.rows_processed ?? 0
+  const total = batchStatus?.total_rows ?? totalRows
+  const pct = total > 0 ? Math.round((processed / total) * 100) : 0
+  const summary = batchStatus?.summary
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white rounded-xl p-6 shadow-sm border">
+        <h2 className="font-semibold text-gray-800 mb-4">
+          {status === 'completed' ? 'Processing Complete' : 'Processing Upload…'}
+        </h2>
+
+        {status !== 'completed' && status !== 'failed' && (
+          <div className="space-y-3">
+            <div className="flex justify-between text-sm text-gray-600">
+              <span>{processed.toLocaleString()} of {total.toLocaleString()} rows</span>
+              <span>{pct}%</span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-2.5">
+              <div
+                className="bg-blue-600 h-2.5 rounded-full transition-all duration-500"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <p className="text-sm text-gray-500">
+              {status === 'queued' ? 'Queued — starting soon…' : 'Scrubbing and validating addresses…'}
+            </p>
+          </div>
+        )}
+
+        {status === 'failed' && (
+          <div className="p-4 bg-red-50 rounded-lg text-red-700 text-sm">
+            Processing failed: {batchStatus?.error ?? 'Unknown error'}
+          </div>
+        )}
+
+        {status === 'completed' && summary && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <SummaryStat label="Total" value={summary.total} color="gray" />
+              <SummaryStat label="Valid" value={summary.clean + summary.auto_corrected} color="green" />
+              <SummaryStat label="Auto-corrected" value={summary.auto_corrected} color="yellow" />
+              <SummaryStat label="Needs review" value={summary.needs_review} color="red" />
+            </div>
+            {summary.duplicate + summary.existing_property > 0 && (
+              <p className="text-sm text-gray-500">
+                {summary.duplicate + summary.existing_property} duplicate(s) detected and excluded.
+              </p>
+            )}
+            {batchStatus.auto_corrections_count > 0 && (
+              <p className="text-sm text-yellow-700 bg-yellow-50 rounded-lg px-3 py-2">
+                {batchStatus.auto_corrections_count} auto-correction(s) applied (e.g. province names, postal formatting).
+                These are flagged in the review step but do not block proceeding.
+              </p>
+            )}
+            <div className="flex justify-end pt-2">
+              <Button onClick={onReview}>Proceed to Review</Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function SummaryStat({ label, value, color }: { label: string; value: number; color: 'green' | 'yellow' | 'red' | 'gray' }) {
+  const colors = {
+    green: 'text-green-600',
+    yellow: 'text-yellow-600',
+    red: 'text-red-600',
+    gray: 'text-gray-700',
+  }
+  return (
+    <div className="flex flex-col">
+      <span className={`text-2xl font-bold ${colors[color]}`}>{value.toLocaleString()}</span>
+      <span className="text-xs text-gray-500">{label}</span>
     </div>
   )
 }

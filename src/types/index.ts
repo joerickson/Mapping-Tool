@@ -4,10 +4,32 @@ export type ColumnMapping = {
   city: string
   state: string
   postal_code: string
+  country?: string
   location_code?: string
   display_name?: string
   suite_or_floor?: string
   serviceable_sqft?: string
+}
+
+export type BatchProcessStatus = 'queued' | 'processing' | 'completed' | 'failed'
+
+export interface BatchStatusResponse {
+  batchId: string
+  status: BatchProcessStatus
+  total_rows: number
+  rows_processed: number
+  validation_errors_count: number
+  auto_corrections_count: number
+  error?: string
+  summary?: {
+    total: number
+    clean: number
+    auto_corrected: number
+    needs_review: number
+    duplicate: number
+    existing_property: number
+    rejected: number
+  }
 }
 
 export type EnrichmentStatus =
@@ -92,6 +114,13 @@ export interface UploadBatch {
   row_count: number
   raw_data: Record<string, unknown>[]
   column_mapping: ColumnMapping
+  status: BatchProcessStatus
+  rows_processed: number
+  validation_errors_count: number
+  auto_corrections_count: number
+  processing_started_at?: string | null
+  completed_at?: string | null
+  error_message?: string | null
   client_id?: string | null
   portfolio_id?: string | null
   uploaded_by?: string | null
