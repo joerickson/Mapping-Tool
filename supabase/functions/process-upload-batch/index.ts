@@ -332,19 +332,54 @@ Deno.serve(async (req) => {
       const sheets = (batch.sheets ?? []) as Array<{ name: string; header_row_index?: number }>
       const sheetMeta = sheets.find((s) => s.name === sheetName)
       const headerRowIndex = sheetMeta?.header_row_index ?? 0
-      const allRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', range: headerRowIndex })
+
+      // Read all rows as position arrays so we can use trimmed header names for lookup
+      const rawRows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+        header: 1,
+        defval: null,
+        blankrows: false,
+      })
+
+      // Build column-index → target-field lookup; trim cell names to match stored column names
+      const headerRow = (rawRows[headerRowIndex] ?? []) as unknown[]
+      const indexToTarget: Record<number, string> = {}
+      headerRow.forEach((colName, idx) => {
+        if (colName === null || colName === undefined) return
+        const trimmed = String(colName).trim()
+        const target = columnMapping[trimmed]
+        if (target && target !== '' && target !== 'skip') indexToTarget[idx] = target
+      })
+
+      // Identity mapping so processRow passes pre-mapped values through unchanged
+      const identityMapping: Record<string, string> = {}
+      for (const target of Object.values(indexToTarget)) identityMapping[target] = target
+
+      // Data rows start immediately after the header row
+      const dataRows = rawRows.slice(headerRowIndex + 1)
       const batchDedupeSet = new Map<string, string>()
 
       // Update current sheet
       await db.from('upload_batches').update({ current_sheet: sheetName }).eq('upload_batch_id', batchId)
 
-      for (let i = 0; i < allRows.length; i += CHUNK_SIZE) {
-        const chunk = allRows.slice(i, i + CHUNK_SIZE)
+      for (let i = 0; i < dataRows.length; i += CHUNK_SIZE) {
+        const chunk = dataRows.slice(i, i + CHUNK_SIZE)
         const staged = []
 
         for (let j = 0; j < chunk.length; j++) {
+          const rowArr = chunk[j] as unknown[]
+
+          // Skip entirely empty rows
+          if (!rowArr.some((cell) => cell !== null && cell !== undefined && cell !== '')) continue
+
+          // Build pre-mapped row keyed by target field name using column-index lookup
+          const preMapped: Record<string, unknown> = {}
+          for (const [idxStr, target] of Object.entries(indexToTarget)) {
+            const cell = rowArr[Number(idxStr)]
+            if (cell !== null && cell !== undefined && cell !== '') preMapped[target] = cell
+          }
+
           const rowIdx = i + j
-          const result = await processRow(chunk[j], columnMapping, serviceOfferingId, clientId, batchDedupeSet, db)
+          const result = await processRow(preMapped, identityMapping, serviceOfferingId, clientId, batchDedupeSet, db)
 
           stats.total++
           stats[result.outcome as keyof typeof stats] = (stats[result.outcome as keyof typeof stats] ?? 0) + 1
@@ -365,10 +400,12 @@ Deno.serve(async (req) => {
         }
 
         // Upsert staged rows
-        await db.from('upload_staged_rows').upsert(staged, {
-          onConflict: 'upload_batch_id,sheet_name,row_index',
-          ignoreDuplicates: false,
-        })
+        if (staged.length > 0) {
+          await db.from('upload_staged_rows').upsert(staged, {
+            onConflict: 'upload_batch_id,sheet_name,row_index',
+            ignoreDuplicates: false,
+          })
+        }
 
         // Update progress
         await db
