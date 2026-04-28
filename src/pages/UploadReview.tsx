@@ -96,7 +96,7 @@ export default function UploadReview() {
     const preCorrection: ValidatedAddress = { ...row.validated_address }
     for (const c of row.scrub_corrections ?? []) {
       if (c.field in preCorrection) {
-        (preCorrection as Record<string, string>)[c.field] = c.original
+        (preCorrection as unknown as Record<string, string>)[c.field] = c.original
       }
     }
     await patchRow(row.staged_id, { user_action: 'approved', user_edited_address: preCorrection })
