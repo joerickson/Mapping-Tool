@@ -25,8 +25,7 @@
   "rewrites": [
     { "source": "/embed/map", "destination": "/api/embed/map" },
     { "source": "/portfolio/:share_token", "destination": "/api/portfolio/[share_token]" },
-    { "source": "/api/:path*", "destination": "/api/:path*" },
-    { "source": "/:path*", "destination": "/index.html" }
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
   ],
   "headers": [
     {
