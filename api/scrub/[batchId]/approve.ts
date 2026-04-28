@@ -1,9 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import crypto from 'crypto'
-import { createAdminClient } from '../../_lib/supabase'
-import { verifyAuth, unauthorized } from '../../_lib/auth'
-import { runEnrichmentJob } from '../../../src/lib/enrichment/orchestrator'
-import { parcelLookup } from '../../../src/lib/parcel/lookup'
+import { createAdminClient } from '../../_lib/supabase.js'
+import { verifyAuth, unauthorized } from '../../_lib/auth.js'
+import { runEnrichmentJob } from '../../../src/lib/enrichment/orchestrator.js'
+import { parcelLookup } from '../../../src/lib/parcel/lookup.js'
 
 function hashAddress(addr: string, city: string, state: string, zip: string): string {
   const normalized = [addr, city, state, zip]

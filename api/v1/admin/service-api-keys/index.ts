@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import crypto from 'crypto'
-import { createAdminClient } from '../../../_lib/supabase'
-import { authenticateRequest } from '../../../_lib/auth'
+import { createAdminClient } from '../../../_lib/supabase.js'
+import { authenticateRequest } from '../../../_lib/auth.js'
 
 function hashKey(raw: string): string {
   return crypto.createHash('sha256').update(raw).digest('hex')

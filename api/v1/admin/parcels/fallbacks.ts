@@ -6,8 +6,8 @@
  * Body: { county_fips }  — redirects to import flow (no-op here; client handles navigation)
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { createAdminClient } from '../../../_lib/supabase'
-import { authenticateRequest } from '../../../_lib/auth'
+import { createAdminClient } from '../../../_lib/supabase.js'
+import { authenticateRequest } from '../../../_lib/auth.js'
 
 const FALLBACK_THRESHOLD = parseInt(process.env.PARCEL_FALLBACK_THRESHOLD ?? '50', 10)
 

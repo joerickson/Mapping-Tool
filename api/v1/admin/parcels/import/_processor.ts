@@ -3,7 +3,7 @@
  * All formats are processed in 500-row batches to stay within Supabase limits.
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { mapRegridFields } from '../../../../../src/lib/parcel/fieldMapper'
+import { mapRegridFields } from '../../../../../src/lib/parcel/fieldMapper.js'
 
 const BATCH_SIZE = 500
 

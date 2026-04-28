@@ -1,5 +1,5 @@
 import crypto from 'crypto'
-import { createAdminClient } from './supabase'
+import { createAdminClient } from './supabase.js'
 
 export type WebhookEvent =
   | 'property.enriched'

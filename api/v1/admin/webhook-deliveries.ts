@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { createAdminClient } from '../../_lib/supabase'
-import { authenticateRequest } from '../../_lib/auth'
-import { fireWebhook } from '../../_lib/webhooks'
+import { createAdminClient } from '../../_lib/supabase.js'
+import { authenticateRequest } from '../../_lib/auth.js'
+import { fireWebhook } from '../../_lib/webhooks.js'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end()

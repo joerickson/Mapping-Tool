@@ -10,9 +10,9 @@
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import Busboy from 'busboy'
-import { createAdminClient } from '../../../../_lib/supabase'
-import { authenticateRequest } from '../../../../_lib/auth'
-import { processImportJob } from './_processor'
+import { createAdminClient } from '../../../../_lib/supabase.js'
+import { authenticateRequest } from '../../../../_lib/auth.js'
+import { processImportJob } from './_processor.js'
 
 export const config = {
   api: { bodyParser: false },
