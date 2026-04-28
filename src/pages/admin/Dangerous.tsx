@@ -4,7 +4,7 @@ import { useAuth } from '../../hooks/useAuth'
 import Navbar from '../../components/ui/Navbar'
 import Button from '../../components/ui/Button'
 
-const RESET_PHRASE = 'delete all service locations'
+const RESET_PHRASE = 'delete all data'
 
 export default function DangerousAdminPage() {
   const { getToken } = useAuth()
@@ -54,11 +54,12 @@ export default function DangerousAdminPage() {
               <svg className="w-5 h-5 text-red-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
-              <h2 className="font-semibold text-red-800">Reset All Service Location Data</h2>
+              <h2 className="font-semibold text-red-800">Reset All Data</h2>
             </div>
             <p className="text-sm text-red-700 mb-4">
-              This permanently deletes all service locations, properties, upload batches, and staged addresses.
-              <strong> The clients table will NOT be touched.</strong> Use this before re-uploading with proper client tagging.
+              This permanently deletes <strong>all</strong> accounts, clients, service offerings, custom fields, upload templates,
+              properties, service locations, upload batches, staged addresses, and portfolios.
+              This action cannot be undone.
             </p>
 
             {result ? (
@@ -87,7 +88,7 @@ export default function DangerousAdminPage() {
                   disabled={phrase !== RESET_PHRASE}
                   onClick={handleReset}
                 >
-                  Reset All Service Location Data
+                  Reset All Data
                 </Button>
               </div>
             )}

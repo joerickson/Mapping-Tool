@@ -9,7 +9,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const auth = await verifyAuth(req)
   if (!auth.ok) return unauthorized(res, auth.error)
 
-  const { filename, rows, mapping, client_id } = req.body ?? {}
+  const { filename, rows, mapping, client_id, account_id } = req.body ?? {}
   if (!rows?.length || !mapping) return res.status(400).json({ error: 'rows and mapping required' })
 
   const db = createAdminClient()
@@ -23,6 +23,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       column_mapping: mapping,
       uploaded_by: auth.userId,
       client_id: client_id ?? null,
+      account_id: account_id ?? null,
       status: 'queued',
     })
     .select('upload_batch_id')

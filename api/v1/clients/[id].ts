@@ -24,18 +24,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (error || !client) return res.status(404).json({ error: 'Client not found' })
 
-    // Stats: service location count, portfolio count, total sqft
-    const [slRes, portRes, sqftRes, uploadRes] = await Promise.all([
+    // Stats: service location count, portfolio count, total sqft; also template config status
+    const [slRes, portRes, sqftRes, uploadRes, templateRes, accountRes] = await Promise.all([
       db.from('service_locations').select('service_location_id', { count: 'exact', head: true }).eq('client_id', id),
       db.from('portfolios').select('portfolio_id', { count: 'exact', head: true }).eq('client_id', id),
       db.from('service_locations').select('serviceable_sqft').eq('client_id', id).not('serviceable_sqft', 'is', null),
       db.from('upload_batches').select('upload_batch_id, filename, created_at, status, row_count').eq('client_id', id).order('created_at', { ascending: false }).limit(20),
+      db.from('client_templates').select('is_configured').eq('client_id', id).maybeSingle(),
+      (client as any).account_id
+        ? db.from('accounts').select('id, name, display_name, account_type').eq('id', (client as any).account_id).maybeSingle()
+        : Promise.resolve({ data: null }),
     ])
 
     const totalSqft = (sqftRes.data ?? []).reduce((sum: number, r: any) => sum + (r.serviceable_sqft ?? 0), 0)
 
     return res.status(200).json({
       ...client,
+      account: (accountRes as any).data ?? null,
+      is_configured: (templateRes as any).data?.is_configured ?? false,
       stats: {
         service_location_count: slRes.count ?? 0,
         portfolio_count: portRes.count ?? 0,

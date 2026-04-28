@@ -14,52 +14,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const db = createAdminClient()
 
-  // ── GET /api/v1/clients ───────────────────────────────────────────────────
   if (req.method === 'GET') {
-    const { status, search, account_id } = req.query
-
-    let query = db
-      .from('clients')
-      .select('*')
-      .order('name', { ascending: true })
-
+    const { status, search } = req.query
+    let query = db.from('accounts').select('*').order('name', { ascending: true })
     if (status) query = query.eq('status', String(status))
     if (search) query = query.ilike('name', `%${String(search)}%`)
-    if (account_id) query = query.eq('account_id', String(account_id))
-
     const { data, error } = await query
     if (error) return res.status(500).json({ error: error.message })
-
     return res.status(200).json(data ?? [])
   }
 
-  // ── POST /api/v1/clients ──────────────────────────────────────────────────
   if (req.method === 'POST') {
     const {
-      name,
-      display_name,
-      status = 'active',
-      notes,
-      primary_contact_name,
-      primary_contact_email,
-      primary_contact_phone,
-      brand_color,
-      logo_url,
-      metadata,
+      name, display_name, account_type = 'self_managed', status = 'active',
+      notes, primary_contact_name, primary_contact_email, primary_contact_phone,
+      brand_color, logo_url, metadata,
     } = req.body ?? {}
 
     if (!name?.trim()) return res.status(400).json({ error: 'name is required' })
-
-    const validStatuses = ['active', 'prospect', 'churned']
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({ error: `status must be one of: ${validStatuses.join(', ')}` })
+    const validTypes = ['self_managed', 'property_manager']
+    if (!validTypes.includes(account_type)) {
+      return res.status(400).json({ error: `account_type must be one of: ${validTypes.join(', ')}` })
     }
 
-    const { data, error } = await db
-      .from('clients')
+    const { data: account, error: accErr } = await db
+      .from('accounts')
       .insert({
         name: name.trim(),
         display_name: display_name?.trim() ?? null,
+        account_type,
         status,
         notes: notes ?? null,
         primary_contact_name: primary_contact_name ?? null,
@@ -73,14 +56,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .select('*')
       .single()
 
-    if (error) {
-      if (error.code === '23505') {
-        return res.status(409).json({ error: 'A client with this name already exists' })
-      }
-      return res.status(500).json({ error: error.message })
+    if (accErr) {
+      if (accErr.code === '23505') return res.status(409).json({ error: 'An account with this name already exists' })
+      return res.status(500).json({ error: accErr.message })
     }
 
-    return res.status(201).json(data)
+    // For self_managed accounts, auto-create a matching client
+    if (account_type === 'self_managed') {
+      const { data: client, error: clientErr } = await db
+        .from('clients')
+        .insert({
+          account_id: account.id,
+          name: account.name,
+          display_name: account.display_name ?? null,
+          status: 'active',
+          created_by: ctx.userId ?? null,
+        })
+        .select('id')
+        .single()
+
+      if (!clientErr && client) {
+        return res.status(201).json({ ...account, auto_client_id: client.id })
+      }
+    }
+
+    return res.status(201).json(account)
   }
 
   return res.status(405).json({ error: 'Method not allowed' })

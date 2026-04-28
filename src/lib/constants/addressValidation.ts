@@ -9,7 +9,7 @@ export interface ValidationResult {
 // ---------------------------------------------------------------------------
 
 const COUNTRY_ALIASES: Record<string, 'US' | 'CA' | 'MX'> = {
-  us: 'US', usa: 'US', 'united states': 'US', 'united states of america': 'US', america: 'US',
+  us: 'US', usa: 'US', 'u.s.': 'US', 'u.s.a.': 'US', 'united states': 'US', 'united states of america': 'US', america: 'US',
   ca: 'CA', can: 'CA', canada: 'CA',
   mx: 'MX', mex: 'MX', mexico: 'MX', 'méxico': 'MX',
 }
@@ -233,3 +233,9 @@ export function validatePostalCode(postal: string, country: 'US' | 'CA' | 'MX' |
   // Unknown country — accept any non-empty value
   return { valid: true }
 }
+
+// Spec-requested named aliases
+export const COUNTRY_NORMALIZATION = COUNTRY_ALIASES
+export const US_STATES = US_STATE_NAMES
+export const CA_PROVINCES = CA_PROVINCE_NAMES
+export const MX_STATES = MX_STATE_NAMES

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import Papa from 'papaparse'
 import * as XLSX from 'xlsx'
@@ -11,7 +11,7 @@ import Button from '../components/ui/Button'
 import { REQUIRED_COLUMNS } from '../lib/constants'
 import { normalizeCountry, validateState, validatePostalCode } from '../lib/constants/addressValidation'
 import { useClient } from '../context/ClientContext'
-import type { ColumnMapping, BatchStatusResponse, Client } from '../types'
+import type { ColumnMapping, BatchStatusResponse, Client, Account } from '../types'
 
 type Step = 'client' | 'upload' | 'map' | 'validate' | 'processing'
 
@@ -98,7 +98,10 @@ export default function UploadPage() {
   const { clients, selectedClientId, reloadClients } = useClient()
 
   const [step, setStep] = useState<Step>('client')
+  const [accounts, setAccounts] = useState<Account[]>([])
+  const [selectedUploadAccountId, setSelectedUploadAccountId] = useState<string>('')
   const [selectedUploadClientId, setSelectedUploadClientId] = useState<string>(selectedClientId ?? '')
+  const [accountClients, setAccountClients] = useState<Client[]>([])
   const [showNewClientModal, setShowNewClientModal] = useState(false)
   const [newClientName, setNewClientName] = useState('')
   const [creatingClient, setCreatingClient] = useState(false)
@@ -110,6 +113,43 @@ export default function UploadPage() {
   const [batchId, setBatchId] = useState<string | null>(null)
   const [batchStatus, setBatchStatus] = useState<BatchStatusResponse | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Load accounts on mount
+  useEffect(() => {
+    async function loadAccounts() {
+      try {
+        const token = await getToken()
+        const res = await fetch('/api/v1/accounts?status=active', { headers: { Authorization: `Bearer ${token}` } })
+        if (res.ok) setAccounts(await res.json())
+      } catch { /* ignore */ }
+    }
+    loadAccounts()
+  }, [getToken])
+
+  // Load clients for selected account
+  useEffect(() => {
+    if (!selectedUploadAccountId) { setAccountClients([]); return }
+    async function loadAccountClients() {
+      try {
+        const token = await getToken()
+        const res = await fetch(`/api/v1/clients?account_id=${selectedUploadAccountId}&status=active`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (res.ok) {
+          const data: Client[] = await res.json()
+          setAccountClients(data)
+          // Auto-resolve for self_managed (single client)
+          const account = accounts.find((a) => a.id === selectedUploadAccountId)
+          if (account?.account_type === 'self_managed' && data.length === 1) {
+            setSelectedUploadClientId(data[0].id)
+          } else {
+            setSelectedUploadClientId('')
+          }
+        }
+      } catch { /* ignore */ }
+    }
+    loadAccountClients()
+  }, [selectedUploadAccountId, accounts, getToken])
 
   // Sync selected client when nav switcher changes
   useEffect(() => {
@@ -221,6 +261,7 @@ export default function UploadPage() {
           rows: parsed.rows,
           mapping,
           client_id: selectedUploadClientId || null,
+          account_id: selectedUploadAccountId || null,
         }),
       })
       if (!res.ok) throw new Error(await res.text())
@@ -286,15 +327,15 @@ export default function UploadPage() {
   const isMappingComplete = REQUIRED_COLUMNS.every((col) => mapping[col])
   const STEP_LABELS: Step[] = ['client', 'upload', 'map', 'validate', 'processing']
   const STEP_DISPLAY: Record<Step, string> = {
-    client: 'Select Client',
+    client: 'Account & Client',
     upload: 'Upload',
     map: 'Map',
     validate: 'Validate',
     processing: 'Processing',
   }
 
-  const activeClients = clients.filter((c) => c.status !== 'churned')
-  const selectedClient = clients.find((c) => c.id === selectedUploadClientId)
+  const selectedUploadClient = accountClients.find((c) => c.id === selectedUploadClientId)
+    ?? clients.find((c) => c.id === selectedUploadClientId)
 
   return (
     <div className="flex flex-col h-full bg-gray-50">
@@ -327,64 +368,77 @@ export default function UploadPage() {
             </div>
           )}
 
-          {/* Step 0: Select Client */}
+          {/* Step 0: Select Account & Client */}
           {step === 'client' && (
-            <div className="bg-white rounded-xl p-6 shadow-sm border space-y-4">
-              <h2 className="font-semibold text-gray-800">Select Client</h2>
+            <div className="bg-white rounded-xl p-6 shadow-sm border space-y-5">
+              <h2 className="font-semibold text-gray-800">Select Account &amp; Client</h2>
               <p className="text-sm text-gray-500">
-                All uploaded service locations will be tagged to this client.
+                All uploaded service locations will be tagged to the selected account and client.
               </p>
 
-              {activeClients.length === 0 ? (
-                <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-sm">
-                  No active clients exist yet.{' '}
-                  <button onClick={() => setShowNewClientModal(true)} className="underline font-medium">
-                    Create one now
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {activeClients.map((c) => (
-                    <label key={c.id} className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                      <input
-                        type="radio"
-                        name="client"
-                        value={c.id}
-                        checked={selectedUploadClientId === c.id}
-                        onChange={() => setSelectedUploadClientId(c.id)}
-                        className="text-blue-600 focus:ring-blue-500"
-                      />
-                      <span
-                        className="w-4 h-4 rounded-full shrink-0"
-                        style={{ backgroundColor: c.brand_color ?? hashColor(c.id) }}
-                      />
-                      <span className="font-medium text-gray-800">{c.display_name ?? c.name}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
+              {/* Account selector */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Account</label>
+                {accounts.length === 0 ? (
+                  <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-sm">
+                    No active accounts yet.{' '}
+                    <Link to="/accounts/new" className="underline font-medium">Create one now →</Link>
+                  </div>
+                ) : (
+                  <select
+                    value={selectedUploadAccountId}
+                    onChange={(e) => setSelectedUploadAccountId(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">— select account —</option>
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>{a.display_name ?? a.name}</option>
+                    ))}
+                  </select>
+                )}
+                <Link to="/accounts/new" className="text-xs text-blue-600 hover:underline mt-1 inline-block">
+                  + New Account
+                </Link>
+              </div>
 
-              <button
-                onClick={() => setShowNewClientModal(true)}
-                className="text-sm text-blue-600 hover:underline flex items-center gap-1"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                Create new client
-              </button>
+              {/* Client selector — only for property_manager with 2+ clients */}
+              {selectedUploadAccountId && (() => {
+                const acct = accounts.find((a) => a.id === selectedUploadAccountId)
+                if (!acct) return null
+                if (acct.account_type === 'self_managed') {
+                  const selfClient = accountClients[0]
+                  return selfClient ? (
+                    <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700">
+                      Client: <strong>{selfClient.display_name ?? selfClient.name}</strong> (auto-resolved)
+                    </div>
+                  ) : null
+                }
+                // property_manager
+                return (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Client</label>
+                    <select
+                      value={selectedUploadClientId}
+                      onChange={(e) => setSelectedUploadClientId(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">— select client —</option>
+                      {accountClients.map((c) => (
+                        <option key={c.id} value={c.id}>{c.display_name ?? c.name}</option>
+                      ))}
+                    </select>
+                    <Link to={`/accounts/${selectedUploadAccountId}/clients/new`} className="text-xs text-blue-600 hover:underline mt-1 inline-block">
+                      + New Client
+                    </Link>
+                  </div>
+                )
+              })()}
 
               <div className="flex justify-end pt-2">
                 <Button onClick={() => setStep('upload')} disabled={!selectedUploadClientId}>
                   Next: Upload File
                 </Button>
               </div>
-
-              {selectedClient && (
-                <p className="text-xs text-gray-400 text-right">
-                  Selected: <strong>{selectedClient.display_name ?? selectedClient.name}</strong>
-                </p>
-              )}
             </div>
           )}
 
@@ -392,9 +446,9 @@ export default function UploadPage() {
             <div className="bg-white rounded-xl p-6 shadow-sm border space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="font-semibold text-gray-800">Upload File</h2>
-                {selectedClient && (
+                {selectedUploadClient && (
                   <span className="text-sm text-gray-500">
-                    Client: <strong>{selectedClient.display_name ?? selectedClient.name}</strong>
+                    Client: <strong>{selectedUploadClient.display_name ?? selectedUploadClient.name}</strong>
                   </span>
                 )}
               </div>
