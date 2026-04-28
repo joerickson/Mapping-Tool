@@ -21,6 +21,30 @@ CREATE TABLE IF NOT EXISTS parcel_notification_log (
 );
 CREATE INDEX IF NOT EXISTS idx_parcel_notification_county ON parcel_notification_log(county_fips);
 
+-- Stub table so find_nearest_parcel can be created on fresh DBs
+-- (real table exists in production via Studio; this is a no-op there)
+CREATE TABLE IF NOT EXISTS parcels (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  regrid_ll_uuid        TEXT,
+  parcel_number         TEXT,
+  county_fips           TEXT,
+  state                 TEXT,
+  county_name           TEXT,
+  geometry              JSONB,
+  centroid_lat          NUMERIC,
+  centroid_lng          NUMERIC,
+  building_sqft         INTEGER,
+  lot_sqft              INTEGER,
+  year_built            INTEGER,
+  zoning_code           TEXT,
+  land_use_code         TEXT,
+  land_use_standardized TEXT,
+  owner_name            TEXT,
+  owner_mailing_address TEXT,
+  source_refresh_date   DATE,
+  imported_at           TIMESTAMPTZ
+);
+
 -- Nearest-parcel lookup via Haversine (PostGIS-free).
 -- Returns the single nearest parcel within p_max_distance_m metres, or empty set.
 CREATE OR REPLACE FUNCTION find_nearest_parcel(
