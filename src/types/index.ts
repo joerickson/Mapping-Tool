@@ -95,16 +95,59 @@ export type ColumnMapping = {
   serviceable_sqft?: string
 }
 
-export type BatchProcessStatus = 'queued' | 'processing' | 'completed' | 'failed'
+export type BatchProcessStatus = 'queued' | 'parsed' | 'processing' | 'completed' | 'committed' | 'cancelled' | 'failed'
+
+// ── Upload pipeline v2 ─────────────────────────────────────────────────────
+
+export interface SheetMeta {
+  name: string
+  row_count: number
+  columns: string[]
+}
+
+export interface SheetMapping {
+  sheet_name: string
+  service_offering_id: string | null
+  skip: boolean
+}
+
+export interface UploadProcessingConfig {
+  sheet_mappings: SheetMapping[]
+  column_mappings: Record<string, Record<string, string>> // sheetName → {sourceCol → targetField}
+  save_to_template?: boolean
+}
+
+export interface UploadSummaryStats {
+  total: number
+  valid: number
+  corrected: number
+  invalid: number
+  duplicate_within_batch: number
+  duplicate_existing: number
+  committed_new_properties?: number
+  committed_existing_properties?: number
+  committed_new_service_locations?: number
+  committed_updated_service_locations?: number
+}
+
+export type ColumnMappingTarget =
+  | 'address_line1' | 'address_line2' | 'city' | 'state' | 'postal_code' | 'country'
+  | 'property_name' | 'alternate_name' | 'identifier' | 'suite_or_floor' | 'serviceable_sqft'
+  | string // 'custom:field_key' or ''
 
 export interface BatchStatusResponse {
-  batchId: string
+  batch_id?: string
+  batchId?: string
   status: BatchProcessStatus
   total_rows: number
   rows_processed: number
-  validation_errors_count: number
-  auto_corrections_count: number
+  errors_count?: number
+  validation_errors_count?: number
+  auto_corrections_count?: number
+  current_sheet?: string | null
   error?: string
+  summary_stats?: UploadSummaryStats
+  // Legacy
   summary?: {
     total: number
     clean: number
