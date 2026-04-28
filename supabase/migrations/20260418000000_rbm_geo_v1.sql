@@ -87,6 +87,8 @@ CREATE TABLE IF NOT EXISTS service_locations (
 );
 
 -- Proximity function using PostGIS (falls back to Haversine math if no PostGIS)
+-- Uses plpgsql so column references are resolved at execution time, not creation time.
+-- This allows the function to be created on fresh preview DBs before the real tables exist.
 CREATE OR REPLACE FUNCTION nearby_properties(
   query_lat   FLOAT8,
   query_lng   FLOAT8,
@@ -96,7 +98,9 @@ RETURNS TABLE (
   property_id       UUID,
   distance_miles    FLOAT8,
   service_locations JSONB
-) LANGUAGE sql STABLE AS $$
+) LANGUAGE plpgsql STABLE AS $$
+BEGIN
+  RETURN QUERY
   WITH dists AS (
     SELECT
       p.property_id,
@@ -131,4 +135,5 @@ RETURNS TABLE (
    AND sl.status != 'terminated'
   GROUP BY n.property_id, n.distance_miles
   ORDER BY n.distance_miles;
+END;
 $$;
