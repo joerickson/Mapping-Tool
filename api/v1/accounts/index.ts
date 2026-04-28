@@ -75,9 +75,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .select('id')
         .single()
 
-      if (!clientErr && client) {
-        return res.status(201).json({ ...account, auto_client_id: client.id })
+      if (clientErr) {
+        // Roll back the account we just created so the user can retry cleanly
+        await db.from('accounts').delete().eq('id', account.id)
+        if (clientErr.code === '23505') {
+          return res.status(409).json({ error: 'A client with this name already exists. Please choose a different account name.' })
+        }
+        return res.status(500).json({ error: clientErr.message })
       }
+
+      return res.status(201).json({ ...account, auto_client_id: client!.id })
     }
 
     return res.status(201).json(account)

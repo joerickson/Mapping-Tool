@@ -25,15 +25,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (error || !account) return res.status(404).json({ error: 'Account not found' })
 
     // Attach stats
-    const { count: clientCount } = await db
+    const { count: clientCount, data: accountClients } = await db
       .from('clients')
-      .select('id', { count: 'exact', head: true })
+      .select('id', { count: 'exact' })
       .eq('account_id', id)
 
-    const { count: slCount } = await db
-      .from('service_locations')
-      .select('service_location_id', { count: 'exact', head: true })
-      .eq('client_id', id)
+    const clientIds = (accountClients ?? []).map((c) => c.id)
+    let slCount = 0
+    if (clientIds.length > 0) {
+      const { count } = await db
+        .from('service_locations')
+        .select('service_location_id', { count: 'exact', head: true })
+        .in('client_id', clientIds)
+      slCount = count ?? 0
+    }
 
     const { data: recentUploads } = await db
       .from('upload_batches')
@@ -46,7 +51,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ...account,
       stats: {
         client_count: clientCount ?? 0,
-        service_location_count: slCount ?? 0,
+        service_location_count: slCount,
       },
       recent_uploads: recentUploads ?? [],
     })
