@@ -4,6 +4,7 @@ export const TARGET_COLUMNS = [
   'city',
   'state',
   'postal_code',
+  'country',
   'location_code',
   'display_name',
   'suite_or_floor',

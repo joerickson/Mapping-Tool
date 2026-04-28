@@ -45,14 +45,16 @@ export async function runScrubPipeline(
   db: SupabaseClient,
   opts: {
     googleAddressValidationKey?: string
+    rowOffset?: number
   } = {},
 ): Promise<PipelineSummary> {
+  const offset = opts.rowOffset ?? 0
   // Stage 0 — local scrub
   const staged: StagedRow[] = rows.map((row, i) => {
     const result = scrubAddress(row, mapping)
     return {
       upload_batch_id: batchId,
-      row_index: i,
+      row_index: offset + i,
       original_row: row,
       scrub_status: result.status,
       scrub_corrections: result.corrections,
