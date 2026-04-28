@@ -145,3 +145,74 @@ export interface MapFilter {
 export interface PropertyWithLocations extends Property {
   service_locations: ServiceLocation[]
 }
+
+export interface ParcelRecord {
+  id: string
+  regrid_ll_uuid?: string | null
+  parcel_number?: string | null
+  county_fips: string
+  state: string
+  county_name?: string | null
+  geometry?: Record<string, unknown> | null
+  centroid_lat?: number | null
+  centroid_lng?: number | null
+  building_sqft?: number | null
+  lot_sqft?: number | null
+  year_built?: number | null
+  zoning_code?: string | null
+  land_use_code?: string | null
+  land_use_standardized?: string | null
+  owner_name?: string | null
+  owner_mailing_address?: string | null
+  source_refresh_date?: string | null
+  imported_at: string
+}
+
+export type ParcelImportStatus = 'pending' | 'importing' | 'completed' | 'failed'
+
+export interface ParcelCountyImport {
+  id: string
+  county_fips: string
+  county_name: string
+  state: string
+  source_format?: string | null
+  source_filename?: string | null
+  source_refresh_date?: string | null
+  parcel_count?: number | null
+  status: ParcelImportStatus
+  error_log?: Record<string, unknown>[] | null
+  imported_by?: string | null
+  started_at?: string | null
+  completed_at?: string | null
+  created_at: string
+}
+
+export interface ParcelApiFallback {
+  id: string
+  property_id?: string | null
+  county_fips?: string | null
+  county_name?: string | null
+  state?: string | null
+  api_response?: Record<string, unknown> | null
+  api_cost_usd?: number | null
+  called_at: string
+}
+
+export interface ParcelFallbackSummary {
+  county_fips: string
+  county_name: string | null
+  state: string | null
+  total_calls: number
+  total_cost_usd: number
+  first_fallback: string
+  last_fallback: string
+}
+
+export interface ParcelCoverageCounty {
+  county_fips: string
+  county_name: string
+  state: string
+  parcel_count: number
+  source_refresh_date: string | null
+  last_imported: string
+}

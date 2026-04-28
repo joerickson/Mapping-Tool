@@ -1,17 +1,29 @@
 import { geocodeBatch } from './geocode'
 import { enrichWithPlaces } from './places'
-import { lookupParcel } from './parcel'
 import { classifyProperty } from './classify'
 import type { Property, RbmCategory } from '../../types'
+import type { ParcelLookupResult } from '../parcel/lookup'
+
+export type { ParcelLookupResult }
 
 export interface OrchestratorConfig {
   googleMapsApiKey: string
   anthropicApiKey: string
-  regridApiKey: string
+  /** Called for Stage 3; returns source, parcel data, and cost */
+  parcelLookupFn: (
+    propertyId: string,
+    lat: number,
+    lng: number
+  ) => Promise<ParcelLookupResult>
   supabaseUpdate: (propertyId: string, data: Partial<Property>) => Promise<void>
   supabaseGet: (propertyId: string) => Promise<Property | null>
   getCategories: () => Promise<RbmCategory[]>
-  updateJobProgress: (jobId: string, processed: number, costDelta: number) => Promise<void>
+  updateJobProgress: (
+    jobId: string,
+    processed: number,
+    costDelta: number,
+    apiCallsDelta?: Record<string, number>
+  ) => Promise<void>
 }
 
 export async function runEnrichmentJob(
@@ -24,16 +36,10 @@ export async function runEnrichmentJob(
   let totalCost = 0
 
   // Stage 1: Geocode all properties in batch
-  const properties = await Promise.all(
-    propertyIds.map((id) => config.supabaseGet(id))
-  )
+  const properties = await Promise.all(propertyIds.map((id) => config.supabaseGet(id)))
   const validProps = properties.filter((p): p is Property => p !== null)
 
-  const geocodeResults = await geocodeBatch(
-    validProps,
-    config.googleMapsApiKey,
-    10 // concurrency
-  )
+  const geocodeResults = await geocodeBatch(validProps, config.googleMapsApiKey, 10)
 
   for (const property of validProps) {
     const geoResult = geocodeResults.get(property.property_id)
@@ -43,7 +49,7 @@ export async function runEnrichmentJob(
         ...geoResult,
         enrichment_status: 'geocoded',
       })
-      totalCost += 0.005 // geocode cost per property
+      totalCost += 0.005
     } else {
       await config.supabaseUpdate(property.property_id, {
         enrichment_errors: {
@@ -60,48 +66,60 @@ export async function runEnrichmentJob(
     const lng = geoResult.longitude
 
     // Stage 2: Google Places
-    let placesResult = null
     try {
-      placesResult = await enrichWithPlaces(lat, lng, config.googleMapsApiKey)
+      const placesResult = await enrichWithPlaces(lat, lng, config.googleMapsApiKey)
       if (placesResult) {
         await config.supabaseUpdate(property.property_id, {
           ...placesResult,
           enrichment_status: 'places_enriched',
         })
-        totalCost += 0.049 // nearby + details
+        totalCost += 0.049
       }
     } catch (err) {
       await config.supabaseUpdate(property.property_id, {
-        enrichment_errors: {
-          ...(property.enrichment_errors ?? {}),
-          places: String(err),
-        },
+        enrichment_errors: { ...(property.enrichment_errors ?? {}), places: String(err) },
       })
     }
 
-    // Stage 3: Parcel
-    let parcelResult = null
+    // Stage 3: Parcel — local-first lookup with API fallback
     try {
-      parcelResult = await lookupParcel(lat, lng, config.regridApiKey)
-      if (parcelResult) {
+      const lookup = await config.parcelLookupFn(property.property_id, lat, lng)
+
+      if (lookup.parcel_data) {
         await config.supabaseUpdate(property.property_id, {
-          ...parcelResult,
+          parcel_id: lookup.parcel_data.parcel_id ?? null,
+          parcel_polygon: (lookup.parcel_data.parcel_polygon as Property['parcel_polygon']) ?? null,
+          building_sqft: lookup.parcel_data.building_sqft ?? null,
+          lot_sqft: lookup.parcel_data.lot_sqft ?? null,
+          year_built: lookup.parcel_data.year_built ?? null,
+          zoning_code: lookup.parcel_data.zoning_code ?? null,
+          land_use_code: lookup.parcel_data.land_use_code ?? null,
+          owner_name: lookup.parcel_data.owner_name ?? null,
+          owner_mailing_address: lookup.parcel_data.owner_mailing_address ?? null,
           enrichment_status: 'parcel_enriched',
         })
-        totalCost += 0.02
+        totalCost += lookup.cost_usd
+      } else if (lookup.source === 'none') {
+        await config.supabaseUpdate(property.property_id, {
+          enrichment_errors: {
+            ...(property.enrichment_errors ?? {}),
+            parcel: 'No parcel found (county purchased, no centroid match within 100m)',
+          },
+        })
       }
+
+      const apiCallKey = lookup.source === 'local' ? 'parcel_local' : 'parcel_api'
+      await config.updateJobProgress(jobId, processed, lookup.cost_usd, {
+        [apiCallKey]: 1,
+      })
     } catch (err) {
       await config.supabaseUpdate(property.property_id, {
-        enrichment_errors: {
-          ...(property.enrichment_errors ?? {}),
-          parcel: String(err),
-        },
+        enrichment_errors: { ...(property.enrichment_errors ?? {}), parcel: String(err) },
       })
     }
 
     // Stage 4: AI Classification
     try {
-      // Get updated property data for classification context
       const updatedProp = await config.supabaseGet(property.property_id)
       const classResult = await classifyProperty(
         updatedProp ?? property,
@@ -121,11 +139,8 @@ export async function runEnrichmentJob(
       }
     } catch (err) {
       await config.supabaseUpdate(property.property_id, {
-        enrichment_errors: {
-          ...(property.enrichment_errors ?? {}),
-          classify: String(err),
-        },
-        enrichment_status: 'enriched', // still mark as enriched even if classification fails
+        enrichment_errors: { ...(property.enrichment_errors ?? {}), classify: String(err) },
+        enrichment_status: 'enriched',
         last_enriched_at: new Date().toISOString(),
       })
     }
