@@ -1,6 +1,6 @@
 import crypto from 'crypto'
 import type { VercelRequest } from '@vercel/node'
-import { createAdminClient } from './supabase'
+import { createAdminClient } from './supabase.js'
 
 // Legacy return type kept for backward compat with upload.ts
 export type AuthResult =

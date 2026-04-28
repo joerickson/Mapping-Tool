@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import crypto from 'crypto'
-import { createAdminClient } from '../../_lib/supabase'
-import { authenticateRequest } from '../../_lib/auth'
-import { fireWebhook } from '../../_lib/webhooks'
+import { createAdminClient } from '../../_lib/supabase.js'
+import { authenticateRequest } from '../../_lib/auth.js'
+import { fireWebhook } from '../../_lib/webhooks.js'
 
 function hashAddress(addr: string, city: string, state: string, zip: string): string {
   const normalized = [addr, city, state, zip]

@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { createAdminClient } from '../../_lib/supabase'
-import { verifyAuth, unauthorized } from '../../_lib/auth'
-import { runScrubPipeline } from '../../../src/lib/scrub/pipeline'
+import { createAdminClient } from '../../_lib/supabase.js'
+import { verifyAuth, unauthorized } from '../../_lib/auth.js'
+import { runScrubPipeline } from '../../../src/lib/scrub/pipeline.js'
 
 const CHUNK_SIZE = 100
 
