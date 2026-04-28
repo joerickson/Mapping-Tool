@@ -132,7 +132,8 @@ export default function ClientSetupPage() {
         }),
       })
       if (res.ok) {
-        setOfferings((prev) => [...prev, await res.json()])
+        const newOffering = await res.json()
+        setOfferings((prev) => [...prev, newOffering])
         setNewOffName(''); setNewOffFreqLabel(''); setNewOffVisits('')
       }
     } finally {
@@ -159,7 +160,8 @@ export default function ClientSetupPage() {
         }),
       })
       if (res.ok) {
-        setCustomFields((prev) => [...prev, await res.json()])
+        const newField = await res.json()
+        setCustomFields((prev) => [...prev, newField])
         setNewFieldLabel(''); setNewFieldKey(''); setNewFieldOptions('')
       }
     } finally {
