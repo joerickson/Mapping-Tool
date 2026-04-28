@@ -10,6 +10,7 @@ mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ?? ''
 interface MapPin {
   property: Property
   locations: ServiceLocation[]
+  clientColor?: string | null
 }
 
 interface MapViewProps {
@@ -19,6 +20,7 @@ interface MapViewProps {
   bulkSelectMode: boolean
   selectedIds: Set<string>
   filter: MapFilter
+  showClientColors?: boolean
 }
 
 export default function MapView({
@@ -28,6 +30,7 @@ export default function MapView({
   bulkSelectMode,
   selectedIds,
   filter,
+  showClientColors = false,
 }: MapViewProps) {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<mapboxgl.Map | null>(null)
@@ -74,6 +77,7 @@ export default function MapView({
           rbm_category: p.property.rbm_category ?? 'default',
           selected: selectedIds.has(p.property.property_id),
           location_count: p.locations.length,
+          client_color: (showClientColors && p.clientColor) ? p.clientColor : null,
         },
       }))
 
@@ -142,10 +146,15 @@ export default function MapView({
         filter: ['!', ['has', 'point_count']],
         paint: {
           'circle-color': [
-            'match',
-            ['get', 'rbm_category'],
-            ...Object.entries(CATEGORY_COLORS).flatMap(([k, v]) => [k, v]),
-            CATEGORY_COLORS.default,
+            'case',
+            ['!=', ['get', 'client_color'], null],
+            ['get', 'client_color'],
+            [
+              'match',
+              ['get', 'rbm_category'],
+              ...Object.entries(CATEGORY_COLORS).flatMap(([k, v]) => [k, v]),
+              CATEGORY_COLORS.default,
+            ],
           ],
           'circle-radius': [
             'case',

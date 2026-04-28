@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { ClientProvider } from './context/ClientContext'
 import AuthGuard from './components/auth/AuthGuard'
 import LoginPage from './pages/Login'
 import SignupPage from './pages/Signup'
@@ -14,97 +15,137 @@ import SharedPortfolioPage from './pages/SharedPortfolio'
 import ParcelImportPage from './pages/admin/parcels/Import'
 import CountiesPage from './pages/admin/parcels/Counties'
 import FallbacksPage from './pages/admin/parcels/Fallbacks'
+import DangerousAdminPage from './pages/admin/Dangerous'
+import ClientsListPage from './pages/clients/ClientsList'
+import NewClientPage from './pages/clients/NewClient'
+import ClientDetailPage from './pages/clients/ClientDetail'
 
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        {/* Public auth routes */}
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/login/forgot-password" element={<ForgotPasswordPage />} />
-        <Route path="/login/update-password" element={<UpdatePasswordPage />} />
-        <Route path="/signup" element={<SignupPage />} />
-        <Route path="/logout" element={<LogoutPage />} />
+      <ClientProvider>
+        <Routes>
+          {/* Public auth routes */}
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/login/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/login/update-password" element={<UpdatePasswordPage />} />
+          <Route path="/signup" element={<SignupPage />} />
+          <Route path="/logout" element={<LogoutPage />} />
 
-        {/* Public share / embed routes — no auth required */}
-        <Route path="/portfolio/:shareToken" element={<SharedPortfolioPage />} />
+          {/* Public share / embed routes — no auth required */}
+          <Route path="/portfolio/:shareToken" element={<SharedPortfolioPage />} />
 
-        {/* Protected app routes */}
-        <Route
-          path="/"
-          element={
-            <AuthGuard>
-              <Navigate to="/map" replace />
-            </AuthGuard>
-          }
-        />
-        <Route
-          path="/map"
-          element={
-            <AuthGuard>
-              <MapPage />
-            </AuthGuard>
-          }
-        />
-        <Route
-          path="/upload"
-          element={
-            <AuthGuard>
-              <UploadPage />
-            </AuthGuard>
-          }
-        />
-        <Route
-          path="/upload/:batchId/review"
-          element={
-            <AuthGuard>
-              <UploadReviewPage />
-            </AuthGuard>
-          }
-        />
-        <Route
-          path="/locations/:serviceLocationId"
-          element={
-            <AuthGuard>
-              <ServiceLocationPage />
-            </AuthGuard>
-          }
-        />
-        <Route
-          path="/portfolios/:portfolioId"
-          element={
-            <AuthGuard>
-              <PortfolioPage />
-            </AuthGuard>
-          }
-        />
+          {/* Protected app routes */}
+          <Route
+            path="/"
+            element={
+              <AuthGuard>
+                <Navigate to="/map" replace />
+              </AuthGuard>
+            }
+          />
+          <Route
+            path="/map"
+            element={
+              <AuthGuard>
+                <MapPage />
+              </AuthGuard>
+            }
+          />
+          <Route
+            path="/upload"
+            element={
+              <AuthGuard>
+                <UploadPage />
+              </AuthGuard>
+            }
+          />
+          <Route
+            path="/upload/:batchId/review"
+            element={
+              <AuthGuard>
+                <UploadReviewPage />
+              </AuthGuard>
+            }
+          />
+          <Route
+            path="/locations/:serviceLocationId"
+            element={
+              <AuthGuard>
+                <ServiceLocationPage />
+              </AuthGuard>
+            }
+          />
+          <Route
+            path="/portfolios/:portfolioId"
+            element={
+              <AuthGuard>
+                <PortfolioPage />
+              </AuthGuard>
+            }
+          />
 
-        {/* Admin — Parcel data layer */}
-        <Route
-          path="/admin/parcels/import"
-          element={
-            <AuthGuard>
-              <ParcelImportPage />
-            </AuthGuard>
-          }
-        />
-        <Route
-          path="/admin/parcels/counties"
-          element={
-            <AuthGuard>
-              <CountiesPage />
-            </AuthGuard>
-          }
-        />
-        <Route
-          path="/admin/parcels/fallbacks"
-          element={
-            <AuthGuard>
-              <FallbacksPage />
-            </AuthGuard>
-          }
-        />
-      </Routes>
+          {/* Clients */}
+          <Route
+            path="/clients"
+            element={
+              <AuthGuard>
+                <ClientsListPage />
+              </AuthGuard>
+            }
+          />
+          <Route
+            path="/clients/new"
+            element={
+              <AuthGuard>
+                <NewClientPage />
+              </AuthGuard>
+            }
+          />
+          <Route
+            path="/clients/:id"
+            element={
+              <AuthGuard>
+                <ClientDetailPage />
+              </AuthGuard>
+            }
+          />
+
+          {/* Admin */}
+          <Route
+            path="/admin/dangerous"
+            element={
+              <AuthGuard>
+                <DangerousAdminPage />
+              </AuthGuard>
+            }
+          />
+          <Route
+            path="/admin/parcels/import"
+            element={
+              <AuthGuard>
+                <ParcelImportPage />
+              </AuthGuard>
+            }
+          />
+          <Route
+            path="/admin/parcels/counties"
+            element={
+              <AuthGuard>
+                <CountiesPage />
+              </AuthGuard>
+            }
+          />
+          <Route
+            path="/admin/parcels/fallbacks"
+            element={
+              <AuthGuard>
+                <FallbacksPage />
+              </AuthGuard>
+            }
+          />
+        </Routes>
+      </ClientProvider>
     </BrowserRouter>
   )
 }

@@ -53,10 +53,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Fetch column mapping once
   const { data: batchData } = await db
     .from('upload_batches')
-    .select('column_mapping')
+    .select('column_mapping, client_id')
     .eq('upload_batch_id', batchId)
     .single()
   const columnMapping = (batchData?.column_mapping ?? {}) as Record<string, string>
+  const batchClientId = (batchData?.client_id as string | null) ?? null
 
   const propertyIds: string[] = []
 
@@ -123,6 +124,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       await db.from('service_locations').insert({
         property_id: propertyId,
+        client_id: batchClientId,
         location_code: mapping.location_code ? String(originalRow[mapping.location_code] ?? '').trim() || null : null,
         display_name: mapping.display_name ? String(originalRow[mapping.display_name] ?? '').trim() || null : null,
         suite_or_floor: mapping.suite_or_floor ? String(originalRow[mapping.suite_or_floor] ?? '').trim() || null : null,

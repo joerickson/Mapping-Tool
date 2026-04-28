@@ -19,6 +19,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'GET') {
     const { client_id, status, property_id, portfolio_id } = req.query
 
+    // Service-key callers must scope to a client
+    if (ctx.mode === 'service' && !client_id) {
+      return res.status(400).json({ error: 'client_id is required for service-key auth' })
+    }
+
     let query = db
       .from('service_locations')
       .select('*, property:properties(state, city)')

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../hooks/useAuth'
-import type { MapFilter, RbmCategory, ServiceLocationStatus } from '../../types'
+import { useClient } from '../../context/ClientContext'
+import type { MapFilter, RbmCategory, ServiceLocationStatus, Client } from '../../types'
 import { STATUS_LABELS } from '../../lib/constants'
 
 interface FilterSidebarProps {
@@ -12,21 +13,22 @@ const STATUSES: ServiceLocationStatus[] = ['active', 'paused', 'terminated', 'pr
 
 export default function FilterSidebar({ filter, onChange }: FilterSidebarProps) {
   const { getToken } = useAuth()
+  const { clients: allClients } = useClient()
   const [categories, setCategories] = useState<RbmCategory[]>([])
-  const [clients, setClients] = useState<{ client_id: string; name: string }[]>([])
   const [portfolios, setPortfolios] = useState<{ portfolio_id: string; name: string }[]>([])
+
+  // Only show active+prospect clients in filter
+  const clients = allClients.filter((c) => c.status !== 'churned')
 
   useEffect(() => {
     async function load() {
       const token = await getToken()
       const headers = { Authorization: `Bearer ${token}` }
-      const [catsRes, clientsRes, portsRes] = await Promise.all([
+      const [catsRes, portsRes] = await Promise.all([
         fetch('/api/v1/categories', { headers }),
-        fetch('/api/v1/clients', { headers }),
         fetch('/api/v1/portfolios', { headers }),
       ])
       if (catsRes.ok) setCategories(await catsRes.json())
-      if (clientsRes.ok) setClients(await clientsRes.json())
       if (portsRes.ok) setPortfolios(await portsRes.json())
     }
     load()
@@ -129,15 +131,19 @@ export default function FilterSidebar({ filter, onChange }: FilterSidebarProps) 
               Client
             </label>
             <div className="space-y-1.5 max-h-36 overflow-y-auto">
-              {clients.map((c) => (
-                <label key={c.client_id} className="flex items-center gap-2 cursor-pointer">
+              {clients.map((c: Client) => (
+                <label key={c.id} className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={filter.clients.includes(c.client_id)}
-                    onChange={() => toggleMulti('clients', c.client_id)}
+                    checked={filter.clients.includes(c.id)}
+                    onChange={() => toggleMulti('clients', c.id)}
                     className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                   />
-                  <span className="text-sm text-gray-700 truncate">{c.name}</span>
+                  <span
+                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{ backgroundColor: c.brand_color ?? hashColor(c.id) }}
+                  />
+                  <span className="text-sm text-gray-700 truncate">{c.display_name ?? c.name}</span>
                 </label>
               ))}
             </div>
@@ -168,4 +174,14 @@ export default function FilterSidebar({ filter, onChange }: FilterSidebarProps) 
       </div>
     </div>
   )
+}
+
+function hashColor(str: string): string {
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash)
+    hash |= 0
+  }
+  const h = Math.abs(hash) % 360
+  return `hsl(${h}, 65%, 50%)`
 }

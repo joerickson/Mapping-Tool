@@ -38,6 +38,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       offset: offsetParam = '0',
     } = req.query
 
+    // Service-key callers must scope to a client
+    if (ctx.mode === 'service' && !client_id) {
+      return res.status(400).json({ error: 'client_id is required for service-key auth' })
+    }
+
     const limit = Math.min(Math.max(1, Number(limitParam)), 500)
     const offset = Math.max(0, Number(offsetParam))
 
