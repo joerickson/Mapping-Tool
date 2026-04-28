@@ -49,20 +49,42 @@ CREATE TABLE IF NOT EXISTS embed_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_embed_tokens_token ON embed_tokens(token);
 
--- Extend portfolios with new fields (idempotent)
-ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS portfolio_type TEXT NOT NULL DEFAULT 'custom';
-ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS client_id TEXT;
-ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS bid_id TEXT;
-ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS show_financials BOOLEAN NOT NULL DEFAULT false;
+-- Extend portfolios with new fields (skipped silently on fresh DBs where portfolios doesn't exist yet)
+DO $$ BEGIN
+  ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS portfolio_type TEXT NOT NULL DEFAULT 'custom';
+  ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS client_id TEXT;
+  ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS bid_id TEXT;
+  ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS show_financials BOOLEAN NOT NULL DEFAULT false;
+EXCEPTION WHEN undefined_table THEN NULL;
+END $$;
 
--- Extend service_locations with contract fields (idempotent)
-ALTER TABLE service_locations ADD COLUMN IF NOT EXISTS service_frequency TEXT;
-ALTER TABLE service_locations ADD COLUMN IF NOT EXISTS service_schedule JSONB;
-ALTER TABLE service_locations ADD COLUMN IF NOT EXISTS monthly_contract_value NUMERIC(12,2);
-ALTER TABLE service_locations ADD COLUMN IF NOT EXISTS contract_id TEXT;
+-- Extend service_locations with contract fields (skipped silently on fresh DBs)
+DO $$ BEGIN
+  ALTER TABLE service_locations ADD COLUMN IF NOT EXISTS service_frequency TEXT;
+  ALTER TABLE service_locations ADD COLUMN IF NOT EXISTS service_schedule JSONB;
+  ALTER TABLE service_locations ADD COLUMN IF NOT EXISTS monthly_contract_value NUMERIC(12,2);
+  ALTER TABLE service_locations ADD COLUMN IF NOT EXISTS contract_id TEXT;
+EXCEPTION WHEN undefined_table THEN NULL;
+END $$;
 
 -- PostGIS extension (harmless no-op if already enabled)
 CREATE EXTENSION IF NOT EXISTS postgis;
+
+-- Stub tables so nearby_properties can be created on fresh DBs
+-- (real tables exist in production via Studio; these are no-ops there)
+CREATE TABLE IF NOT EXISTS properties (
+  property_id  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  latitude     FLOAT8,
+  longitude    FLOAT8
+);
+
+CREATE TABLE IF NOT EXISTS service_locations (
+  service_location_id  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  property_id          UUID,
+  display_name         TEXT,
+  status               TEXT,
+  client_id            TEXT
+);
 
 -- Proximity function using PostGIS (falls back to Haversine math if no PostGIS)
 CREATE OR REPLACE FUNCTION nearby_properties(

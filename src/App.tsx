@@ -6,6 +6,7 @@ import LogoutPage from './pages/Logout'
 import ForgotPasswordPage from './pages/ForgotPassword'
 import UpdatePasswordPage from './pages/UpdatePassword'
 import UploadPage from './pages/Upload'
+import UploadReviewPage from './pages/UploadReview'
 import MapPage from './pages/Map'
 import ServiceLocationPage from './pages/ServiceLocation'
 import PortfolioPage from './pages/Portfolio'
@@ -50,6 +51,14 @@ export default function App() {
           element={
             <AuthGuard>
               <UploadPage />
+            </AuthGuard>
+          }
+        />
+        <Route
+          path="/upload/:batchId/review"
+          element={
+            <AuthGuard>
+              <UploadReviewPage />
             </AuthGuard>
           }
         />
