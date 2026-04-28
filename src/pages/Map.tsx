@@ -12,7 +12,6 @@ import type { Property, ServiceLocation, MapFilter, PropertyWithLocations } from
 
 const DEFAULT_FILTER: MapFilter = {
   clients: [],
-  categories: [],
   cityState: '',
   statuses: [],
   portfolios: [],
@@ -56,7 +55,6 @@ export default function MapPage() {
           : []
 
         if (effectiveClients.length) params.set('client_id', effectiveClients.join(','))
-        if (filter.categories.length) params.set('category', filter.categories.join(','))
         if (filter.statuses.length) params.set('status', filter.statuses.join(','))
         if (filter.portfolios.length) params.set('portfolio_id', filter.portfolios.join(','))
         if (filter.cityState) params.set('city_state', filter.cityState)
