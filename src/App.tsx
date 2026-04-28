@@ -25,6 +25,7 @@ import ClientsListPage from './pages/clients/ClientsList'
 import NewClientPage from './pages/clients/NewClient'
 import ClientDetailPage from './pages/clients/ClientDetail'
 import ClientSetupPage from './pages/clients/ClientSetup'
+import UploadSummaryPage from './pages/UploadSummary'
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -83,6 +84,7 @@ export default function App() {
           <Route path="/map" element={<AuthGuard><MapPage /></AuthGuard>} />
           <Route path="/upload" element={<AuthGuard><UploadPage /></AuthGuard>} />
           <Route path="/upload/:batchId/review" element={<AuthGuard><UploadReviewPage /></AuthGuard>} />
+          <Route path="/uploads/:batchId/summary" element={<AuthGuard><UploadSummaryPage /></AuthGuard>} />
           <Route path="/locations/:serviceLocationId" element={<AuthGuard><ServiceLocationPage /></AuthGuard>} />
           <Route path="/portfolios/:portfolioId" element={<AuthGuard><PortfolioPage /></AuthGuard>} />
 

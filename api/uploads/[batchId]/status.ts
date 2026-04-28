@@ -1,43 +1,52 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createAdminClient } from '../../_lib/supabase.js'
-import { verifyAuth, unauthorized } from '../../_lib/auth.js'
+import { authenticateRequest } from '../../_lib/auth.js'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
 
-  const auth = await verifyAuth(req)
-  if (!auth.ok) return unauthorized(res, auth.error)
+  try {
+    await authenticateRequest(req)
+  } catch (err: unknown) {
+    const e = err as { statusCode?: number; message?: string }
+    return res.status(e.statusCode ?? 401).json({ error: e.message ?? 'Unauthorized' })
+  }
 
   const batchId = req.query.batchId as string
-  if (!batchId) return res.status(400).json({ error: 'batchId required' })
-
   const db = createAdminClient()
 
   const { data: batch, error } = await db
     .from('upload_batches')
     .select(
-      'upload_batch_id, status, row_count, rows_processed, validation_errors_count, auto_corrections_count, completed_at, error_message',
+      'upload_batch_id, status, total_rows, row_count, rows_processed, errors_count, ' +
+      'validation_errors_count, auto_corrections_count, current_sheet, summary_stats, ' +
+      'completed_at, committed_at, cancelled_at, error_message, sheets'
     )
     .eq('upload_batch_id', batchId)
     .single()
 
   if (error || !batch) return res.status(404).json({ error: 'Batch not found' })
 
+  const totalRows = (batch.total_rows ?? batch.row_count ?? 0) as number
+
   const payload: Record<string, unknown> = {
-    batchId: batch.upload_batch_id,
+    batch_id: batch.upload_batch_id,
     status: batch.status ?? 'queued',
-    total_rows: batch.row_count,
+    total_rows: totalRows,
     rows_processed: batch.rows_processed ?? 0,
-    validation_errors_count: batch.validation_errors_count ?? 0,
+    errors_count: batch.errors_count ?? batch.validation_errors_count ?? 0,
     auto_corrections_count: batch.auto_corrections_count ?? 0,
+    current_sheet: batch.current_sheet ?? null,
   }
 
-  if (batch.error_message) {
-    payload.error = batch.error_message
-  }
+  if (batch.error_message) payload.error = batch.error_message
 
-  if (batch.status === 'completed') {
+  // New-style batch: has summary_stats from Edge Function
+  if (batch.summary_stats) {
+    payload.summary_stats = batch.summary_stats
+  } else if (batch.status === 'completed') {
+    // Legacy: derive summary from staged_addresses
     const { data: staged } = await db
       .from('staged_addresses')
       .select('scrub_status')

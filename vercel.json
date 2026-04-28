@@ -4,9 +4,24 @@
   "outputDirectory": "dist",
   "functions": {
     "api/uploads/[batchId]/process.ts": {
+      "maxDuration": 60
+    },
+    "api/uploads/[batchId]/commit.ts": {
       "maxDuration": 300
+    },
+    "api/uploads/index.ts": {
+      "maxDuration": 60
+    },
+    "api/cron/cleanup-uploads.ts": {
+      "maxDuration": 120
     }
   },
+  "crons": [
+    {
+      "path": "/api/cron/cleanup-uploads",
+      "schedule": "0 3 * * *"
+    }
+  ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/embed/map", "destination": "/api/embed/map" },

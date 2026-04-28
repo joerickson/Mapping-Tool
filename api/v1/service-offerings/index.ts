@@ -15,7 +15,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const db = createAdminClient()
 
   if (req.method === 'GET') {
-    const { account_id, client_id, include_archived } = req.query
+    const { account_id, client_id, include_archived, include_related } = req.query
+
+    // include_related=true: return global + account-level + client-level in one query
+    if (include_related === 'true' && account_id) {
+      const aid = String(account_id)
+      const cid = client_id ? String(client_id) : null
+      let query = db
+        .from('service_offerings')
+        .select('*')
+        .or(
+          cid
+            ? `and(account_id.is.null,client_id.is.null),and(account_id.eq.${aid},client_id.is.null),and(account_id.eq.${aid},client_id.eq.${cid})`
+            : `and(account_id.is.null,client_id.is.null),and(account_id.eq.${aid},client_id.is.null)`
+        )
+        .order('name', { ascending: true })
+      if (include_archived !== 'true') query = query.eq('is_archived', false)
+      const { data, error } = await query
+      if (error) return res.status(500).json({ error: error.message })
+      return res.status(200).json(data ?? [])
+    }
+
     let query = db.from('service_offerings').select('*').order('name', { ascending: true })
     if (account_id) query = query.eq('account_id', String(account_id))
     if (client_id) query = query.eq('client_id', String(client_id))
