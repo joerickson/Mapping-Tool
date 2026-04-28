@@ -5,6 +5,7 @@ import Navbar from '../../components/ui/Navbar'
 import Button from '../../components/ui/Button'
 import Papa from 'papaparse'
 import * as XLSX from 'xlsx'
+import { apiFetch } from '../../lib/api'
 import type { Client, ServiceOffering, CustomFieldDefinition, ClientTemplate, PricingModel, CustomFieldType } from '../../types'
 
 type WizardStep = 1 | 2 | 3 | 4 | 5
@@ -85,17 +86,21 @@ export default function ClientSetupPage() {
     setLoading(true)
     try {
       const token = await getToken()
-      const [clientRes, offeringsRes, fieldsRes, templateRes] = await Promise.all([
-        fetch(`/api/v1/clients/${id}`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`/api/v1/service-offerings?client_id=${id}`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`/api/v1/custom-field-definitions?client_id=${id}`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`/api/v1/clients/${id}/template`, { headers: { Authorization: `Bearer ${token}` } }),
+      const headers = { Authorization: `Bearer ${token}` }
+      const [clientResult, offeringsResult, fieldsResult, templateResult] = await Promise.allSettled([
+        apiFetch(`/api/v1/clients/${id}`, { headers }),
+        apiFetch(`/api/v1/service-offerings?client_id=${id}`, { headers }),
+        apiFetch(`/api/v1/custom-field-definitions?client_id=${id}`, { headers }),
+        apiFetch(`/api/v1/clients/${id}/template`, { headers }),
       ])
-      if (clientRes.ok) setClient(await clientRes.json())
-      if (offeringsRes.ok) setOfferings(await offeringsRes.json())
-      if (fieldsRes.ok) setCustomFields(await fieldsRes.json())
-      if (templateRes.ok) {
-        const t: ClientTemplate = await templateRes.json()
+      if (clientResult.status === 'fulfilled' && clientResult.value.ok)
+        setClient(await clientResult.value.json())
+      if (offeringsResult.status === 'fulfilled' && offeringsResult.value.ok)
+        setOfferings(await offeringsResult.value.json())
+      if (fieldsResult.status === 'fulfilled' && fieldsResult.value.ok)
+        setCustomFields(await fieldsResult.value.json())
+      if (templateResult.status === 'fulfilled' && templateResult.value.ok) {
+        const t: ClientTemplate = await templateResult.value.json()
         setTemplate(t)
         setDefaultCountry(t.default_country ?? '')
         setColMappingRows(
