@@ -5,6 +5,7 @@ import { authenticateRequest } from '../_lib/auth.js'
 export const config = { maxDuration: 300 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
   try {
@@ -14,24 +15,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(e.statusCode ?? 401).json({ error: e.message ?? 'Unauthorized' })
   }
 
-  const { batch_id } = req.body
+  const { batch_id } = req.body ?? {}
   if (!batch_id) return res.status(400).json({ error: 'batch_id required' })
 
   const db = createAdminClient()
 
-  // Reset batch state so commit endpoint accepts it
-  const { error: resetErr } = await db
+  const { data: batch, error: fetchErr } = await db
     .from('upload_batches')
-    .update({
-      status: 'completed',
-      committed_at: null,
-    })
+    .select('upload_batch_id, status, account_id, client_id')
     .eq('upload_batch_id', batch_id)
+    .single()
 
-  if (resetErr) return res.status(500).json({ error: `Reset failed: ${resetErr.message}` })
+  if (fetchErr || !batch) return res.status(404).json({ error: 'Batch not found' })
 
-  // Forward to the existing commit endpoint
-  const commitUrl = `${process.env.VITE_APP_URL || 'https://propertyintel.dev'}/api/uploads/${batch_id}/commit`
+  if (batch.status !== 'completed') {
+    const { error: resetErr } = await db
+      .from('upload_batches')
+      .update({ status: 'completed', committed_at: null })
+      .eq('upload_batch_id', batch_id)
+    if (resetErr) return res.status(500).json({ error: `Reset failed: ${resetErr.message}` })
+  }
+
+  const baseUrl = process.env.VITE_APP_URL || `https://${req.headers.host}`
+  const commitUrl = `${baseUrl}/api/uploads/${batch_id}/commit`
+
   const commitResp = await fetch(commitUrl, {
     method: 'POST',
     headers: {

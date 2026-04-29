@@ -17,6 +17,7 @@ import ParcelImportPage from './pages/admin/parcels/Import'
 import CountiesPage from './pages/admin/parcels/Counties'
 import FallbacksPage from './pages/admin/parcels/Fallbacks'
 import DangerousAdminPage from './pages/admin/Dangerous'
+import AdminUploadsPage from './pages/admin/Uploads'
 import AccountsListPage from './pages/accounts/AccountsList'
 import NewAccountPage from './pages/accounts/NewAccount'
 import AccountDetailPage from './pages/accounts/AccountDetail'
@@ -102,6 +103,7 @@ export default function App() {
 
           {/* Admin */}
           <Route path="/admin/dangerous" element={<AuthGuard><DangerousAdminPage /></AuthGuard>} />
+          <Route path="/admin/uploads" element={<AuthGuard><AdminUploadsPage /></AuthGuard>} />
           <Route path="/admin/parcels/import" element={<AuthGuard><ParcelImportPage /></AuthGuard>} />
           <Route path="/admin/parcels/counties" element={<AuthGuard><CountiesPage /></AuthGuard>} />
           <Route path="/admin/parcels/fallbacks" element={<AuthGuard><FallbacksPage /></AuthGuard>} />

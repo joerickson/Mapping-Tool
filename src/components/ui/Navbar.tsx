@@ -125,6 +125,12 @@ export default function Navbar() {
 
         <div className="ml-auto flex items-center gap-2">
           <Link
+            to="/admin/uploads"
+            className="px-3 py-1.5 rounded-md text-sm font-medium text-gray-400 hover:bg-gray-100 transition-colors"
+          >
+            Uploads
+          </Link>
+          <Link
             to="/admin/dangerous"
             className="px-3 py-1.5 rounded-md text-sm font-medium text-gray-400 hover:bg-gray-100 transition-colors"
           >
