@@ -45,10 +45,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'No committable rows found' })
   }
 
+  // Pre-fetch service offering names for display_name fallback
+  const uniqueOfferingIds = [...new Set(
+    stagedRows.map((r: any) => r.service_offering_id as string | null).filter(Boolean) as string[]
+  )]
+  const offeringNameMap = new Map<string, string>()
+  if (uniqueOfferingIds.length) {
+    const { data: offerings } = await db
+      .from('service_offerings')
+      .select('id, name')
+      .in('id', uniqueOfferingIds)
+    for (const o of offerings ?? []) {
+      offeringNameMap.set(o.id, o.name)
+    }
+  }
+
   let newProperties = 0
   let existingProperties = 0
   let newServiceLocations = 0
   let updatedServiceLocations = 0
+  const failedRows: Array<{ staged_row_id: string; reason: string }> = []
 
   // Batch deduplication cache: dedupe_hash → property_id within this commit
   const dedupeCache = new Map<string, string>()
@@ -81,9 +97,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .select('property_id')
         .single()
 
-      if (propErr || !prop) {
-        // If unique constraint violation (race condition), try to fetch existing
-        if (propErr?.code === '23505' && row.dedupe_hash) {
+      if (propErr) {
+        console.error(`Property insert failed for staged_row ${row.id}:`, {
+          error: propErr,
+          address: pd.address_line1,
+          city: pd.city,
+          state: pd.state,
+          address_hash: row.dedupe_hash,
+        })
+        // Attempt race-condition recovery on unique constraint violation
+        if (propErr.code === '23505' && row.dedupe_hash) {
           const { data: existing } = await db
             .from('properties')
             .select('property_id')
@@ -95,11 +118,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             existingProperties++
           }
         }
-        if (!propertyId) continue
-      } else {
+        if (!propertyId) {
+          failedRows.push({ staged_row_id: row.id as string, reason: propErr.message })
+          continue
+        }
+      } else if (prop) {
         propertyId = prop.property_id
         if (row.dedupe_hash) dedupeCache.set(row.dedupe_hash as string, propertyId!)
         newProperties++
+      } else {
+        failedRows.push({ staged_row_id: row.id as string, reason: 'Property insert returned no data' })
+        continue
       }
     }
 
@@ -108,7 +137,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Check if service_location already exists (same property + service_offering + client)
     const serviceOfferingId = row.service_offering_id as string | null
     if (serviceOfferingId) {
-      const { data: existingSL } = await db
+      const { data: existingSL, error: slLookupErr } = await db
         .from('service_locations')
         .select('service_location_id')
         .eq('property_id', propertyId)
@@ -116,18 +145,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .eq('client_id', batch.client_id as string)
         .maybeSingle()
 
+      if (slLookupErr) {
+        console.error(`Service location lookup failed for staged_row ${row.id}:`, {
+          error: slLookupErr,
+          property_id: propertyId,
+          service_offering_id: serviceOfferingId,
+        })
+        failedRows.push({ staged_row_id: row.id as string, reason: slLookupErr.message })
+        continue
+      }
+
       if (existingSL) {
         // Update existing service_location
-        await db
+        const { error: slUpdateErr } = await db
           .from('service_locations')
           .update({
-            display_name: (sld.display_name as string | null) ?? null,
+            display_name: (sld.display_name as string | null)?.trim() ?? null,
             suite_or_floor: (sld.suite_or_floor as string | null) ?? null,
             serviceable_sqft: (sld.serviceable_sqft as number | null) ?? null,
             custom_fields: (sld.custom_fields as Record<string, unknown>) ?? {},
             frequency_notes: (sld.frequency_notes as string | null) ?? null,
           })
           .eq('service_location_id', existingSL.service_location_id)
+
+        if (slUpdateErr) {
+          console.error(`Service location update failed for staged_row ${row.id}:`, {
+            error: slUpdateErr,
+            service_location_id: existingSL.service_location_id,
+            property_id: propertyId,
+          })
+          failedRows.push({ staged_row_id: row.id as string, reason: slUpdateErr.message })
+          continue
+        }
 
         updatedServiceLocations++
 
@@ -136,14 +185,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .update({ service_location_id: existingSL.service_location_id, property_id: propertyId })
           .eq('id', row.id)
       } else {
-        const { data: sl } = await db
+        const serviceOfferingName = offeringNameMap.get(serviceOfferingId) ?? serviceOfferingId
+        const displayName =
+          (sld.display_name as string | null)?.trim() ||
+          `${pd.address_line1} - ${serviceOfferingName}` ||
+          String(pd.address_line1)
+
+        const { data: sl, error: slInsertErr } = await db
           .from('service_locations')
           .insert({
             property_id: propertyId,
             client_id: batch.client_id as string | null,
             account_id: batch.account_id as string | null,
             service_offering_id: serviceOfferingId,
-            display_name: (sld.display_name as string | null) ?? null,
+            display_name: displayName,
             location_code: (sld.location_code as string | null) ?? null,
             suite_or_floor: (sld.suite_or_floor as string | null) ?? null,
             serviceable_sqft: (sld.serviceable_sqft as number | null) ?? null,
@@ -153,6 +208,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           })
           .select('service_location_id')
           .single()
+
+        if (slInsertErr) {
+          console.error(`Service location insert failed for staged_row ${row.id}:`, {
+            error: slInsertErr,
+            property_id: propertyId,
+            service_offering_id: serviceOfferingId,
+            display_name: displayName,
+          })
+          failedRows.push({ staged_row_id: row.id as string, reason: slInsertErr.message })
+          continue
+        }
 
         if (sl) {
           newServiceLocations++
@@ -176,6 +242,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         committed_existing_properties: existingProperties,
         committed_new_service_locations: newServiceLocations,
         committed_updated_service_locations: updatedServiceLocations,
+        commit_failure_count: failedRows.length,
+        commit_failures: failedRows.slice(0, 50), // cap at 50 for storage
       },
     })
     .eq('upload_batch_id', batchId)
@@ -187,5 +255,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     existing_properties: existingProperties,
     new_service_locations: newServiceLocations,
     updated_service_locations: updatedServiceLocations,
+    failed_rows: failedRows,
+    failure_count: failedRows.length,
   })
 }
