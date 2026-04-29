@@ -138,6 +138,19 @@ export default function AccountAnalysisPage() {
   const [mapPoints, setMapPoints] = useState<AnalysisMapPoint[]>([])
   const [mapBranches, setMapBranches] = useState<AnalysisMapBranch[]>([])
   const [mapColorMode, setMapColorMode] = useState<ColorMode>('branch')
+  // Phase 3.5 — when a module's "[Edit assumptions]" link is clicked, this
+  // makes CostAssumptionsPanel auto-expand and scroll to the matching group.
+  const [costPanelHighlight, setCostPanelHighlight] = useState<string | null>(null)
+  // Live cost-assumption baselines from constraints (in addition to the four
+  // already in state for the scenario panel) — used to render the per-card
+  // "Using: …" lines.
+  const [baselineHoursPerDay, setBaselineHoursPerDay] = useState(10)
+  const [baselineWorkingDays, setBaselineWorkingDays] = useState(250)
+  const [baselineDriveSpeed, setBaselineDriveSpeed] = useState(60)
+  const [baselineMaxDriveMin, setBaselineMaxDriveMin] = useState(120)
+  const [baselineProductivity, setBaselineProductivity] = useState(3000)
+  const [baselineBranchOverhead, setBaselineBranchOverhead] = useState(240000)
+  const [baselineCorporateOverhead, setBaselineCorporateOverhead] = useState(0.08)
   const [mapLoading, setMapLoading] = useState(true)
   const [reassessing, setReassessing] = useState(false)
   const [reassessMessage, setReassessMessage] = useState<string | null>(null)
@@ -181,6 +194,17 @@ export default function AccountAnalysisPage() {
       if (typeof json.fuel_cost_per_mile === 'number') setBaselineFuelCost(json.fuel_cost_per_mile)
       if (typeof json.target_gross_margin_pct === 'number') setBaselineMargin(json.target_gross_margin_pct)
       if (typeof json.surge_premium_multiplier === 'number') setBaselineSurgePremium(json.surge_premium_multiplier)
+      if (typeof json.hours_per_day === 'number') setBaselineHoursPerDay(json.hours_per_day)
+      if (typeof json.working_days_per_year === 'number') setBaselineWorkingDays(json.working_days_per_year)
+      if (typeof json.drive_speed_mph === 'number') setBaselineDriveSpeed(json.drive_speed_mph)
+      if (typeof json.max_one_way_drive_minutes === 'number')
+        setBaselineMaxDriveMin(json.max_one_way_drive_minutes)
+      if (typeof json.recurring_productivity_sqft_per_hour === 'number')
+        setBaselineProductivity(json.recurring_productivity_sqft_per_hour)
+      if (typeof json.branch_overhead_annual === 'number')
+        setBaselineBranchOverhead(json.branch_overhead_annual)
+      if (typeof json.corporate_overhead_pct === 'number')
+        setBaselineCorporateOverhead(json.corporate_overhead_pct)
     } catch {
       /* ignore */
     }
@@ -718,6 +742,7 @@ export default function AccountAnalysisPage() {
           {accountId && (
             <CostAssumptionsPanel
               accountId={accountId}
+              highlightGroup={costPanelHighlight}
               onSaved={() => refreshConstraints()}
             />
           )}
@@ -865,6 +890,18 @@ export default function AccountAnalysisPage() {
                 isTier2 && hasSelection
                   ? `${m.description} · Using K=${selectedK ?? selectedBranches?.length ?? '?'} selected branches`
                   : m.description
+              const usingMeta = usingLineForModule(m.key, {
+                laborCost: baselineLaborCost,
+                hoursPerDay: baselineHoursPerDay,
+                workingDays: baselineWorkingDays,
+                fuelCost: baselineFuelCost,
+                driveSpeed: baselineDriveSpeed,
+                maxDriveMin: baselineMaxDriveMin,
+                productivity: baselineProductivity,
+                branchOverhead: baselineBranchOverhead,
+                corporateOverhead: baselineCorporateOverhead,
+                margin: baselineMargin,
+              })
               return (
                 <AnalysisCard
                   key={m.key}
@@ -884,6 +921,12 @@ export default function AccountAnalysisPage() {
                   onMarkFailed={status === 'stuck' ? () => handleMarkFailed(m.key) : undefined}
                   staleVsConstraints={stale}
                   disabledReason={disabledReason}
+                  usingLine={usingMeta?.line}
+                  onEditAssumptions={
+                    usingMeta?.group
+                      ? () => setCostPanelHighlight(usingMeta.group + '#' + Date.now())
+                      : undefined
+                  }
                 >
                   {renderModuleBody(m.key)}
                 </AnalysisCard>
@@ -911,6 +954,64 @@ export default function AccountAnalysisPage() {
       </div>
     </div>
   )
+}
+
+// Phase 3.5 — per-module "Using: …" line + which Cost Assumptions group to
+// scroll to when the user clicks "[Edit assumptions]". Returns null for
+// modules that don't materially depend on cost assumptions.
+function usingLineForModule(
+  key: ModuleKey,
+  v: {
+    laborCost: number
+    hoursPerDay: number
+    workingDays: number
+    fuelCost: number
+    driveSpeed: number
+    maxDriveMin: number
+    productivity: number
+    branchOverhead: number
+    corporateOverhead: number
+    margin: number
+  }
+): { line: React.ReactNode; group: string } | null {
+  const fmtMoney = (n: number) =>
+    n >= 1000 ? `$${(n / 1000).toFixed(0)}K` : `$${n.toFixed(2)}`
+  const fmtPct = (n: number) => `${(n * 100).toFixed(0)}%`
+  const dot = ' · '
+  switch (key) {
+    case 'branch_optimization':
+      return {
+        line: `${fmtMoney(v.fuelCost)}/mile fuel${dot}${v.driveSpeed} mph drive speed${dot}${fmtMoney(v.branchOverhead)}/branch overhead`,
+        group: 'Vehicle & Fuel',
+      }
+    case 'drive_time_logistics':
+      return {
+        line: `${v.driveSpeed} mph drive speed${dot}max ${v.maxDriveMin} min one-way`,
+        group: 'Vehicle & Fuel',
+      }
+    case 'crew_strategy':
+      return {
+        line: `$${v.laborCost.toFixed(2)}/hr labor${dot}${v.hoursPerDay} hr/day${dot}${v.workingDays} days/year${dot}$${v.fuelCost.toFixed(3)}/mile fuel`,
+        group: 'Crew Economics',
+      }
+    case 'workforce_sizing':
+      return {
+        line: `${v.productivity.toLocaleString()} sqft/hr productivity${dot}$${v.laborCost.toFixed(2)}/hr labor`,
+        group: 'Productivity Rules',
+      }
+    case 'seasonality_capacity':
+      return {
+        line: `${v.hoursPerDay} hr/day${dot}${v.workingDays} days/year`,
+        group: 'Crew Economics',
+      }
+    case 'bid_pricing_structure':
+      return {
+        line: `${fmtMoney(v.branchOverhead)}/branch overhead${dot}${fmtPct(v.corporateOverhead)} corp overhead${dot}${fmtPct(v.margin)} margin`,
+        group: 'Branch & Operational Costs',
+      }
+    default:
+      return null
+  }
 }
 
 function LegendDot({ color, label }: { color: string; label: string }) {

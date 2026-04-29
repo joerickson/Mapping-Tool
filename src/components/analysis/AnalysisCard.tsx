@@ -27,6 +27,12 @@ interface AnalysisCardProps {
   // placeholder explaining what's blocking the run (typically "Select branches
   // in Branch Optimization first").
   disabledReason?: string | null
+  // Phase 3.5 — small "Using: $28/hr labor · 10 hr/day · …" line below the
+  // description, with an "Edit assumptions" link that opens the Cost
+  // Assumptions panel scrolled to the relevant group. The dashboard owns the
+  // highlight-group state; the card just renders the line + click handler.
+  usingLine?: ReactNode
+  onEditAssumptions?: () => void
   children?: ReactNode              // expanded content — visible only when completed
 }
 
@@ -52,6 +58,8 @@ export default function AnalysisCard({
   onMarkFailed,
   staleVsConstraints,
   disabledReason,
+  usingLine,
+  onEditAssumptions,
   children,
 }: AnalysisCardProps) {
   // Re-render every second so elapsed counters tick.
@@ -109,6 +117,21 @@ export default function AnalysisCard({
             )}
           </div>
           <p className="text-sm text-gray-500 mt-1">{description}</p>
+          {usingLine && (
+            <p className="text-xs text-gray-600 mt-1.5 flex items-center flex-wrap gap-x-1.5">
+              <span className="font-semibold text-gray-500 uppercase tracking-wide">Using:</span>
+              <span>{usingLine}</span>
+              {onEditAssumptions && (
+                <button
+                  type="button"
+                  onClick={onEditAssumptions}
+                  className="text-blue-600 hover:underline ml-1"
+                >
+                  [Edit assumptions]
+                </button>
+              )}
+            </p>
+          )}
           {completedAt && status === 'completed' && (
             <p className="text-xs text-gray-400 mt-1">
               Last run {relativeTime(completedAt)} · {new Date(completedAt).toLocaleString()}

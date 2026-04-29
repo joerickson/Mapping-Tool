@@ -170,11 +170,14 @@ export default function CostAssumptionsPanel({ accountId, highlightGroup, onSave
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId])
 
-  // If a deep-link group changed, expand and scroll into view
+  // If a deep-link group changed, expand and scroll into view. The dashboard
+  // appends "#<timestamp>" to the group name on each click so the same group
+  // can be re-targeted multiple times in a row — strip that suffix here.
   useEffect(() => {
     if (highlightGroup) {
+      const groupName = highlightGroup.split('#')[0]
       setOpen(true)
-      const id = `cost-group-${slug(highlightGroup)}`
+      const id = `cost-group-${slug(groupName)}`
       setTimeout(() => {
         document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
       }, 50)
