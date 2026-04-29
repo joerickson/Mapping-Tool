@@ -57,8 +57,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const db = createAdminClient()
 
-  // Cache: if a completed run exists with the same inputs hash for this account, return it.
-  const cacheKey = hashInputs({ accountId, ...inputs })
+  // Cache: if a completed run exists with the same inputs hash for this
+  // account, return it. CACHE_VERSION is mixed into the hash so any change to
+  // the analysis output shape (e.g. reverse-geocoding logic) invalidates
+  // existing rows. Bump it whenever the output of computeBranchOptimization
+  // would differ for the same inputs.
+  const CACHE_VERSION = 2
+  const cacheKey = hashInputs({ accountId, _v: CACHE_VERSION, ...inputs })
   const cached = await db
     .from('portfolio_analyses')
     .select('id, inputs')
