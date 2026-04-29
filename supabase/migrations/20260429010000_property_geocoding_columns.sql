@@ -15,6 +15,14 @@ ALTER TABLE public.properties
   ADD COLUMN IF NOT EXISTS google_place_id   text,
   ADD COLUMN IF NOT EXISTS last_enriched_at  timestamp with time zone;
 
+-- Enrichment tracking columns
+ALTER TABLE public.properties
+  ADD COLUMN IF NOT EXISTS enrichment_status  text NOT NULL DEFAULT 'pending',
+  ADD COLUMN IF NOT EXISTS enrichment_errors  jsonb,
+  ADD COLUMN IF NOT EXISTS geocode_source     text,
+  ADD COLUMN IF NOT EXISTS geocode_confidence text,
+  ADD COLUMN IF NOT EXISTS geocoded_at        timestamp with time zone;
+
 -- Index to find pending/failed properties quickly during backfill
 CREATE INDEX IF NOT EXISTS properties_enrichment_status_idx
   ON public.properties(enrichment_status)
