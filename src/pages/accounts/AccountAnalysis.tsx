@@ -3,7 +3,10 @@ import { useParams, Link } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import Navbar from '../../components/ui/Navbar'
 import Button from '../../components/ui/Button'
-import AnalysisCard, { type AnalysisStatus } from '../../components/analysis/AnalysisCard'
+import AnalysisCard, {
+  type AnalysisStatus,
+  STUCK_AFTER_MS,
+} from '../../components/analysis/AnalysisCard'
 import GeographicChart from '../../components/analysis/GeographicChart'
 import BranchOptimizationChart from '../../components/analysis/BranchOptimizationChart'
 import DriveTimeChart from '../../components/analysis/DriveTimeChart'
@@ -68,15 +71,18 @@ export default function AccountAnalysisPage() {
   const [latestByModule, setLatestByModule] = useState<Record<string, AnalysisRow | null>>({})
   const [running, setRunning] = useState<Record<string, boolean>>({})
   const [pollIds, setPollIds] = useState<Record<string, string>>({})
+  // Per-module timing + diagnostics for visible feedback while running
+  const [startedAt, setStartedAt] = useState<Record<string, number | null>>({})
+  const [lastPolledAt, setLastPolledAt] = useState<Record<string, number | null>>({})
+  const [lastPollError, setLastPollError] = useState<Record<string, string | null>>({})
+  // Re-render every second so stuck-detection (driven by elapsed time) flips
+  // status from 'running' to 'stuck' even between polls.
+  const [, setTick] = useState(0)
   const [mapPoints, setMapPoints] = useState<AnalysisMapPoint[]>([])
   const [mapBranches, setMapBranches] = useState<AnalysisMapBranch[]>([])
   const [mapLoading, setMapLoading] = useState(true)
   const [reassessing, setReassessing] = useState(false)
-
-  const accountIdRef = useRef(accountId)
-  useEffect(() => {
-    accountIdRef.current = accountId
-  }, [accountId])
+  const [reassessMessage, setReassessMessage] = useState<string | null>(null)
 
   // ─── Initial load: account + latest analysis per module + properties for map ───
   const loadEverything = useCallback(async () => {
@@ -89,13 +95,11 @@ export default function AccountAnalysisPage() {
       const [accRes, analysesRes, propsRes] = await Promise.all([
         fetch(`/api/v1/accounts/${accountId}`, { headers }),
         fetch(`/api/analyses/account/${accountId}/latest`, { headers }).catch(() => null),
-        // pull this account's properties via clients filter, with extra fields
         loadAccountProperties(accountId, token),
       ])
 
       if (accRes.ok) setAccount(await accRes.json())
 
-      // Latest analysis row per module — derived directly from properties query if the dedicated route doesn't exist
       const byModule: Record<string, AnalysisRow | null> = {
         geographic_distribution: null,
         branch_optimization: null,
@@ -111,8 +115,43 @@ export default function AccountAnalysisPage() {
       }
       setLatestByModule(byModule)
 
+      // If a row from a previous session is still 'running', resume polling
+      // and seed startedAt from the row's created_at so elapsed time + stuck
+      // detection work correctly.
+      const resumePolls: Record<string, string> = {}
+      const resumeStarted: Record<string, number> = {}
+      const resumeRunning: Record<string, boolean> = {}
+      for (const [k, r] of Object.entries(byModule)) {
+        if (r && (r.status === 'running' || r.status === 'pending')) {
+          resumePolls[k] = r.id
+          resumeStarted[k] = new Date(r.created_at).getTime()
+          resumeRunning[k] = true
+        }
+      }
+      if (Object.keys(resumePolls).length) {
+        setPollIds((prev) => ({ ...prev, ...resumePolls }))
+        setStartedAt((prev) => ({ ...prev, ...resumeStarted }))
+        setRunning((prev) => ({ ...prev, ...resumeRunning }))
+      }
+
+      // Hydrate map branches from the latest completed branch_optimization
+      const bo = byModule.branch_optimization
+      if (bo && bo.status === 'completed' && bo.outputs) {
+        const recommended = bo.outputs.k_results?.find(
+          (r: any) => r.k === bo.outputs.recommended_k
+        )
+        if (recommended) {
+          setMapBranches(
+            recommended.branches.map((b: any) => ({
+              name: b.city_state,
+              lat: b.lat,
+              lng: b.lng,
+            }))
+          )
+        }
+      }
+
       setMapPoints(propsRes.points)
-      setMapBranches(propsRes.branches)
     } finally {
       setMapLoading(false)
     }
@@ -122,29 +161,147 @@ export default function AccountAnalysisPage() {
     loadEverything()
   }, [loadEverything])
 
-  // ─── Polling: for each running analysis_id, hit GET /api/analyses/[id] every 3s ───
+  // ─── Tick every 1s so elapsed-time displays + stuck-state derivation refresh
+  // even between polls. Only ticks while something is running. ───
+  useEffect(() => {
+    if (Object.keys(pollIds).length === 0) return
+    const id = setInterval(() => setTick((t) => t + 1), 1000)
+    return () => clearInterval(id)
+  }, [pollIds])
+
+  // ─── Polling: GET /api/analyses/[id] every 3s for each running id ───
+  const pollOnce = useCallback(
+    async (moduleKey: string, id: string) => {
+      try {
+        const token = await getToken()
+        const res = await fetch(`/api/analyses/${id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!res.ok) {
+          setLastPollError((prev) => ({
+            ...prev,
+            [moduleKey]: `HTTP ${res.status} ${res.statusText}`,
+          }))
+          return
+        }
+        const row: AnalysisRow = await res.json()
+        setLastPolledAt((prev) => ({ ...prev, [moduleKey]: Date.now() }))
+        setLastPollError((prev) => ({ ...prev, [moduleKey]: null }))
+
+        if (row.status === 'completed' || row.status === 'failed') {
+          setLatestByModule((prev) => ({ ...prev, [moduleKey]: row }))
+          setRunning((prev) => ({ ...prev, [moduleKey]: false }))
+          setPollIds((prev) => {
+            const next = { ...prev }
+            delete next[moduleKey]
+            return next
+          })
+          if (
+            row.status === 'completed' &&
+            row.module_key === 'branch_optimization' &&
+            row.outputs
+          ) {
+            const recommended = row.outputs.k_results?.find(
+              (r: any) => r.k === row.outputs.recommended_k
+            )
+            if (recommended) {
+              setMapBranches(
+                recommended.branches.map((b: any) => ({
+                  name: b.city_state,
+                  lat: b.lat,
+                  lng: b.lng,
+                }))
+              )
+            }
+          }
+        }
+      } catch (err: any) {
+        setLastPollError((prev) => ({
+          ...prev,
+          [moduleKey]: err?.message ?? String(err),
+        }))
+      }
+    },
+    [getToken]
+  )
+
   useEffect(() => {
     const ids = Object.entries(pollIds)
     if (ids.length === 0) return
-
-    const interval = setInterval(async () => {
-      const token = await getToken()
+    const interval = setInterval(() => {
       for (const [moduleKey, id] of ids) {
-        try {
-          const res = await fetch(`/api/analyses/${id}`, {
+        pollOnce(moduleKey, id)
+      }
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [pollIds, pollOnce])
+
+  const runModule = useCallback(
+    async (moduleKey: ModuleKey, endpoint: string) => {
+      if (!accountId) return
+      const startTs = Date.now()
+      setStartedAt((prev) => ({ ...prev, [moduleKey]: startTs }))
+      setLastPolledAt((prev) => ({ ...prev, [moduleKey]: null }))
+      setLastPollError((prev) => ({ ...prev, [moduleKey]: null }))
+      setRunning((prev) => ({ ...prev, [moduleKey]: true }))
+
+      try {
+        const token = await getToken()
+        const res = await fetch(`/api/analyses/account/${accountId}/${endpoint}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({}),
+        })
+
+        // The endpoint now does the work synchronously and writes the row to a
+        // terminal state before responding. Body is { analysis_id, status, ...}.
+        const data = await res.json().catch(() => ({} as any))
+        const id = data.analysis_id as string | undefined
+
+        if (!res.ok) {
+          // The server may have written status='failed' to the row; pick that
+          // up by fetching the row, but fall back to a synthetic error display.
+          if (id) {
+            const rowRes = await fetch(`/api/analyses/${id}`, {
+              headers: { Authorization: `Bearer ${token}` },
+            })
+            if (rowRes.ok) {
+              const row: AnalysisRow = await rowRes.json()
+              setLatestByModule((prev) => ({ ...prev, [moduleKey]: row }))
+            }
+          } else {
+            setLatestByModule((prev) => ({
+              ...prev,
+              [moduleKey]: {
+                id: '',
+                account_id: accountId,
+                module_key: moduleKey,
+                status: 'failed',
+                outputs: null,
+                summary_text: null,
+                property_count: null,
+                created_at: new Date().toISOString(),
+                completed_at: new Date().toISOString(),
+                error_message: data.error ?? `HTTP ${res.status} ${res.statusText}`,
+              },
+            }))
+          }
+          setRunning((prev) => ({ ...prev, [moduleKey]: false }))
+          return
+        }
+
+        // Success path. With sync endpoints we usually get status='completed'
+        // straight back; fetch the row to pick up summary_text + outputs.
+        if (id) {
+          const rowRes = await fetch(`/api/analyses/${id}`, {
             headers: { Authorization: `Bearer ${token}` },
           })
-          if (!res.ok) continue
-          const row: AnalysisRow = await res.json()
-          if (row.status === 'completed' || row.status === 'failed') {
+          if (rowRes.ok) {
+            const row: AnalysisRow = await rowRes.json()
             setLatestByModule((prev) => ({ ...prev, [moduleKey]: row }))
-            setRunning((prev) => ({ ...prev, [moduleKey]: false }))
-            setPollIds((prev) => {
-              const next = { ...prev }
-              delete next[moduleKey]
-              return next
-            })
-            // If branch_optimization just completed, refresh the map branches
             if (
               row.status === 'completed' &&
               row.module_key === 'branch_optimization' &&
@@ -164,53 +321,31 @@ export default function AccountAnalysisPage() {
               }
             }
           }
-        } catch {
-          /* swallow — retry next tick */
         }
-      }
-    }, 3000)
 
-    return () => clearInterval(interval)
-  }, [pollIds, getToken])
-
-  const runModule = useCallback(
-    async (moduleKey: ModuleKey, endpoint: string) => {
-      if (!accountId) return
-      setRunning((prev) => ({ ...prev, [moduleKey]: true }))
-      try {
-        const token = await getToken()
-        const res = await fetch(`/api/analyses/account/${accountId}/${endpoint}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({}),
-        })
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}))
-          alert(`Failed to start ${moduleKey}: ${err.error ?? res.statusText}`)
-          setRunning((prev) => ({ ...prev, [moduleKey]: false }))
-          return
-        }
-        const data = await res.json()
-        const id = data.analysis_id as string
-        if (data.status === 'completed' && data.cached) {
-          // Cached hit: fetch the row immediately
-          const rowRes = await fetch(`/api/analyses/${id}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          })
-          if (rowRes.ok) {
-            const row: AnalysisRow = await rowRes.json()
-            setLatestByModule((prev) => ({ ...prev, [moduleKey]: row }))
-          }
-          setRunning((prev) => ({ ...prev, [moduleKey]: false }))
-        } else {
-          // Start polling
+        // If for any reason the row is still 'running' (shouldn't happen with
+        // sync endpoints, but defensive), drop into the polling path.
+        if (data.status === 'running' && id) {
           setPollIds((prev) => ({ ...prev, [moduleKey]: id }))
+        } else {
+          setRunning((prev) => ({ ...prev, [moduleKey]: false }))
         }
       } catch (err: any) {
-        alert(`Error: ${err.message ?? String(err)}`)
+        setLatestByModule((prev) => ({
+          ...prev,
+          [moduleKey]: {
+            id: '',
+            account_id: accountId,
+            module_key: moduleKey,
+            status: 'failed',
+            outputs: null,
+            summary_text: null,
+            property_count: null,
+            created_at: new Date().toISOString(),
+            completed_at: new Date().toISOString(),
+            error_message: err?.message ?? String(err),
+          },
+        }))
         setRunning((prev) => ({ ...prev, [moduleKey]: false }))
       }
     },
@@ -218,58 +353,100 @@ export default function AccountAnalysisPage() {
   )
 
   const runAll = useCallback(async () => {
-    // Sequential — Branch Opt depends on nothing, but Drive Time benefits from
-    // a fresh Branch Opt result, so run them in declared order.
+    // Endpoints are synchronous now — runModule resolves only when the work
+    // is done — so a plain sequential loop is enough.
     for (const m of MODULES) {
       // eslint-disable-next-line no-await-in-loop
       await runModule(m.key, m.endpoint)
-      // wait for polling to clear before starting the next
-      // eslint-disable-next-line no-await-in-loop
-      await new Promise<void>((resolve) => {
-        const check = setInterval(() => {
-          if (!runningRef.current[m.key]) {
-            clearInterval(check)
-            resolve()
-          }
-        }, 500)
-      })
     }
   }, [runModule])
 
-  // Need a ref for runAll's polling-completion check
-  const runningRef = useRef(running)
-  useEffect(() => {
-    runningRef.current = running
-  }, [running])
+  const handleCheckNow = useCallback(
+    (moduleKey: string) => {
+      const id = pollIds[moduleKey]
+      if (!id) return
+      pollOnce(moduleKey, id)
+    },
+    [pollIds, pollOnce]
+  )
+
+  const handleMarkFailed = useCallback(
+    async (moduleKey: string) => {
+      const id = pollIds[moduleKey] ?? latestByModule[moduleKey]?.id
+      if (!id) return
+      try {
+        const token = await getToken()
+        const res = await fetch(`/api/analyses/${id}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            status: 'failed',
+            error_message: 'Marked stuck by user from dashboard',
+          }),
+        })
+        if (res.ok) {
+          const row: AnalysisRow = await res.json()
+          setLatestByModule((prev) => ({ ...prev, [moduleKey]: row }))
+        }
+      } finally {
+        setRunning((prev) => ({ ...prev, [moduleKey]: false }))
+        setPollIds((prev) => {
+          const next = { ...prev }
+          delete next[moduleKey]
+          return next
+        })
+      }
+    },
+    [pollIds, latestByModule, getToken]
+  )
 
   const handleReassessRisk = useCallback(async () => {
     if (!accountId) return
     setReassessing(true)
+    setReassessMessage(null)
     try {
       const token = await getToken()
-      await fetch(`/api/analyses/account/${accountId}/risk-flags-bulk`, {
+      const res = await fetch(`/api/analyses/account/${accountId}/risk-flags-bulk`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({}),
       })
-      // Risk-flags-bulk runs in the background. Refresh the map points after a delay.
-      setTimeout(async () => {
+      const data = await res.json().catch(() => ({} as any))
+      if (!res.ok) {
+        setReassessMessage(`Failed: ${data.error ?? res.statusText}`)
+      } else {
+        setReassessMessage(
+          `Assessed ${data.total ?? 0} properties (${data.succeeded ?? 0} succeeded, ${data.failed ?? 0} failed).`
+        )
         const refreshed = await loadAccountProperties(accountId, token)
         setMapPoints(refreshed.points)
-        setReassessing(false)
-      }, 8000)
-    } catch (err) {
+      }
+    } catch (err: any) {
+      setReassessMessage(`Error: ${err?.message ?? String(err)}`)
+    } finally {
       setReassessing(false)
     }
   }, [accountId, getToken])
 
   const statusFor = (key: ModuleKey): AnalysisStatus => {
-    if (running[key]) return 'running'
     const r = latestByModule[key]
+    const start = startedAt[key]
+    const isRunning = running[key] || r?.status === 'running' || r?.status === 'pending'
+
+    if (isRunning) {
+      // Stuck detection: still 'running' past the threshold means the work
+      // never wrote a terminal state (Vercel killed a fire-and-forget task,
+      // or the row predates the sync-endpoints fix).
+      const elapsed = start ? Date.now() - start : 0
+      if (elapsed > STUCK_AFTER_MS) return 'stuck'
+      return 'running'
+    }
     if (!r) return 'idle'
     if (r.status === 'failed') return 'failed'
     if (r.status === 'completed') return 'completed'
-    if (r.status === 'running' || r.status === 'pending') return 'running'
     return 'idle'
   }
 
@@ -342,6 +519,17 @@ export default function AccountAnalysisPage() {
                 Re-assess risk
               </Button>
             </div>
+            {reassessMessage && (
+              <div
+                className={`px-5 py-2 text-xs border-b ${
+                  reassessMessage.startsWith('Failed') || reassessMessage.startsWith('Error')
+                    ? 'bg-red-50 text-red-700'
+                    : 'bg-green-50 text-green-700'
+                }`}
+              >
+                {reassessMessage}
+              </div>
+            )}
             <div className="p-4">
               {mapLoading ? (
                 <div className="text-sm text-gray-400 py-12 text-center">Loading map…</div>
@@ -366,17 +554,24 @@ export default function AccountAnalysisPage() {
           <div className="grid grid-cols-1 gap-4">
             {MODULES.map((m) => {
               const row = latestByModule[m.key]
+              const status = statusFor(m.key)
               return (
                 <AnalysisCard
                   key={m.key}
                   title={m.title}
                   description={m.description}
-                  status={statusFor(m.key)}
+                  status={status}
                   completedAt={row?.completed_at ?? null}
                   errorMessage={row?.status === 'failed' ? row.error_message : null}
                   summary={row?.status === 'completed' ? row.summary_text : null}
                   onRun={() => runModule(m.key, m.endpoint)}
                   running={running[m.key]}
+                  startedAt={startedAt[m.key] ?? null}
+                  lastPolledAt={lastPolledAt[m.key] ?? null}
+                  lastPollError={lastPollError[m.key] ?? null}
+                  analysisId={pollIds[m.key] ?? row?.id ?? null}
+                  onCheckNow={pollIds[m.key] ? () => handleCheckNow(m.key) : undefined}
+                  onMarkFailed={status === 'stuck' ? () => handleMarkFailed(m.key) : undefined}
                 >
                   {renderModuleBody(m.key)}
                 </AnalysisCard>

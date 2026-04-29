@@ -16,6 +16,11 @@ import { regionForState, REGION_MAP } from '../../../_lib/analysis/regions.js'
 
 const OUTLIER_THRESHOLD_MI = 300
 
+// Geographic analysis is fast (<5s for 524 properties). Run synchronously and
+// hold the request open so the row is guaranteed to reach a terminal state
+// before we respond — fire-and-forget after res.end() is unreliable on Vercel.
+export const config = { maxDuration: 60 }
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
@@ -44,22 +49,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: err.message ?? 'Failed to create analysis record' })
   }
 
-  // Kick off async work; respond immediately so the UI can poll.
-  res.status(202).json({ analysis_id: analysisId, status: 'running' })
-
-  ;(async () => {
-    try {
-      const properties = await loadAccountProperties(db, accountId, body.client_id ?? null)
-      const result = computeGeographicDistribution(properties)
-      await completeAnalysisRecord(db, analysisId, {
-        outputs: result.outputs,
-        summary_text: result.summary_text,
-        property_count: properties.length,
-      })
-    } catch (err: any) {
-      await failAnalysisRecord(db, analysisId, err.message ?? String(err))
-    }
-  })()
+  try {
+    const properties = await loadAccountProperties(db, accountId, body.client_id ?? null)
+    const result = computeGeographicDistribution(properties)
+    await completeAnalysisRecord(db, analysisId, {
+      outputs: result.outputs,
+      summary_text: result.summary_text,
+      property_count: properties.length,
+    })
+    return res.status(200).json({ analysis_id: analysisId, status: 'completed' })
+  } catch (err: any) {
+    const msg = err?.message ?? String(err)
+    await failAnalysisRecord(db, analysisId, msg)
+    return res.status(500).json({ analysis_id: analysisId, status: 'failed', error: msg })
+  }
 }
 
 function computeGeographicDistribution(properties: AccountProperty[]) {

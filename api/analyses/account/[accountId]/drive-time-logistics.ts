@@ -25,6 +25,9 @@ interface DriveInputs {
   max_one_way_drive_minutes: number
 }
 
+// Drive-time analysis is fast — pure haversine math, no external API calls.
+export const config = { maxDuration: 60 }
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
@@ -61,63 +64,62 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: err.message ?? 'Failed to create analysis record' })
   }
 
-  res.status(202).json({ analysis_id: analysisId, status: 'running' })
+  try {
+    const properties = await loadAccountProperties(db, accountId, inputs.client_id ?? null)
 
-  ;(async () => {
-    try {
-      const properties = await loadAccountProperties(db, accountId, inputs.client_id ?? null)
+    // Resolve branches: explicit > latest branch_optimization > error
+    let branches: Array<{ name: string; lat: number; lng: number }> = inputs.branches ?? []
+    let kUsed: number | null = null
 
-      // Resolve branches: explicit > latest branch_optimization > error
-      let branches: Array<{ name: string; lat: number; lng: number }> = inputs.branches ?? []
-      let kUsed: number | null = null
+    if (branches.length === 0) {
+      const { data: latestBranchOpt } = await db
+        .from('portfolio_analyses')
+        .select('outputs')
+        .eq('account_id', accountId)
+        .eq('module_key', 'branch_optimization')
+        .eq('status', 'completed')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
 
-      if (branches.length === 0) {
-        const { data: latestBranchOpt } = await db
-          .from('portfolio_analyses')
-          .select('outputs')
-          .eq('account_id', accountId)
-          .eq('module_key', 'branch_optimization')
-          .eq('status', 'completed')
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-
-        if (!latestBranchOpt) {
-          throw new Error(
-            'No branches provided and no completed branch_optimization run found. Run Branch Optimization first or pass branches in the request body.'
-          )
-        }
-
-        const out = (latestBranchOpt as any).outputs as {
-          k_results: Array<{
-            k: number
-            is_elbow: boolean
-            branches: Array<{ city_state: string; lat: number; lng: number }>
-          }>
-          recommended_k: number
-        }
-        kUsed = inputs.k ?? out.recommended_k
-        const row = out.k_results.find((r) => r.k === kUsed)
-        if (!row) {
-          throw new Error(`branch_optimization has no result for k=${kUsed}`)
-        }
-        branches = row.branches.map((b) => ({
-          name: b.city_state,
-          lat: b.lat,
-          lng: b.lng,
-        }))
+      if (!latestBranchOpt) {
+        throw new Error(
+          'No branches provided and no completed branch_optimization run found. Run Branch Optimization first or pass branches in the request body.'
+        )
       }
 
-      const result = computeDriveTimeLogistics(properties, branches, inputs, kUsed)
-      await completeAnalysisRecord(db, analysisId, {
-        outputs: result.outputs,
-        summary_text: result.summary_text,
-        property_count: properties.length,
-      })
-    } catch (err: any) {
-      await failAnalysisRecord(db, analysisId, err.message ?? String(err))
+      const out = (latestBranchOpt as any).outputs as {
+        k_results: Array<{
+          k: number
+          is_elbow: boolean
+          branches: Array<{ city_state: string; lat: number; lng: number }>
+        }>
+        recommended_k: number
+      }
+      kUsed = inputs.k ?? out.recommended_k
+      const row = out.k_results.find((r) => r.k === kUsed)
+      if (!row) {
+        throw new Error(`branch_optimization has no result for k=${kUsed}`)
+      }
+      branches = row.branches.map((b) => ({
+        name: b.city_state,
+        lat: b.lat,
+        lng: b.lng,
+      }))
     }
-  })()
+
+    const result = computeDriveTimeLogistics(properties, branches, inputs, kUsed)
+    await completeAnalysisRecord(db, analysisId, {
+      outputs: result.outputs,
+      summary_text: result.summary_text,
+      property_count: properties.length,
+    })
+    return res.status(200).json({ analysis_id: analysisId, status: 'completed' })
+  } catch (err: any) {
+    const msg = err?.message ?? String(err)
+    await failAnalysisRecord(db, analysisId, msg)
+    return res.status(500).json({ analysis_id: analysisId, status: 'failed', error: msg })
+  }
 }
 
 function computeDriveTimeLogistics(

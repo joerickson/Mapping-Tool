@@ -29,6 +29,9 @@ interface BranchOptInputs {
 
 const DEFAULT_VISITS_PER_YEAR = 4
 
+// k-means + 7 reverse-geocode calls fits comfortably in 60s for 524 properties.
+export const config = { maxDuration: 60 }
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
@@ -85,21 +88,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: err.message ?? 'Failed to create analysis record' })
   }
 
-  res.status(202).json({ analysis_id: analysisId, status: 'running' })
-
-  ;(async () => {
-    try {
-      const properties = await loadAccountProperties(db, accountId, inputs.client_id ?? null)
-      const result = await computeBranchOptimization(properties, inputs)
-      await completeAnalysisRecord(db, analysisId, {
-        outputs: result.outputs,
-        summary_text: result.summary_text,
-        property_count: properties.length,
-      })
-    } catch (err: any) {
-      await failAnalysisRecord(db, analysisId, err.message ?? String(err))
-    }
-  })()
+  try {
+    const properties = await loadAccountProperties(db, accountId, inputs.client_id ?? null)
+    const result = await computeBranchOptimization(properties, inputs)
+    await completeAnalysisRecord(db, analysisId, {
+      outputs: result.outputs,
+      summary_text: result.summary_text,
+      property_count: properties.length,
+    })
+    return res.status(200).json({ analysis_id: analysisId, status: 'completed' })
+  } catch (err: any) {
+    const msg = err?.message ?? String(err)
+    await failAnalysisRecord(db, analysisId, msg)
+    return res.status(500).json({ analysis_id: analysisId, status: 'failed', error: msg })
+  }
 }
 
 async function computeBranchOptimization(
