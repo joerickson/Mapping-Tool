@@ -21,6 +21,12 @@ import {
   applyExclusions,
   type ExistingBranch,
 } from '../../../_lib/analysis/operational-constraints.js'
+import {
+  constrainedKMeans,
+  nearestCity,
+  populationBand,
+  type City,
+} from '../../../_lib/analysis/constrained-kmeans.js'
 
 export interface BranchOptInputs {
   client_id?: string | null
@@ -30,6 +36,12 @@ export interface BranchOptInputs {
   fuel_cost_per_mile: number
   fixed_branch_cost_annual: number
   existing_branches: ExistingBranch[]
+  population_constraint: {
+    enabled: boolean
+    min_population: number
+    max_population?: number | null
+    state_filter?: string[] | null
+  }
 }
 
 const DEFAULT_VISITS_PER_YEAR = 4
@@ -62,6 +74,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     fuel_cost_per_mile: body.fuel_cost_per_mile ?? constraints.fuel_cost_per_mile,
     fixed_branch_cost_annual: body.fixed_branch_cost_annual ?? constraints.branch_overhead_annual,
     existing_branches: body.existing_branches ?? constraints.existing_branches ?? [],
+    population_constraint:
+      (body as any).population_constraint ?? constraints.population_constraint,
   }
 
   // Validate: k_range[0] cannot be smaller than the locked branch count.
@@ -76,7 +90,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // the analysis output shape (e.g. reverse-geocoding logic, or constraints
   // wiring) invalidates existing rows. Bump it whenever the output of
   // computeBranchOptimization would differ for the same inputs.
-  const CACHE_VERSION = 3
+  const CACHE_VERSION = 4
   const cacheKey = hashInputs({
     accountId,
     _v: CACHE_VERSION,
@@ -147,45 +161,124 @@ export async function computeBranchOptimization(
     lat: b.lat,
     lng: b.lng,
   }))
-  const floorK = lockedCentroids.length // can't have fewer branches than already-locked
+  const floorK = lockedCentroids.length
 
   const [kMin, kMax] = inputs.k_range
   const kStart = Math.max(1, floorK, Math.min(kMin, kMax))
   const kEnd = Math.max(kStart, Math.min(kMax, points.length))
 
-  // Run k-means for each k
+  // ── Population-constrained path ────────────────────────────────────────
+  // When the constraint is enabled we pick centers from real US cities that
+  // meet the population threshold. Each constrained run yields named cities,
+  // so we don't need the reverse-geocoder for primary output.
+  const popEnabled = !!inputs.population_constraint?.enabled
+  const popMin = inputs.population_constraint?.min_population ?? 50000
+  const popMax = inputs.population_constraint?.max_population ?? null
+  const popStateFilter = inputs.population_constraint?.state_filter ?? null
+
+  // Build a property list shape constrainedKMeans expects (visits_per_year
+  // weighted from service_locations).
+  const cKMProps = withCoords.map((p) => {
+    const visitsPerYear =
+      p.service_locations.find((sl) => sl.visits_per_year_override != null)
+        ?.visits_per_year_override ?? DEFAULT_VISITS_PER_YEAR
+    return {
+      id: p.id,
+      lat: p.latitude!,
+      lng: p.longitude!,
+      visits_per_year: visitsPerYear,
+    }
+  })
+
+  const lockedAsCities: City[] = inputs.existing_branches.map((b) => ({
+    city: b.name,
+    state: '',
+    state_id: '',
+    lat: b.lat,
+    lng: b.lng,
+    population: 0, // unknown for user-pinned branches; UI annotates "below threshold" if low
+  }))
+
+  // Run for each k. Strategy:
+  // - If population constraint enabled: constrained-kmeans with eligible cities
+  // - Else: pure k-means + reverse-geocode each centroid (legacy path)
   const runs: Array<{
     k: number
-    centroids: LatLng[]
+    centers: Array<{ lat: number; lng: number; city?: City | null; locked: boolean }>
     assignments: number[]
     distances: number[]
   }> = []
 
+  let eligibleCityCount = 0
+
   for (let k = kStart; k <= kEnd; k++) {
-    const result = kmeans(points, k, { seed: 42, lockedCentroids })
-    const distances = points.map((p, i) =>
-      haversineMiles(p, result.centroids[result.assignments[i]])
-    )
-    runs.push({ k, centroids: result.centroids, assignments: result.assignments, distances })
+    if (popEnabled) {
+      const result = constrainedKMeans({
+        k,
+        properties: cKMProps,
+        min_population: popMin,
+        max_population: popMax,
+        state_filter: popStateFilter,
+        locked_branches: lockedAsCities.slice(0, Math.min(floorK, k)),
+        drive_speed_mph: inputs.drive_speed_mph,
+      })
+      eligibleCityCount = result.eligible_city_count
+      const distances = withCoords.map((p) => {
+        const idx = result.assignments[p.id]
+        if (idx < 0) return 0
+        const c = result.selected_cities[idx]
+        return haversineMiles({ lat: p.latitude!, lng: p.longitude! }, { lat: c.lat, lng: c.lng })
+      })
+      runs.push({
+        k,
+        centers: result.selected_cities.map((c, idx) => ({
+          lat: c.lat,
+          lng: c.lng,
+          city: c,
+          locked: idx < floorK,
+        })),
+        assignments: withCoords.map((p) => result.assignments[p.id] ?? 0),
+        distances,
+      })
+    } else {
+      const result = kmeans(points, k, { seed: 42, lockedCentroids })
+      const distances = points.map((p, i) =>
+        haversineMiles(p, result.centroids[result.assignments[i]])
+      )
+      runs.push({
+        k,
+        centers: result.centroids.map((c, idx) => ({
+          lat: c.lat,
+          lng: c.lng,
+          city: null,
+          locked: idx < floorK,
+        })),
+        assignments: result.assignments,
+        distances,
+      })
+    }
   }
 
-  // Reverse-geocode each unique centroid (across all k-values) once.
+  // For unconstrained centers, reverse-geocode each unique one once. (No-op
+  // when constrained — those already carry city data.)
   const centroidLabels = new Map<string, string>()
-  const allCentroids = runs.flatMap((r) => r.centroids)
+  const needsReverseGeocode = runs.flatMap((r) =>
+    r.centers.filter((c) => !c.city).map((c) => ({ lat: c.lat, lng: c.lng }))
+  )
   await Promise.all(
-    allCentroids.map(async (c) => {
+    needsReverseGeocode.map(async (c) => {
       const key = `${c.lat.toFixed(3)},${c.lng.toFixed(3)}`
       if (centroidLabels.has(key)) return
       const r = await reverseGeocodeCityState(c.lat, c.lng)
       centroidLabels.set(key, r.formatted)
     })
   )
-  const labelFor = (c: LatLng) =>
+  const labelFor = (c: { lat: number; lng: number }) =>
     centroidLabels.get(`${c.lat.toFixed(3)},${c.lng.toFixed(3)}`) ?? 'Unknown location'
 
   // Cost calculation per run
   const k_results = runs.map((run) => {
-    const branchSummary = run.centroids.map((c, idx) => {
+    const branchSummary = run.centers.map((c, idx) => {
       const memberIdx = run.assignments
         .map((a, i) => (a === idx ? i : -1))
         .filter((i) => i >= 0)
@@ -194,15 +287,24 @@ export async function computeBranchOptimization(
         const sl = withCoords[i].service_locations
         return sum + sl.reduce((s, l) => s + (l.serviceable_sqft ?? 0), 0)
       }, 0)
-      const isLocked = idx < floorK
+      const isLocked = c.locked
       const lockedBranch = isLocked ? inputs.existing_branches[idx] : null
+      const cityName = c.city
+        ? `${c.city.city}, ${c.city.state_id}`
+        : lockedBranch?.name ?? labelFor(c)
+      const pop = c.city?.population ?? null
       return {
         lat: c.lat,
         lng: c.lng,
-        city_state: lockedBranch?.name ?? labelFor(c),
+        city_state: lockedBranch?.name ?? cityName,
+        city: c.city?.city ?? null,
+        state: c.city?.state_id ?? null,
+        population: pop,
+        population_band: pop != null ? populationBand(pop) : null,
         property_count: memberIdx.length,
         total_sqft: memberSqft,
         locked: isLocked,
+        source: isLocked ? ('locked' as const) : ('optimization' as const),
         avg_drive_distance_miles:
           memberDistances.length > 0
             ? +(memberDistances.reduce((a, b) => a + b, 0) / memberDistances.length).toFixed(1)
@@ -301,6 +403,58 @@ export async function computeBranchOptimization(
     )
   }
 
+  // ── Unconstrained reference ────────────────────────────────────────────
+  // Always compute pure-k-means costs so the UI can show "what would the
+  // optimum be without the population constraint". We label each
+  // unconstrained centroid with its nearest dataset city for a hint.
+  const unconstrainedReference: Array<{
+    k: number
+    total_drive_cost: number
+    centroids: Array<{
+      lat: number
+      lng: number
+      nearest_city_unconstrained: string | null
+      population: number | null
+    }>
+  }> = []
+
+  for (let k = kStart; k <= kEnd; k++) {
+    const result = kmeans(points, k, { seed: 42, lockedCentroids })
+    let driveCost = 0
+    for (let i = 0; i < points.length; i++) {
+      const dist = haversineMiles(points[i], result.centroids[result.assignments[i]])
+      const visitsPerYear =
+        withCoords[i].service_locations.find((sl) => sl.visits_per_year_override != null)
+          ?.visits_per_year_override ?? DEFAULT_VISITS_PER_YEAR
+      const distHours = driveTimeMinutes(dist, inputs.drive_speed_mph) / 60
+      driveCost +=
+        2 * dist * visitsPerYear * inputs.fuel_cost_per_mile +
+        2 * distHours * visitsPerYear * inputs.hourly_labor_cost
+    }
+    unconstrainedReference.push({
+      k,
+      total_drive_cost: Math.round(driveCost),
+      centroids: result.centroids.map((c) => {
+        const nc = nearestCity(c.lat, c.lng)
+        return {
+          lat: c.lat,
+          lng: c.lng,
+          nearest_city_unconstrained: nc ? `${nc.city}, ${nc.state_id}` : null,
+          population: nc?.population ?? null,
+        }
+      }),
+    })
+  }
+
+  // Population-constraint summary text addition
+  if (popEnabled) {
+    summaryParts.push(
+      `Population constraint: min ${popMin.toLocaleString()} (${eligibleCityCount} eligible cities${popStateFilter?.length ? ` in ${popStateFilter.join(', ')}` : ''}).`
+    )
+  } else {
+    summaryParts.push('Population constraint disabled — using unconstrained k-means.')
+  }
+
   return {
     outputs: {
       property_count: properties.length,
@@ -309,6 +463,14 @@ export async function computeBranchOptimization(
       floor_k: floorK,
       existing_branches: inputs.existing_branches,
       missing_coords_count: properties.length - withCoords.length,
+      population_constraint: {
+        enabled: popEnabled,
+        min_population: popMin,
+        max_population: popMax,
+        state_filter: popStateFilter,
+        eligible_city_count: eligibleCityCount,
+      },
+      unconstrained_reference: unconstrainedReference,
     },
     summary_text: summaryParts.join(' '),
   }

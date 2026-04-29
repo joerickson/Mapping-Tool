@@ -17,9 +17,14 @@ interface KResult {
     lat: number
     lng: number
     city_state: string
+    city?: string | null
+    state?: string | null
+    population?: number | null
+    population_band?: 'small' | 'medium' | 'large' | 'major' | null
     property_count: number
     total_sqft: number
     locked?: boolean
+    source?: 'optimization' | 'locked'
     avg_drive_distance_miles: number
     max_drive_distance_miles: number
   }>
@@ -34,6 +39,23 @@ interface BranchOptOutputs {
   k_results: KResult[]
   recommended_k: number
   floor_k?: number
+  population_constraint?: {
+    enabled: boolean
+    min_population: number
+    max_population: number | null
+    state_filter: string[] | null
+    eligible_city_count: number
+  }
+  unconstrained_reference?: Array<{
+    k: number
+    total_drive_cost: number
+    centroids: Array<{
+      lat: number
+      lng: number
+      nearest_city_unconstrained: string | null
+      population: number | null
+    }>
+  }>
 }
 
 interface SelectionTableProps {
@@ -120,6 +142,7 @@ export default function BranchOptimizationChart({
               <thead>
                 <tr className="border-b text-left text-xs uppercase tracking-wide text-gray-500">
                   <th className="py-2 pr-4">Location</th>
+                  <th className="py-2 pr-4 text-right">Population</th>
                   <th className="py-2 pr-4 text-right">Properties</th>
                   <th className="py-2 pr-4 text-right">Total sqft</th>
                   <th className="py-2 pr-4 text-right">Avg drive (mi)</th>
@@ -139,6 +162,9 @@ export default function BranchOptimizationChart({
                             locked
                           </span>
                         )}
+                      </td>
+                      <td className="py-2 pr-4 text-right text-gray-600">
+                        {formatPop(b.population)}
                       </td>
                       <td className="py-2 pr-4 text-right">{b.property_count}</td>
                       <td className="py-2 pr-4 text-right">{b.total_sqft.toLocaleString()}</td>
@@ -225,6 +251,63 @@ export default function BranchOptimizationChart({
           </div>
         </div>
       )}
+
+      {/* Population constraint info + unconstrained reference */}
+      {data.population_constraint && (
+        <div className="border-t pt-3">
+          <div className="text-xs text-gray-600">
+            {data.population_constraint.enabled ? (
+              <>
+                Population constraint:{' '}
+                <strong>min {data.population_constraint.min_population.toLocaleString()}</strong>
+                {data.population_constraint.state_filter?.length ? (
+                  <> · states: {data.population_constraint.state_filter.join(', ')}</>
+                ) : null}
+                {' · '}
+                {data.population_constraint.eligible_city_count.toLocaleString()} eligible cities
+                in range
+              </>
+            ) : (
+              <>Population constraint disabled — using unconstrained k-means.</>
+            )}
+          </div>
+
+          {data.unconstrained_reference && data.unconstrained_reference.length > 0 && (
+            <details className="mt-2 text-xs">
+              <summary className="cursor-pointer font-medium text-gray-700">
+                View unconstrained reference (what pure k-means would have suggested)
+              </summary>
+              <div className="mt-2 space-y-2">
+                {data.unconstrained_reference.map((u) => (
+                  <div key={u.k} className="border rounded p-2 bg-gray-50">
+                    <div className="font-mono text-gray-700">
+                      k={u.k} — drive cost ${u.total_drive_cost.toLocaleString()}
+                    </div>
+                    <div className="text-gray-600 mt-0.5">
+                      Centroids near:{' '}
+                      {u.centroids
+                        .map(
+                          (c) =>
+                            `${c.nearest_city_unconstrained ?? `${c.lat.toFixed(2)},${c.lng.toFixed(2)}`}${
+                              c.population != null ? ` (${formatPop(c.population)})` : ''
+                            }`
+                        )
+                        .join(' · ')}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+      )}
     </div>
   )
+}
+
+function formatPop(p: number | null | undefined): string {
+  if (p == null) return '—'
+  if (p >= 1_000_000) return `${(p / 1_000_000).toFixed(1)}M`
+  if (p >= 1000) return `${(p / 1000).toFixed(0)}K`
+  return p.toString()
 }

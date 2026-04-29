@@ -77,6 +77,26 @@ export interface OperationalConstraints {
   selected_from_analysis_id: string | null
   selected_by: string | null
 
+  // Population constraint (Phase 2.5c) — branch optimization picks from
+  // cities meeting these thresholds.
+  population_constraint: {
+    enabled: boolean
+    min_population: number
+    max_population?: number | null
+    state_filter?: string[] | null
+  }
+
+  // Utilization band constraint (Phase 2.5d) — Crew Strategy sizes crews to
+  // fit this band; status enum surfaces ideal/acceptable/under/over.
+  utilization_constraint: {
+    enabled: boolean
+    hard_floor_pct: number
+    soft_ceiling_pct: number
+    ideal_min_pct: number
+    ideal_max_pct: number
+    scope: 'per_branch' | 'per_region' | 'portfolio'
+  }
+
   // Metadata
   updated_at: string | null
   updated_by: string | null
@@ -167,6 +187,26 @@ export async function loadConstraints(
     selected_at: r?.selected_at ?? null,
     selected_from_analysis_id: r?.selected_from_analysis_id ?? null,
     selected_by: r?.selected_by ?? null,
+
+    population_constraint: {
+      enabled: r?.population_constraint?.enabled ?? true,
+      min_population: r?.population_constraint?.min_population ?? 50000,
+      max_population: r?.population_constraint?.max_population ?? null,
+      state_filter: r?.population_constraint?.state_filter ?? null,
+    },
+
+    utilization_constraint: {
+      enabled: r?.utilization_constraint?.enabled ?? true,
+      hard_floor_pct: r?.utilization_constraint?.hard_floor_pct ?? 75,
+      soft_ceiling_pct: r?.utilization_constraint?.soft_ceiling_pct ?? 110,
+      ideal_min_pct: r?.utilization_constraint?.ideal_min_pct ?? 80,
+      ideal_max_pct: r?.utilization_constraint?.ideal_max_pct ?? 100,
+      scope:
+        (r?.utilization_constraint?.scope as
+          | 'per_branch'
+          | 'per_region'
+          | 'portfolio') ?? 'per_branch',
+    },
 
     updated_at: r?.updated_at ?? null,
     updated_by: r?.updated_by ?? null,

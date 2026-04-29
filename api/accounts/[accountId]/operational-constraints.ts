@@ -124,6 +124,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       updated_at: new Date().toISOString(),
       updated_by: ctx.userId ?? null,
     }
+    // Population + utilization constraint blobs (full-replace if provided).
+    if (body.population_constraint && typeof body.population_constraint === 'object') {
+      upsert.population_constraint = body.population_constraint
+    }
+    if (body.utilization_constraint && typeof body.utilization_constraint === 'object') {
+      upsert.utilization_constraint = body.utilization_constraint
+    }
     for (const k of numericFields) {
       const raw = body[k]
       if (raw === undefined || raw === null || raw === '') {

@@ -156,6 +156,7 @@ export async function runAllModules(
       fuel_cost_per_mile: c.fuel_cost_per_mile,
       fixed_branch_cost_annual: c.branch_overhead_annual,
       existing_branches: c.existing_branches,
+      population_constraint: c.population_constraint,
     }
     branchOptResult = await computeBranchOptimization(properties, boInputs)
   }
@@ -237,6 +238,7 @@ export async function runAllModules(
       surge_premium_multiplier: c.surge_premium_multiplier,
       fuel_cost_per_mile: c.fuel_cost_per_mile,
       vehicles_per_crew: c.vehicles_per_crew,
+      utilization_constraint: c.utilization_constraint,
     }
     crewStrategyResult = computeCrewStrategy(
       properties,

@@ -25,13 +25,36 @@ import {
   requireSelectedBranches,
   NO_SELECTION_ERROR,
 } from '../../../_lib/analysis/operational-constraints.js'
+import { nearestCity, populationBand } from '../../../_lib/analysis/constrained-kmeans.js'
+import { regionForState } from '../../../_lib/analysis/regions.js'
+
+// Status enum for utilization band evaluation. Order matters for severity:
+// 'overcapacity' > 'underutilized' > 'acceptable' > 'ideal'.
+type UtilStatus = 'ideal' | 'acceptable' | 'underutilized' | 'overcapacity'
+
+function classifyUtilization(
+  pct: number,
+  band: { hard_floor_pct: number; soft_ceiling_pct: number; ideal_min_pct: number; ideal_max_pct: number }
+): UtilStatus {
+  if (pct < band.hard_floor_pct) return 'underutilized'
+  if (pct > band.soft_ceiling_pct) return 'overcapacity'
+  if (pct >= band.ideal_min_pct && pct <= band.ideal_max_pct) return 'ideal'
+  return 'acceptable'
+}
 
 export const config = { maxDuration: 60 }
 
 export interface CrewStrategyInputs {
   client_id?: string | null
   k: number | null
-  branches: Array<{ name: string; lat: number; lng: number; property_count?: number }> | null
+  branches: Array<{
+    name: string
+    lat: number
+    lng: number
+    property_count?: number
+    population?: number | null
+    state?: string | null
+  }> | null
   crew_size: number
   hours_per_day: number
   hourly_loaded_labor_cost: number
@@ -45,6 +68,14 @@ export interface CrewStrategyInputs {
   surge_premium_multiplier: number
   fuel_cost_per_mile: number
   vehicles_per_crew: number
+  utilization_constraint: {
+    enabled: boolean
+    hard_floor_pct: number
+    soft_ceiling_pct: number
+    ideal_min_pct: number
+    ideal_max_pct: number
+    scope: 'per_branch' | 'per_region' | 'portfolio'
+  }
 }
 
 const FTE_HOURS_PER_YEAR = 1880 // 47 weeks × 40 hours
@@ -93,6 +124,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       body.surge_premium_multiplier ?? constraints.surge_premium_multiplier,
     fuel_cost_per_mile: body.fuel_cost_per_mile ?? constraints.fuel_cost_per_mile,
     vehicles_per_crew: body.vehicles_per_crew ?? constraints.vehicles_per_crew,
+    utilization_constraint:
+      (body as any).utilization_constraint ?? constraints.utilization_constraint,
   }
 
   let analysisId: string
@@ -251,38 +284,116 @@ export function computeCrewStrategy(
     ROVING_ESTIMATED_ANNUAL_MILES_PER_CREW *
     inputs.fuel_cost_per_mile
 
-  // ── Option B: Dedicated (N+1, largest branch gets the +1) ────────────────
-  const branchOrderByHours = branches
-    .map((_, i) => i)
-    .sort((a, b) => branchHours[b] - branchHours[a])
+  // ── Branch population lookup ──────────────────────────────────────────────
+  // Cross-reference each branch with the cities dataset by lat/lng to attach
+  // population + state so per-region grouping and the UI can show populations.
+  const branchMeta = branches.map((b) => {
+    const nc = nearestCity(b.lat, b.lng)
+    return {
+      name: b.name,
+      lat: b.lat,
+      lng: b.lng,
+      population: nc?.population ?? null,
+      state_id: nc?.state_id ?? null,
+      region: nc?.state_id ? regionForState(nc.state_id) : 'Other',
+    }
+  })
+
+  // ── Option B: Dedicated — size each branch to fit the utilization band ───
+  // Algorithm per spec:
+  //   start = max(1, floor(work / FTE))
+  //   if util > soft_ceiling, try N+1 until in band or no improvement
+  //   if util < hard_floor, try N-1 (min 1) until in band or no improvement
+  // Status comes from classifyUtilization on the final crew count.
+  const band = inputs.utilization_constraint
+  const bandActive = band.enabled
   const crewsPerBranch = new Array(branches.length).fill(1)
-  if (branches.length >= 1) crewsPerBranch[branchOrderByHours[0]] = 2
+  for (let i = 0; i < branches.length; i++) {
+    const work = branchHours[i]
+    if (work <= 0) {
+      crewsPerBranch[i] = 1
+      continue
+    }
+    let n = Math.max(1, Math.floor(work / FTE_HOURS_PER_YEAR))
+    if (bandActive) {
+      // Bump up while overcapacity
+      let util = (work / (n * FTE_HOURS_PER_YEAR)) * 100
+      while (util > band.soft_ceiling_pct && n < 10) {
+        n += 1
+        util = (work / (n * FTE_HOURS_PER_YEAR)) * 100
+      }
+      // Bump down while underutilized + still has slack
+      while (n > 1 && (work / ((n - 1) * FTE_HOURS_PER_YEAR)) * 100 <= band.soft_ceiling_pct) {
+        const newUtil = (work / ((n - 1) * FTE_HOURS_PER_YEAR)) * 100
+        if (newUtil < band.hard_floor_pct) break // would push below floor — stop
+        n -= 1
+      }
+    } else {
+      // Constraint disabled → fall back to legacy "largest branch gets +1"
+      n = 1
+    }
+    crewsPerBranch[i] = n
+  }
+  // Legacy "+1 to largest" fallback when band disabled
+  if (!bandActive && branches.length >= 1) {
+    const largestIdx = branches
+      .map((_, i) => i)
+      .sort((a, b) => branchHours[b] - branchHours[a])[0]
+    crewsPerBranch[largestIdx] = 2
+  }
   const optionB_crews = crewsPerBranch.reduce((a: number, b: number) => a + b, 0)
 
   const optionB_labor =
     optionB_crews * FTE_HOURS_PER_YEAR * inputs.hourly_loaded_labor_cost * inputs.crew_size
-  // Per-branch utilization = work_hours_in_branch / (crews_in_branch * FTE_hours)
+
+  // Per-branch utilization rows for output.
   let optionB_util_sum = 0
   let optionB_util_count = 0
   const optionB_branch_breakdown: Array<{
-    branch: string
+    branch_name: string
+    city_state: string
+    population: number | null
     crew_count: number
     work_hours: number
+    available_hours: number
     utilization_pct: number
     property_count: number
+    status: UtilStatus
+    warning?: string | null
+    surge_recommendation?: { surge_crews: number; surge_weeks: number } | null
   }> = []
   for (let i = 0; i < branches.length; i++) {
     const crews = crewsPerBranch[i]
-    const util = crews > 0 ? branchHours[i] / (crews * FTE_HOURS_PER_YEAR) : 0
-    const utilPct = Math.round(util * 100)
+    const available = crews * FTE_HOURS_PER_YEAR
+    const utilPct = available > 0 ? Math.round((branchHours[i] / available) * 100) : 0
+    const status = classifyUtilization(utilPct, band)
     optionB_util_sum += utilPct
     optionB_util_count += 1
+
+    let warning: string | null = null
+    let surge_recommendation: { surge_crews: number; surge_weeks: number } | null = null
+    if (status === 'overcapacity') {
+      const overflowHours = Math.max(0, branchHours[i] - available)
+      const surgeWeeks = Math.max(4, Math.round(overflowHours / (40 * 1)))
+      const surgeCrews = Math.max(1, Math.ceil(overflowHours / (surgeWeeks * 40)))
+      warning = `${utilPct}% utilization (over ${band.soft_ceiling_pct}% ceiling). Add surge crews or expand the dedicated team.`
+      surge_recommendation = { surge_crews: surgeCrews, surge_weeks: Math.min(26, surgeWeeks) }
+    } else if (status === 'underutilized') {
+      warning = `${utilPct}% utilization (under ${band.hard_floor_pct}% floor). Consider consolidating with an adjacent branch or adding properties.`
+    }
+
     optionB_branch_breakdown.push({
-      branch: branches[i].name,
+      branch_name: branches[i].name,
+      city_state: branches[i].name,
+      population: branchMeta[i].population,
       crew_count: crews,
       work_hours: Math.round(branchHours[i]),
+      available_hours: Math.round(available),
       utilization_pct: utilPct,
       property_count: branchPropCount[i],
+      status,
+      warning,
+      surge_recommendation,
     })
   }
   const optionB_util_pct = optionB_util_count > 0 ? Math.round(optionB_util_sum / optionB_util_count) : 0
@@ -290,7 +401,7 @@ export function computeCrewStrategy(
     optionB_crews *
     inputs.vehicles_per_crew *
     ROVING_ESTIMATED_ANNUAL_MILES_PER_CREW *
-    0.7 * // dedicated crews drive less than roving
+    0.7 *
     inputs.fuel_cost_per_mile
 
   // ── Option C: Surge model ─────────────────────────────────────────────────
@@ -352,6 +463,140 @@ export function computeCrewStrategy(
     recommendedRationale = `Option B (Dedicated) is the recommended baseline. Option C savings are below the 15% threshold needed to justify surge sourcing risk.`
   }
 
+  // ── Per-region rollup for Option B ────────────────────────────────────────
+  const regionMap = new Map<
+    string,
+    { branches_in_region: string[]; work_hours: number; available_hours: number }
+  >()
+  for (let i = 0; i < branches.length; i++) {
+    const region = branchMeta[i].region
+    const cur =
+      regionMap.get(region) ?? { branches_in_region: [], work_hours: 0, available_hours: 0 }
+    cur.branches_in_region.push(branches[i].name)
+    cur.work_hours += branchHours[i]
+    cur.available_hours += crewsPerBranch[i] * FTE_HOURS_PER_YEAR
+    regionMap.set(region, cur)
+  }
+  const optionB_per_region = Array.from(regionMap.entries()).map(([region, v]) => {
+    const utilPct =
+      v.available_hours > 0 ? Math.round((v.work_hours / v.available_hours) * 100) : 0
+    return {
+      region,
+      branches_in_region: v.branches_in_region,
+      work_hours: Math.round(v.work_hours),
+      available_hours: Math.round(v.available_hours),
+      aggregate_utilization_pct: utilPct,
+      status: classifyUtilization(utilPct, band),
+    }
+  })
+
+  const optionB_portfolio_pct =
+    optionB_crews > 0
+      ? Math.round((totalProjectHours / (optionB_crews * FTE_HOURS_PER_YEAR)) * 100)
+      : 0
+  const optionB_portfolio = {
+    crew_count: optionB_crews,
+    work_hours: Math.round(totalProjectHours),
+    available_hours: optionB_crews * FTE_HOURS_PER_YEAR,
+    utilization_pct: optionB_portfolio_pct,
+    status: classifyUtilization(optionB_portfolio_pct, band),
+  }
+
+  // Option A utilization breakdown (portfolio scope only — roving has no
+  // branch concept).
+  const optionA_portfolio = {
+    crew_count: optionA_crews,
+    work_hours: Math.round(totalProjectHours),
+    available_hours: optionA_crews * FTE_HOURS_PER_YEAR,
+    utilization_pct: optionA_util_pct,
+    status: classifyUtilization(optionA_util_pct, band),
+  }
+
+  // Option C: FT crews target the ideal band; surge handles overflow.
+  const optionC_portfolio = {
+    crew_count: optionC_FT_crews,
+    surge_crew_count: inputs.surge_crew_count,
+    work_hours: Math.round(totalProjectHours),
+    available_hours: optionC_FT_crews * FTE_HOURS_PER_YEAR,
+    utilization_pct: optionC_util_pct,
+    status: classifyUtilization(optionC_util_pct, band),
+  }
+
+  // ── Constraint violations (only based on the user's chosen scope) ─────────
+  const constraint_violations: Array<{
+    scope: 'branch' | 'region' | 'portfolio'
+    name: string
+    metric: 'utilization_pct'
+    actual: number
+    threshold_violated: 'hard_floor' | 'soft_ceiling' | 'ideal_min' | 'ideal_max'
+    severity: 'warning' | 'flag'
+    suggestion: string
+  }> = []
+
+  if (bandActive) {
+    if (band.scope === 'per_branch') {
+      for (const row of optionB_branch_breakdown) {
+        if (row.status === 'underutilized') {
+          constraint_violations.push({
+            scope: 'branch',
+            name: row.branch_name,
+            metric: 'utilization_pct',
+            actual: row.utilization_pct,
+            threshold_violated: 'hard_floor',
+            severity: 'flag',
+            suggestion: `Consolidate with adjacent branch or add properties to ${row.branch_name}.`,
+          })
+        } else if (row.status === 'overcapacity') {
+          constraint_violations.push({
+            scope: 'branch',
+            name: row.branch_name,
+            metric: 'utilization_pct',
+            actual: row.utilization_pct,
+            threshold_violated: 'soft_ceiling',
+            severity: 'warning',
+            suggestion: row.surge_recommendation
+              ? `Add ${row.surge_recommendation.surge_crews} surge crew${row.surge_recommendation.surge_crews === 1 ? '' : 's'} for ~${row.surge_recommendation.surge_weeks} weeks at ${row.branch_name}.`
+              : `Add a crew at ${row.branch_name}.`,
+          })
+        }
+      }
+    } else if (band.scope === 'per_region') {
+      for (const r of optionB_per_region) {
+        if (r.status === 'underutilized' || r.status === 'overcapacity') {
+          constraint_violations.push({
+            scope: 'region',
+            name: r.region,
+            metric: 'utilization_pct',
+            actual: r.aggregate_utilization_pct,
+            threshold_violated: r.status === 'underutilized' ? 'hard_floor' : 'soft_ceiling',
+            severity: r.status === 'overcapacity' ? 'warning' : 'flag',
+            suggestion:
+              r.status === 'underutilized'
+                ? `${r.region} is collectively under ${band.hard_floor_pct}%; consider consolidating branches.`
+                : `${r.region} is collectively over ${band.soft_ceiling_pct}%; add surge or new branch.`,
+          })
+        }
+      }
+    } else {
+      // portfolio scope
+      const status = classifyUtilization(optionB_portfolio_pct, band)
+      if (status === 'underutilized' || status === 'overcapacity') {
+        constraint_violations.push({
+          scope: 'portfolio',
+          name: 'portfolio',
+          metric: 'utilization_pct',
+          actual: optionB_portfolio_pct,
+          threshold_violated: status === 'underutilized' ? 'hard_floor' : 'soft_ceiling',
+          severity: status === 'overcapacity' ? 'warning' : 'flag',
+          suggestion:
+            status === 'underutilized'
+              ? 'Portfolio over-resourced — consider dropping a branch.'
+              : 'Portfolio under-resourced — add crews or use Option C surge.',
+        })
+      }
+    }
+  }
+
   // ── Output assembly ───────────────────────────────────────────────────────
   const options = {
     A: {
@@ -361,6 +606,7 @@ export function computeCrewStrategy(
       annual_labor_cost: Math.round(optionA_labor),
       annual_vehicle_cost: Math.round(optionA_vehicle),
       total_annual_cost: Math.round(totalA),
+      utilization_breakdown: { portfolio: optionA_portfolio },
       pros: [
         'Highest utilization — pay only for actual work hours',
         'Flexible — crews go where the demand is',
@@ -382,6 +628,11 @@ export function computeCrewStrategy(
       annual_vehicle_cost: Math.round(optionB_vehicle),
       total_annual_cost: Math.round(totalB),
       branch_breakdown: optionB_branch_breakdown,
+      utilization_breakdown: {
+        per_branch: optionB_branch_breakdown,
+        per_region: optionB_per_region,
+        portfolio: optionB_portfolio,
+      },
       pros: [
         'Simple — each crew owns one cluster',
         'Defensible to clients — predictable, named teams',
@@ -389,7 +640,7 @@ export function computeCrewStrategy(
       ],
       cons: [
         'Lower average utilization (paid for some idle time)',
-        'Largest branch needs +1 crew to absorb peak demand',
+        'Branches outside the band need surge crews or consolidation',
         'Harder to flex across branches when seasonal demand shifts',
       ],
       recommended_use_case:
@@ -404,6 +655,7 @@ export function computeCrewStrategy(
       annual_labor_cost: Math.round(optionC_labor),
       annual_vehicle_cost: Math.round(optionC_vehicle),
       total_annual_cost: Math.round(totalC),
+      utilization_breakdown: { portfolio: optionC_portfolio },
       pros: [
         'Lowest labor cost — FT crews highly utilized year-round',
         'Matches seasonal demand peaks (school breaks, etc.)',
@@ -445,11 +697,18 @@ export function computeCrewStrategy(
       property_count: properties.length,
       k_used: kUsed,
       total_project_hours_per_year: Math.round(totalProjectHours),
-      branches,
+      branches: branches.map((b, i) => ({
+        ...b,
+        population: branchMeta[i].population,
+        state: branchMeta[i].state_id,
+        region: branchMeta[i].region,
+      })),
       options,
       recommended_option: recommended,
       recommended_rationale: recommendedRationale,
       missing_coords_count: propertiesMissingCoords,
+      utilization_constraint: band,
+      constraint_violations,
     },
     summary_text: summaryParts.join(' '),
   }

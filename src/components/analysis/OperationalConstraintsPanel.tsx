@@ -41,6 +41,21 @@ export interface OperationalConstraints {
   drive_speed_mph: number
   max_one_way_drive_minutes: number
 
+  population_constraint: {
+    enabled: boolean
+    min_population: number
+    max_population?: number | null
+    state_filter?: string[] | null
+  }
+  utilization_constraint: {
+    enabled: boolean
+    hard_floor_pct: number
+    soft_ceiling_pct: number
+    ideal_min_pct: number
+    ideal_max_pct: number
+    scope: 'per_branch' | 'per_region' | 'portfolio'
+  }
+
   updated_at: string | null
   updated_by: string | null
   has_saved_row: boolean
@@ -300,6 +315,8 @@ function ConstraintsEditor({ accountId, open, onClose, constraints, onSaved }: E
         existing_branches: draft.existing_branches,
         excluded_property_ids: draft.excluded_property_ids,
         excluded_property_reason: draft.excluded_property_reason,
+        population_constraint: draft.population_constraint,
+        utilization_constraint: draft.utilization_constraint,
       }
       // Only send numeric fields that differ from system default; let the
       // backend NULL the rest so they fall back to defaults.
@@ -383,12 +400,15 @@ function ConstraintsEditor({ accountId, open, onClose, constraints, onSaved }: E
       )}
 
       {activeTab === 'crew_economics' && (
-        <FieldGrid
-          draft={draft}
-          defaults={constraints.system_defaults}
-          fields={NUMERIC_FIELD_GROUPS.crew_economics as unknown as string[]}
-          onChange={updateNumeric}
-        />
+        <div className="space-y-6">
+          <FieldGrid
+            draft={draft}
+            defaults={constraints.system_defaults}
+            fields={NUMERIC_FIELD_GROUPS.crew_economics as unknown as string[]}
+            onChange={updateNumeric}
+          />
+          <UtilizationBandSubsection draft={draft} setDraft={setDraft} />
+        </div>
       )}
 
       {activeTab === 'cost_margin' && (
@@ -642,6 +662,279 @@ function InfrastructureTab({
           />
         </div>
       </section>
+
+      <PopulationConstraintSubsection draft={draft} setDraft={setDraft} />
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Population constraint subsection — Infrastructure tab
+// ─────────────────────────────────────────────────────────────────────────────
+
+function PopulationConstraintSubsection({
+  draft,
+  setDraft,
+}: {
+  draft: OperationalConstraints
+  setDraft: React.Dispatch<React.SetStateAction<OperationalConstraints>>
+}) {
+  const pc = draft.population_constraint
+  const update = (patch: Partial<OperationalConstraints['population_constraint']>) =>
+    setDraft((d) => ({ ...d, population_constraint: { ...d.population_constraint, ...patch } }))
+
+  return (
+    <section className="border-t pt-5">
+      <h3 className="font-semibold text-gray-900 mb-2">Population Constraint for Branch Siting</h3>
+      <label className="flex items-center gap-2 cursor-pointer mb-2">
+        <input
+          type="checkbox"
+          checked={pc.enabled}
+          onChange={(e) => update({ enabled: e.target.checked })}
+          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+        />
+        <span className="text-sm font-medium text-gray-800">
+          Restrict branch suggestions to cities above population threshold
+        </span>
+      </label>
+      <p className="text-xs text-gray-500 mb-3">
+        Branch optimization will only suggest locations in cities meeting these criteria.
+        This ensures you can recruit the labor force needed to staff the branch. Smaller
+        cities may produce lower drive cost but make hiring difficult.
+      </p>
+
+      {pc.enabled && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1">
+              Minimum population
+            </label>
+            <input
+              type="number"
+              min={1000}
+              max={5_000_000}
+              step={5000}
+              value={pc.min_population}
+              onChange={(e) => update({ min_population: Number(e.target.value) || 50000 })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+            <p className="text-xs text-gray-400 mt-0.5">Default 50,000.</p>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1">
+              Maximum population (optional)
+            </label>
+            <input
+              type="number"
+              min={1000}
+              step={50000}
+              value={pc.max_population ?? ''}
+              placeholder="No max"
+              onChange={(e) =>
+                update({
+                  max_population: e.target.value === '' ? null : Number(e.target.value),
+                })
+              }
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-semibold text-gray-700 mb-1">
+              Restrict to states (optional, 2-letter codes)
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. TX,NM,OK,AZ"
+              value={(pc.state_filter ?? []).join(',')}
+              onChange={(e) =>
+                update({
+                  state_filter:
+                    e.target.value.trim() === ''
+                      ? null
+                      : e.target.value
+                          .split(',')
+                          .map((s) => s.trim().toUpperCase())
+                          .filter((s) => /^[A-Z]{2}$/.test(s)),
+                })
+              }
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Utilization band subsection — Crew Economics tab
+// ─────────────────────────────────────────────────────────────────────────────
+
+function UtilizationBandSubsection({
+  draft,
+  setDraft,
+}: {
+  draft: OperationalConstraints
+  setDraft: React.Dispatch<React.SetStateAction<OperationalConstraints>>
+}) {
+  const u = draft.utilization_constraint
+  const update = (patch: Partial<OperationalConstraints['utilization_constraint']>) =>
+    setDraft((d) => ({
+      ...d,
+      utilization_constraint: { ...d.utilization_constraint, ...patch },
+    }))
+
+  const valid =
+    u.hard_floor_pct < u.ideal_min_pct &&
+    u.ideal_min_pct < u.ideal_max_pct &&
+    u.ideal_max_pct < u.soft_ceiling_pct
+
+  return (
+    <section className="border-t pt-5">
+      <h3 className="font-semibold text-gray-900 mb-2">Utilization Band</h3>
+      <label className="flex items-center gap-2 cursor-pointer mb-2">
+        <input
+          type="checkbox"
+          checked={u.enabled}
+          onChange={(e) => update({ enabled: e.target.checked })}
+          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+        />
+        <span className="text-sm font-medium text-gray-800">
+          Enforce utilization band on crew sizing
+        </span>
+      </label>
+
+      {u.enabled && (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 my-3">
+            <NumberField
+              label="Hard floor"
+              value={u.hard_floor_pct}
+              onChange={(v) => update({ hard_floor_pct: v })}
+              suffix="%"
+            />
+            <NumberField
+              label="Ideal min"
+              value={u.ideal_min_pct}
+              onChange={(v) => update({ ideal_min_pct: v })}
+              suffix="%"
+            />
+            <NumberField
+              label="Ideal max"
+              value={u.ideal_max_pct}
+              onChange={(v) => update({ ideal_max_pct: v })}
+              suffix="%"
+            />
+            <NumberField
+              label="Soft ceiling"
+              value={u.soft_ceiling_pct}
+              onChange={(v) => update({ soft_ceiling_pct: v })}
+              suffix="%"
+            />
+          </div>
+
+          {/* Color-coded band visualization 0..130% */}
+          <UtilizationBandViz band={u} />
+          {!valid && (
+            <p className="text-xs text-red-600 mt-2">
+              Invalid band: must be hard_floor &lt; ideal_min &lt; ideal_max &lt; soft_ceiling.
+            </p>
+          )}
+
+          <div className="mt-4">
+            <div className="text-xs font-semibold text-gray-700 mb-1">Constraint scope</div>
+            <div className="flex flex-wrap gap-3 text-sm">
+              {(['per_branch', 'per_region', 'portfolio'] as const).map((s) => (
+                <label key={s} className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="radio"
+                    checked={u.scope === s}
+                    onChange={() => update({ scope: s })}
+                  />
+                  <span className="capitalize">{s.replace('_', '-')}</span>
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Per-branch is most conservative — surfaces if any individual branch is over- or under-utilized.
+              Portfolio is most permissive — only flags if the whole portfolio is unbalanced. Per-region is in
+              between. Solutions outside the band are still shown but flagged.
+            </p>
+          </div>
+        </>
+      )}
+    </section>
+  )
+}
+
+function NumberField({
+  label,
+  value,
+  onChange,
+  suffix,
+}: {
+  label: string
+  value: number
+  onChange: (v: number) => void
+  suffix?: string
+}) {
+  return (
+    <div>
+      <label className="block text-xs font-semibold text-gray-700 mb-1">{label}</label>
+      <div className="relative">
+        <input
+          type="number"
+          value={value}
+          onChange={(e) => {
+            const n = Number(e.target.value)
+            if (Number.isFinite(n)) onChange(n)
+          }}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm pr-7"
+        />
+        {suffix && (
+          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">
+            {suffix}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function UtilizationBandViz({
+  band,
+}: {
+  band: { hard_floor_pct: number; soft_ceiling_pct: number; ideal_min_pct: number; ideal_max_pct: number }
+}) {
+  const max = 130
+  const seg = (from: number, to: number, color: string, key: string) => {
+    const left = (Math.max(0, from) / max) * 100
+    const width = (Math.max(0, to - from) / max) * 100
+    return (
+      <div
+        key={key}
+        className="absolute top-0 bottom-0"
+        style={{ left: `${left}%`, width: `${width}%`, background: color }}
+      />
+    )
+  }
+  return (
+    <div className="mt-2">
+      <div className="relative h-4 rounded bg-gray-100 overflow-hidden">
+        {seg(0, band.hard_floor_pct, '#fecaca', 'low')}
+        {seg(band.hard_floor_pct, band.ideal_min_pct, '#fde68a', 'lowmid')}
+        {seg(band.ideal_min_pct, band.ideal_max_pct, '#bbf7d0', 'ideal')}
+        {seg(band.ideal_max_pct, band.soft_ceiling_pct, '#fde68a', 'highmid')}
+        {seg(band.soft_ceiling_pct, max, '#fecaca', 'high')}
+      </div>
+      <div className="flex justify-between text-[10px] font-mono text-gray-500 mt-0.5">
+        <span>0%</span>
+        <span>{band.hard_floor_pct}%</span>
+        <span>{band.ideal_min_pct}%</span>
+        <span>{band.ideal_max_pct}%</span>
+        <span>{band.soft_ceiling_pct}%</span>
+        <span>{max}%</span>
+      </div>
     </div>
   )
 }
