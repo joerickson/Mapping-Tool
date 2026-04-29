@@ -6,16 +6,16 @@
 // run for this account and uses the centroids for `k` (defaulting to that run's
 // recommended_k).
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { createAdminClient } from '../../_lib/supabase.js'
-import { authenticateRequest } from '../../_lib/auth.js'
+import { createAdminClient } from '../../../_lib/supabase.js'
+import { authenticateRequest } from '../../../_lib/auth.js'
 import {
   loadAccountProperties,
   createAnalysisRecord,
   completeAnalysisRecord,
   failAnalysisRecord,
   type AccountProperty,
-} from '../../_lib/analysis/account-data.js'
-import { haversineMiles, driveTimeMinutes, type LatLng } from '../../_lib/analysis/haversine.js'
+} from '../../../_lib/analysis/account-data.js'
+import { haversineMiles, driveTimeMinutes, type LatLng } from '../../../_lib/analysis/haversine.js'
 
 interface DriveInputs {
   client_id?: string | null

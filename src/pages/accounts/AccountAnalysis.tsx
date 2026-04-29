@@ -179,7 +179,7 @@ export default function AccountAnalysisPage() {
       setRunning((prev) => ({ ...prev, [moduleKey]: true }))
       try {
         const token = await getToken()
-        const res = await fetch(`/api/analyses/${accountId}/${endpoint}`, {
+        const res = await fetch(`/api/analyses/account/${accountId}/${endpoint}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -247,7 +247,7 @@ export default function AccountAnalysisPage() {
     setReassessing(true)
     try {
       const token = await getToken()
-      await fetch(`/api/analyses/${accountId}/risk-flags-bulk`, {
+      await fetch(`/api/analyses/account/${accountId}/risk-flags-bulk`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({}),

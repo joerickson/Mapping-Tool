@@ -3,14 +3,14 @@
 // counts of properties processed and a histogram of flag types. Concurrency
 // is bounded; the work is fire-and-forget so the dashboard can poll.
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { createAdminClient } from '../../_lib/supabase.js'
-import { authenticateRequest } from '../../_lib/auth.js'
-import { loadAccountProperties } from '../../_lib/analysis/account-data.js'
+import { createAdminClient } from '../../../_lib/supabase.js'
+import { authenticateRequest } from '../../../_lib/auth.js'
+import { loadAccountProperties } from '../../../_lib/analysis/account-data.js'
 import {
   computeRiskFlags,
   fetchLatestBranchSet,
   persistRiskFlags,
-} from '../../_lib/analysis/risk-flags.js'
+} from '../../../_lib/analysis/risk-flags.js'
 
 export const config = { maxDuration: 300 }
 

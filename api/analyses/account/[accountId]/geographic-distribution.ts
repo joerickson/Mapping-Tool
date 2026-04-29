@@ -2,17 +2,17 @@
 // State + region breakdown of an account's portfolio, plus geographic outliers
 // (>300mi from the nearest region centroid).
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { createAdminClient } from '../../_lib/supabase.js'
-import { authenticateRequest } from '../../_lib/auth.js'
+import { createAdminClient } from '../../../_lib/supabase.js'
+import { authenticateRequest } from '../../../_lib/auth.js'
 import {
   loadAccountProperties,
   createAnalysisRecord,
   completeAnalysisRecord,
   failAnalysisRecord,
   type AccountProperty,
-} from '../../_lib/analysis/account-data.js'
-import { haversineMiles, centroid, type LatLng } from '../../_lib/analysis/haversine.js'
-import { regionForState, REGION_MAP } from '../../_lib/analysis/regions.js'
+} from '../../../_lib/analysis/account-data.js'
+import { haversineMiles, centroid, type LatLng } from '../../../_lib/analysis/haversine.js'
+import { regionForState, REGION_MAP } from '../../../_lib/analysis/regions.js'
 
 const OUTLIER_THRESHOLD_MI = 300
 
