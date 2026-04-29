@@ -131,7 +131,7 @@ export default function Navbar() {
             Uploads
           </Link>
           <Link
-            to="/admin/dangerous"
+            to="/admin"
             className="px-3 py-1.5 rounded-md text-sm font-medium text-gray-400 hover:bg-gray-100 transition-colors"
           >
             Admin
