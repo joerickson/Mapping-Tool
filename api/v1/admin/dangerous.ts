@@ -31,8 +31,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
       await db.from('staged_addresses').delete().neq('staged_id', '00000000-0000-0000-0000-000000000000')
       await db.from('upload_batches').delete().neq('upload_batch_id', '00000000-0000-0000-0000-000000000000')
-      await db.from('service_locations').delete().neq('service_location_id', '00000000-0000-0000-0000-000000000000')
-      await db.from('properties').delete().neq('property_id', '00000000-0000-0000-0000-000000000000')
+      await db.from('service_locations').delete().neq('id', '00000000-0000-0000-0000-000000000000')
+      await db.from('properties').delete().neq('id', '00000000-0000-0000-0000-000000000000')
       await db.from('client_templates').delete().neq('id', '00000000-0000-0000-0000-000000000000')
       await db.from('custom_field_definitions').delete().neq('id', '00000000-0000-0000-0000-000000000000')
       await db.from('service_offerings').delete().neq('id', '00000000-0000-0000-0000-000000000000')

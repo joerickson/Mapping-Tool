@@ -76,14 +76,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const { data: existing } = await db
       .from('properties')
-      .select('property_id, last_enriched_at')
+      .select('id, last_enriched_at')
       .eq('address_hash', addressHash)
       .maybeSingle()
 
     let propertyId: string
 
     if (existing) {
-      propertyId = existing.property_id
+      propertyId = (existing as any).id
       const enrichedAt = existing.last_enriched_at ? new Date(existing.last_enriched_at) : null
       const isStale = !enrichedAt || Date.now() - enrichedAt.getTime() > 90 * 24 * 60 * 60 * 1000
       if (!isStale) {
@@ -116,11 +116,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ...geocodeFromStage0,
           enrichment_status: row.latitude && row.longitude ? 'geocoded' : 'pending',
         })
-        .select('property_id')
+        .select('id')
         .single()
 
       if (propErr || !newProp) continue
-      propertyId = newProp.property_id
+      propertyId = (newProp as any).id
 
       await db.from('service_locations').insert({
         property_id: propertyId,
@@ -179,11 +179,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             propertyId,
           }),
         supabaseUpdate: async (id, data) => {
-          await db.from('properties').update(data).eq('property_id', id)
+          await db.from('properties').update(data).eq('id', id)
         },
         supabaseGet: async (id) => {
-          const { data } = await db.from('properties').select('*').eq('property_id', id).single()
-          return data
+          const { data } = await db.from('properties').select('*').eq('id', id).single()
+          return data ? { ...(data as any), property_id: (data as any).id } : data
         },
         getCategories: async () => {
           const { data } = await db.from('rbm_categories').select('*')

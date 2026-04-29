@@ -69,7 +69,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const { data: sls } = await db
         .from('service_locations')
         .select('property_id')
-        .in('service_location_id', service_location_ids)
+        .in('id', service_location_ids)
 
       if (sls?.length) {
         const propIds = [...new Set(sls.map((sl: any) => sl.property_id))]

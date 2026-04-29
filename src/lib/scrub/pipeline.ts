@@ -84,11 +84,13 @@ export async function runScrubPipeline(
   if (uniqueHashes.length > 0) {
     const { data: existingProps } = await db
       .from('properties')
-      .select('property_id, address_hash')
+      .select('id, address_hash')
       .in('address_hash', uniqueHashes.map((h) => h.slice(0, 16))) // existing hash is 16-char prefix
 
     if (existingProps?.length) {
-      const existingByShortHash = new Map(existingProps.map((p) => [p.address_hash, p.property_id]))
+      const existingByShortHash = new Map(
+        (existingProps as any[]).map((p) => [p.address_hash, p.id])
+      )
       for (const row of staged) {
         if (!row.dedupe_hash) continue
         const shortHash = row.dedupe_hash.slice(0, 16)

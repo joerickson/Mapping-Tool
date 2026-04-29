@@ -40,7 +40,7 @@ h1{color:#111827;margin:0 0 .5rem}p{color:#6b7280;margin:0}</style></head>
     const { data: props } = await db
       .from('properties')
       .select('*, service_locations(*)')
-      .in('property_id', propIds)
+      .in('id', propIds)
     properties = props ?? []
   }
 

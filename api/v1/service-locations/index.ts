@@ -58,7 +58,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return (a.display_name ?? '').localeCompare(b.display_name ?? '')
     })
 
-    return res.status(200).json(sorted)
+    // Alias real PKs (id) to service_location_id / property_id for frontend compatibility.
+    const aliased = sorted.map((sl: any) => ({
+      ...sl,
+      service_location_id: sl.id,
+      property: sl.property ? { ...sl.property, property_id: sl.property.id } : null,
+    }))
+
+    return res.status(200).json(aliased)
   }
 
   // ── POST /api/v1/service-locations ────────────────────────────────────────
@@ -84,7 +91,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (client_id && location_code) {
       const { data: conflict } = await db
         .from('service_locations')
-        .select('service_location_id')
+        .select('id')
         .eq('client_id', client_id)
         .eq('location_code', location_code)
         .maybeSingle()
@@ -92,7 +99,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (conflict) {
         return res.status(409).json({
           error: 'A service location with this client_id and location_code already exists',
-          service_location_id: conflict.service_location_id,
+          service_location_id: (conflict as any).id,
         })
       }
     }
@@ -112,18 +119,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         winteam_job_number: winteam_job_number ?? null,
         status,
       })
-      .select('service_location_id')
+      .select('id')
       .single()
 
     if (error) return res.status(500).json({ error: error.message })
 
     fireWebhook('service_location.created', {
-      service_location_id: data.service_location_id,
+      service_location_id: (data as any).id,
       property_id,
       client_id: client_id ?? null,
     }).catch(() => {})
 
-    return res.status(201).json({ service_location_id: data.service_location_id })
+    return res.status(201).json({ service_location_id: (data as any).id })
   }
 
   return res.status(405).json({ error: 'Method not allowed' })

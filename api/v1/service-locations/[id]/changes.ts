@@ -18,7 +18,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { data: loc } = await db
     .from('service_locations')
     .select('property_id')
-    .eq('service_location_id', id)
+    .eq('id', id)
     .single()
 
   if (!loc) return res.status(404).json({ error: 'Not found' })

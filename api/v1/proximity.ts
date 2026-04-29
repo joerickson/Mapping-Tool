@@ -25,12 +25,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const ids = String(property_ids).split(',').filter(Boolean)
     const { data: props } = await db
       .from('properties')
-      .select('property_id, latitude, longitude')
-      .in('property_id', ids)
+      .select('id, latitude, longitude')
+      .in('id', ids)
       .not('latitude', 'is', null)
 
     for (const p of props ?? []) {
-      queryPoints.push({ lat: p.latitude, lng: p.longitude, property_id: p.property_id })
+      queryPoints.push({ lat: (p as any).latitude, lng: (p as any).longitude, property_id: (p as any).id })
     }
   } else if (lat && lng) {
     queryPoints.push({ lat: Number(lat), lng: Number(lng) })

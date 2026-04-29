@@ -27,7 +27,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { data: properties } = await db
     .from('properties')
     .select('*, service_locations(*)')
-    .in('property_id', propertyIds)
+    .in('id', propertyIds)
 
-  return res.status(200).json({ properties: properties ?? [] })
+  // Alias real PKs (id) to legacy property_id / service_location_id for frontend compatibility.
+  const aliased = (properties ?? []).map((p: any) => ({
+    ...p,
+    property_id: p.id,
+    service_locations: (p.service_locations ?? []).map((sl: any) => ({
+      ...sl,
+      service_location_id: sl.id,
+    })),
+  }))
+
+  return res.status(200).json({ properties: aliased })
 }

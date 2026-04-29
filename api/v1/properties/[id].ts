@@ -24,11 +24,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         service_locations(*),
         enrichment_jobs(enrichment_job_id, status, completed_at, created_at)
       `)
-      .eq('property_id', id)
+      .eq('id', id)
       .single()
 
     if (error || !data) return res.status(404).json({ error: 'Not found' })
-    return res.status(200).json(data)
+
+    // Alias real PKs (properties.id, service_locations.id) for frontend compatibility.
+    const aliased = {
+      ...data,
+      property_id: (data as any).id,
+      service_locations: ((data as any).service_locations ?? []).map((sl: any) => ({
+        ...sl,
+        service_location_id: sl.id,
+      })),
+    }
+    return res.status(200).json(aliased)
   }
 
   if (req.method === 'PATCH') {
@@ -39,7 +49,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const { data: current } = await db
         .from('properties')
         .select('rbm_category')
-        .eq('property_id', id)
+        .eq('id', id)
         .single()
 
       await db.from('property_changes').insert({
@@ -55,7 +65,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data, error } = await db
       .from('properties')
       .update({ ...updates, updated_at: new Date().toISOString() })
-      .eq('property_id', id)
+      .eq('id', id)
       .select()
       .single()
 

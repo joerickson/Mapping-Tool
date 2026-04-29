@@ -41,7 +41,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data: sls } = await db
       .from('service_locations')
       .select('property_id, display_name')
-      .in('service_location_id', resolvedSlIds)
+      .in('id', resolvedSlIds)
     for (const sl of sls ?? []) allPropIds.add(sl.property_id)
   }
 
@@ -60,14 +60,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (allPropIds.size) {
     const { data: props } = await db
       .from('properties')
-      .select('property_id, latitude, longitude, city, service_locations(service_location_id, display_name)')
-      .in('property_id', [...allPropIds])
+      .select('id, latitude, longitude, city, service_locations(id, display_name)')
+      .in('id', [...allPropIds])
       .not('latitude', 'is', null)
 
-    for (const p of props ?? []) {
-      for (const sl of (p as any).service_locations ?? []) {
+    for (const p of (props ?? []) as any[]) {
+      for (const sl of (p.service_locations ?? []) as any[]) {
         pins.push({
-          service_location_id: sl.service_location_id,
+          service_location_id: sl.id,
           display_name: sl.display_name ?? p.city,
           lat: p.latitude,
           lng: p.longitude,

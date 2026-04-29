@@ -35,7 +35,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (clientIds.length > 0) {
       const { count } = await db
         .from('service_locations')
-        .select('service_location_id', { count: 'exact', head: true })
+        .select('id', { count: 'exact', head: true })
         .in('client_id', clientIds)
       slCount = count ?? 0
     }

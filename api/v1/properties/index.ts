@@ -93,7 +93,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .range(offset, offset + limit - 1)
 
     if (propIdsFromServiceLocations) {
-      query = query.in('property_id', propIdsFromServiceLocations)
+      query = query.in('id', propIdsFromServiceLocations)
     }
 
     if (category) {
@@ -135,9 +135,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data, error, count } = await query
     if (error) return res.status(500).json({ error: error.message })
 
+    // properties.id and service_locations.id are the real PK columns; alias
+    // them as property_id / service_location_id for frontend compatibility.
+    const properties = (data ?? []).map((p: any) => ({
+      ...p,
+      property_id: p.id,
+      service_locations: (p.service_locations ?? []).map((sl: any) => ({
+        ...sl,
+        service_location_id: sl.id,
+      })),
+    }))
+
     const total_count = count ?? 0
     return res.status(200).json({
-      properties: data ?? [],
+      properties,
       total_count,
       has_more: offset + limit < total_count,
     })
@@ -173,7 +184,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const { data: existing } = await db
         .from('properties')
-        .select('property_id, last_enriched_at, enrichment_status')
+        .select('id, last_enriched_at, enrichment_status')
         .eq('address_hash', addressHash)
         .maybeSingle()
 
@@ -181,13 +192,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       let isNew = false
 
       if (existing) {
-        propertyId = existing.property_id
+        propertyId = (existing as any).id
 
         if (Object.keys(rest).length) {
           await db
             .from('properties')
             .update({ ...rest, updated_at: new Date().toISOString() })
-            .eq('property_id', propertyId)
+            .eq('id', propertyId)
           fireWebhook('property.updated', {
             property_id: propertyId,
             changed_fields: Object.keys(rest),
@@ -212,14 +223,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             enrichment_status: 'pending',
             ...rest,
           })
-          .select('property_id')
+          .select('id')
           .single()
 
         if (createErr || !created) {
           results.push({ error: createErr?.message ?? 'Failed to create property' })
           continue
         }
-        propertyId = created.property_id
+        propertyId = (created as any).id
         isNew = true
         idsForJob.push(propertyId)
       }

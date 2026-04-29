@@ -32,9 +32,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (propertyIds.length) {
     const { data } = await db
       .from('properties')
-      .select('property_id, address_line1, address_line2, city, state, postal_code, rbm_category, building_sqft, service_locations(service_location_id, display_name, location_code, serviceable_sqft, status)')
-      .in('property_id', propertyIds)
-    properties = data ?? []
+      .select('id, address_line1, address_line2, city, state, postal_code, rbm_category, building_sqft, service_locations(id, display_name, location_code, serviceable_sqft, status)')
+      .in('id', propertyIds)
+    properties = (data ?? []).map((p: any) => ({
+      ...p,
+      property_id: p.id,
+      service_locations: (p.service_locations ?? []).map((sl: any) => ({
+        ...sl,
+        service_location_id: sl.id,
+      })),
+    }))
   }
 
   return res.status(200).json({ portfolio, properties })

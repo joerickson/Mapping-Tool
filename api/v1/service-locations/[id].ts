@@ -19,11 +19,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data, error } = await db
       .from('service_locations')
       .select('*, property:properties(*)')
-      .eq('service_location_id', id)
+      .eq('id', id)
       .single()
 
     if (error || !data) return res.status(404).json({ error: 'Not found' })
-    return res.status(200).json({ service_location: data, property: data.property })
+
+    // Alias real PKs (id) to legacy field names for frontend compatibility.
+    const sl: any = data
+    const aliasedSl = { ...sl, service_location_id: sl.id }
+    const aliasedProperty = sl.property
+      ? { ...sl.property, property_id: sl.property.id }
+      : null
+    return res.status(200).json({ service_location: aliasedSl, property: aliasedProperty })
   }
 
   if (req.method === 'PATCH') {
@@ -33,7 +40,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           await db
             .from('service_locations')
             .select('status')
-            .eq('service_location_id', id)
+            .eq('id', id)
             .single()
         ).data?.status
       : undefined
@@ -41,7 +48,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data, error } = await db
       .from('service_locations')
       .update({ ...updates, updated_at: new Date().toISOString() })
-      .eq('service_location_id', id)
+      .eq('id', id)
       .select()
       .single()
 
@@ -55,7 +62,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       })
     }
 
-    return res.status(200).json({ service_location: data })
+    const aliasedSl = data ? { ...(data as any), service_location_id: (data as any).id } : data
+    return res.status(200).json({ service_location: aliasedSl })
   }
 
   return res.status(405).json({ error: 'Method not allowed' })

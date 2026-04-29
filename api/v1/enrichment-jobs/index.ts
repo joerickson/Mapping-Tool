@@ -29,7 +29,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     await db
       .from('properties')
       .update({ enrichment_status: 'pending', enrichment_errors: null })
-      .in('property_id', property_ids)
+      .in('id', property_ids)
 
     const { data: job, error: jobErr } = await db
       .from('enrichment_jobs')
@@ -65,15 +65,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               propertyId,
             }),
           supabaseUpdate: async (id, data) => {
-            await db.from('properties').update(data).eq('property_id', id)
+            await db.from('properties').update(data).eq('id', id)
           },
           supabaseGet: async (id) => {
             const { data } = await db
               .from('properties')
               .select('*')
-              .eq('property_id', id)
+              .eq('id', id)
               .single()
-            return data
+            return data ? { ...(data as any), property_id: (data as any).id } : data
           },
           getCategories: async () => {
             const { data } = await db.from('rbm_categories').select('*')

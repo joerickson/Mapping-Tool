@@ -26,7 +26,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Stats: service location count, portfolio count, total sqft; also template config status
     const [slRes, portRes, sqftRes, uploadRes, templateRes, accountRes] = await Promise.all([
-      db.from('service_locations').select('service_location_id', { count: 'exact', head: true }).eq('client_id', id),
+      db.from('service_locations').select('id', { count: 'exact', head: true }).eq('client_id', id),
       db.from('portfolios').select('portfolio_id', { count: 'exact', head: true }).eq('client_id', id),
       db.from('service_locations').select('serviceable_sqft').eq('client_id', id).not('serviceable_sqft', 'is', null),
       db.from('upload_batches').select('upload_batch_id, filename, created_at, status, row_count').eq('client_id', id).order('created_at', { ascending: false }).limit(20),
