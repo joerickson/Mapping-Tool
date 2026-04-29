@@ -238,7 +238,7 @@ export default function AdminUploadsPage() {
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
           <div className="flex items-center gap-3 mb-2">
-            <Link to="/admin/dangerous" className="text-gray-400 hover:text-gray-600 text-sm">← Admin</Link>
+            <Link to="/admin" className="text-gray-400 hover:text-gray-600 text-sm">← Admin</Link>
             <h1 className="text-2xl font-bold text-gray-900">Admin — Upload Batches</h1>
           </div>
 

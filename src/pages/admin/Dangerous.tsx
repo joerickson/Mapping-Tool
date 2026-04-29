@@ -45,7 +45,7 @@ export default function DangerousAdminPage() {
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-6 py-8 space-y-6">
           <div className="flex items-center gap-3 mb-2">
-            <Link to="/map" className="text-gray-400 hover:text-gray-600 text-sm">← Map</Link>
+            <Link to="/admin" className="text-gray-400 hover:text-gray-600 text-sm">← Admin</Link>
             <h1 className="text-2xl font-bold text-gray-900">Admin — Dangerous Actions</h1>
           </div>
 

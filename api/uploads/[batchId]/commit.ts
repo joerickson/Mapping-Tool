@@ -246,6 +246,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
     .eq('upload_batch_id', batchId)
 
+  // Fire-and-forget enrichment for newly-created properties.
+  // Note: Vercel Node functions may not reliably execute async work after res.send().
+  // If this proves unreliable, use the manual "Enrich Pending Properties" button on /admin.
+  const newPropertyIds = Array.from(dedupeCache.values())
+  if (newPropertyIds.length > 0) {
+    const baseUrl = process.env.VITE_APP_URL || `https://${req.headers.host}`
+    const enrichInBackground = async () => {
+      const concurrency = 10
+      for (let i = 0; i < newPropertyIds.length; i += concurrency) {
+        const chunk = newPropertyIds.slice(i, i + concurrency)
+        await Promise.allSettled(
+          chunk.map((propId) =>
+            fetch(`${baseUrl}/api/properties/${propId}/enrich`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-RBM-Service-Key': process.env.SERVICE_API_KEY ?? '',
+              },
+            }).catch(() => {}) // swallow — admin can retry from /admin
+          )
+        )
+      }
+    }
+    enrichInBackground()
+  }
+
   return res.status(200).json({
     batch_id: batchId,
     status: 'committed',
