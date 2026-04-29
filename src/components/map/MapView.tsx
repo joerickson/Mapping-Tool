@@ -219,7 +219,7 @@ export default function MapView({
         const feature = e.features?.[0]
         if (!feature) return
         const propertyId = feature.properties?.property_id as string | undefined
-        if (!propertyId) return
+        if (propertyId == null) return
         const pin = pinsRef.current.find((p) => p.property.property_id === propertyId)
         if (!pin) return
 

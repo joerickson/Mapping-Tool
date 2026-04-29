@@ -77,7 +77,7 @@ export default function MapPage() {
   const pins = useMemo(
     () =>
       propertiesWithLocations
-        .filter((p) => p.property_id)
+        .filter((p) => p.property_id != null)
         .map((p) => ({
           property: p as Property,
           locations: p.service_locations,
