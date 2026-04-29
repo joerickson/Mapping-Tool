@@ -162,7 +162,7 @@ export default function PropertyDetailPanel({
         </div>
 
         <button
-          onClick={() => navigate(`/locations/${locations[0]?.service_location_id}`)}
+          onClick={() => navigate(`/properties/${property.property_id}`)}
           className="w-full mt-2 py-2 px-4 border border-blue-600 text-blue-600 rounded-lg text-sm font-medium hover:bg-blue-50"
         >
           View Full Details →

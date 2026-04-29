@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import mapboxgl from 'mapbox-gl'
 import Supercluster from 'supercluster'
 import type { Property, ServiceLocation, MapFilter } from '../../types'
@@ -41,10 +40,6 @@ export default function MapView({
   const map = useRef<mapboxgl.Map | null>(null)
   const clusterRef = useRef<Supercluster | null>(null)
   const [mapLoaded, setMapLoaded] = useState(false)
-
-  const navigate = useNavigate()
-  const navigateRef = useRef(navigate)
-  useEffect(() => { navigateRef.current = navigate }, [navigate])
 
   const bulkSelectModeRef = useRef(bulkSelectMode)
   useEffect(() => { bulkSelectModeRef.current = bulkSelectMode }, [bulkSelectMode])
@@ -224,45 +219,11 @@ export default function MapView({
         const feature = e.features?.[0]
         if (!feature) return
         const propertyId = feature.properties?.property_id
+        const pin = pinsRef.current.find((p) => p.property.property_id === propertyId)
+        if (!pin) return
 
-        if (bulkSelectModeRef.current) {
-          const pin = pinsRef.current.find((p) => p.property.property_id === propertyId)
-          if (pin) onPinClickRef.current(pin)
-          return
-        }
-
-        // Close hover popup before showing click popup
         hoverPopupRef.current.remove()
-
-        const coords = (feature.geometry as GeoJSON.Point).coordinates as [number, number]
-        const props = feature.properties ?? {}
-        const locName = props.first_location_name ?? null
-        const locSqft = props.first_location_sqft != null
-          ? `${Number(props.first_location_sqft).toLocaleString()} sqft`
-          : null
-        const locationLine = [locName, locSqft].filter(Boolean).join(' · ')
-
-        const popup = new mapboxgl.Popup({ maxWidth: '280px', offset: 8 })
-          .setLngLat(coords)
-          .setHTML(`
-            <div style="padding:4px 2px">
-              <div style="font-weight:600;font-size:13px;color:#111827;margin-bottom:2px">${escHtml(props.address ?? 'Unknown address')}</div>
-              <div style="font-size:12px;color:#6b7280">${escHtml(props.city_state ?? '')}</div>
-              ${locationLine ? `<div style="font-size:12px;color:#374151;margin-top:4px">${escHtml(locationLine)}</div>` : ''}
-              <button
-                id="prop-nav-${escHtml(propertyId)}"
-                style="display:inline-block;margin-top:8px;padding:4px 10px;background:#2563eb;color:white;border-radius:6px;font-size:12px;font-weight:500;border:none;cursor:pointer"
-              >View details →</button>
-            </div>
-          `)
-          .addTo(m)
-
-        // addTo appends to DOM synchronously
-        document.getElementById(`prop-nav-${propertyId}`)
-          ?.addEventListener('click', () => {
-            popup.remove()
-            navigateRef.current(`/properties/${propertyId}`)
-          })
+        onPinClickRef.current(pin)
       })
 
       m.on('mouseenter', 'clusters', () => { m.getCanvas().style.cursor = 'pointer' })
