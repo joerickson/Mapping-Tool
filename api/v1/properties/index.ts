@@ -33,6 +33,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       bbox,
       city,
       state,
+      city_state,
+      status,
+      portfolio_id,
       enrichment_status,
       limit: limitParam = '100',
       offset: offsetParam = '0',
@@ -43,28 +46,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'client_id is required for service-key auth' })
     }
 
-    const limit = Math.min(Math.max(1, Number(limitParam)), 500)
+    const limit = Math.min(Math.max(1, Number(limitParam)), 2000)
     const offset = Math.max(0, Number(offsetParam))
+
+    // Build list of property IDs from service_location filters
+    let propIdsFromServiceLocations: string[] | null = null
+
+    // If we have any service_location filters, query them first
+    if (client_id || status || portfolio_id) {
+      let slQuery = db.from('service_locations').select('property_id')
+
+      if (client_id) {
+        slQuery = slQuery.in('client_id', String(client_id).split(','))
+      }
+      if (status) {
+        slQuery = slQuery.in('status', String(status).split(','))
+      }
+      if (portfolio_id) {
+        // portfolio_ids is an array field, use containedBy or overlaps
+        const portfolioIds = String(portfolio_id).split(',')
+        slQuery = slQuery.overlaps('portfolio_ids', portfolioIds)
+      }
+
+      const { data: sls } = await slQuery
+      propIdsFromServiceLocations = [...new Set((sls ?? []).map((r: any) => r.property_id).filter((id: any) => id != null))]
+
+      if (propIdsFromServiceLocations.length === 0) {
+        return res.status(200).json({ properties: [], total_count: 0, has_more: false })
+      }
+    }
 
     let query = db
       .from('properties')
       .select('*, service_locations(*)', { count: 'exact' })
       .range(offset, offset + limit - 1)
 
+    if (propIdsFromServiceLocations) {
+      query = query.in('property_id', propIdsFromServiceLocations)
+    }
+
     if (category) {
       query = query.in('rbm_category', String(category).split(','))
-    }
-    if (client_id) {
-      // Filter via subquery on service_locations.client_id
-      const { data: sls } = await db
-        .from('service_locations')
-        .select('property_id')
-        .in('client_id', String(client_id).split(','))
-      const propIds = [...new Set((sls ?? []).map((r: any) => r.property_id))]
-      if (!propIds.length) {
-        return res.status(200).json({ properties: [], total_count: 0, has_more: false })
-      }
-      query = query.in('property_id', propIds)
     }
     if (bbox) {
       const [lat1, lng1, lat2, lng2] = String(bbox).split(',').map(Number)
@@ -74,8 +96,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .gte('longitude', Math.min(lng1, lng2))
         .lte('longitude', Math.max(lng1, lng2))
     }
-    if (city) query = query.ilike('city', `%${String(city)}%`)
-    if (state) query = query.ilike('state', `%${String(state)}%`)
+
+    // Handle city_state parameter (e.g., "Chicago, IL" or "Chicago IL")
+    if (city_state) {
+      const cityStateStr = String(city_state).trim()
+      // Try to split by comma first, then by space
+      const parts = cityStateStr.includes(',')
+        ? cityStateStr.split(',').map(s => s.trim())
+        : cityStateStr.split(/\s+/)
+
+      if (parts.length >= 2) {
+        const cityPart = parts.slice(0, -1).join(' ')
+        const statePart = parts[parts.length - 1]
+        query = query.ilike('city', `%${cityPart}%`).ilike('state', `%${statePart}%`)
+      } else {
+        // If only one part, search in both city and state
+        query = query.or(`city.ilike.%${cityStateStr}%,state.ilike.%${cityStateStr}%`)
+      }
+    } else {
+      // Only apply individual city/state filters if city_state is not provided
+      if (city) query = query.ilike('city', `%${String(city)}%`)
+      if (state) query = query.ilike('state', `%${String(state)}%`)
+    }
+
     if (enrichment_status) query = query.eq('enrichment_status', enrichment_status)
 
     const { data, error, count } = await query
