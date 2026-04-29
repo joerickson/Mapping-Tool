@@ -281,6 +281,8 @@ export default function MapView({
             <div style="font-size:11px;color:#6b7280;margin-top:1px">${escHtml(props.city_state ?? '')}</div>
           `)
           .addTo(m)
+        const popupEl = hoverPopupRef.current.getElement()
+        if (popupEl) popupEl.style.pointerEvents = 'none'
       })
 
       m.on('mouseleave', 'unclustered-point', () => {
