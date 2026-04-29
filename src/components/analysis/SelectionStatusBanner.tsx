@@ -43,7 +43,7 @@ export default function SelectionStatusBanner({
             </span>
           </div>
           <div className="mt-1 text-sm text-gray-700 break-words">
-            {branches.map((b) => b.name).join(' · ')}
+            {branches.map((b) => preferCityState(b)).join(' · ')}
           </div>
           <div className="mt-1 text-xs text-gray-500">
             {selectedAt && (
@@ -89,6 +89,21 @@ export default function SelectionStatusBanner({
       </div>
     </div>
   )
+}
+
+// Show "City, ST" when the SelectedBranch carries it; fall back to the
+// user-supplied name only when city_state is empty. Catches the case where
+// a branch was confirmed before the city_state field existed or the user
+// named a branch with raw coordinates.
+function preferCityState(b: { name: string; city_state?: string }): string {
+  if (b.city_state && b.city_state.trim() && !looksLikeCoords(b.city_state)) return b.city_state
+  if (b.name && !looksLikeCoords(b.name)) return b.name
+  return b.city_state || b.name || '(unnamed)'
+}
+
+function looksLikeCoords(s: string): boolean {
+  // "32.881, -96.823" or "32.881,-96.823" — two numbers separated by comma
+  return /^-?\d+\.\d+\s*,\s*-?\d+\.\d+$/.test(s.trim())
 }
 
 function relativeTime(iso: string): string {

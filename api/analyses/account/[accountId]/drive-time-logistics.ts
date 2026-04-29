@@ -22,6 +22,15 @@ import {
   requireSelectedBranches,
   NO_SELECTION_ERROR,
 } from '../../../_lib/analysis/operational-constraints.js'
+import { nearestCity } from '../../../_lib/analysis/constrained-kmeans.js'
+
+// "Houston, TX" derived from the cities dataset by nearest-coords lookup.
+// Falls back to the original branch name if no dataset hit (typical for
+// truly remote coordinates).
+function deriveCityState(b: { name: string; lat: number; lng: number }): string {
+  const nc = nearestCity(b.lat, b.lng)
+  return nc ? `${nc.city}, ${nc.state_id}` : b.name
+}
 
 export interface DriveInputs {
   client_id?: string | null
@@ -170,7 +179,7 @@ export function computeDriveTimeLogistics(
     perProperty.push({
       property_id: p.id,
       address: `${p.address_line1}, ${p.city}, ${p.state}`,
-      nearest_branch: bestBranch.name,
+      nearest_branch: deriveCityState(bestBranch),
       drive_distance_miles: +bestDist.toFixed(1),
       drive_time_minutes: Math.round(minutes),
       flags,
@@ -178,6 +187,14 @@ export function computeDriveTimeLogistics(
   }
 
   perProperty.sort((a, b) => b.drive_time_minutes - a.drive_time_minutes)
+
+  // Pre-compute city_state once per branch so cluster_efficiency rows + the
+  // long-drive list both render with real "Houston, TX" labels regardless of
+  // what the user named their branch in the selection workflow.
+  const branchCityState = new Map<string, string>()
+  for (const b of branches) {
+    branchCityState.set(b.name, deriveCityState(b))
+  }
 
   const cluster_efficiency = Array.from(branchTallies.values()).map((t) => {
     const avg =
@@ -190,6 +207,7 @@ export function computeDriveTimeLogistics(
     else if (pct >= 60) efficiency_score = 'medium'
     return {
       branch: t.name,
+      city_state: branchCityState.get(t.name) ?? t.name,
       property_count: t.total,
       avg_drive_minutes: avg,
       properties_within_60min_pct: pct,
@@ -235,7 +253,10 @@ export function computeDriveTimeLogistics(
     outputs: {
       property_count: properties.length,
       k_used: kUsed,
-      branches_used: branches,
+      branches_used: branches.map((b) => ({
+        ...b,
+        city_state: deriveCityState(b),
+      })),
       drive_distribution: buckets,
       per_property: perProperty,
       cluster_efficiency,

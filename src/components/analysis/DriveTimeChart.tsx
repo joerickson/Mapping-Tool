@@ -4,6 +4,7 @@ interface DriveTimeOutputs {
   drive_distribution: Record<string, number>
   cluster_efficiency: Array<{
     branch: string
+    city_state?: string
     property_count: number
     avg_drive_minutes: number
     properties_within_60min_pct: number
@@ -80,7 +81,9 @@ export default function DriveTimeChart({ data }: { data: DriveTimeOutputs }) {
             <tbody>
               {data.cluster_efficiency.map((c) => (
                 <tr key={c.branch} className="border-b last:border-0">
-                  <td className="py-2 pr-4 font-medium text-gray-900">{c.branch}</td>
+                  <td className="py-2 pr-4 font-medium text-gray-900">
+                    {c.city_state ?? c.branch}
+                  </td>
                   <td className="py-2 pr-4 text-right">{c.property_count}</td>
                   <td className="py-2 pr-4 text-right">{c.avg_drive_minutes}</td>
                   <td className="py-2 pr-4 text-right">{c.properties_within_60min_pct}%</td>

@@ -372,7 +372,14 @@ function UtilizationSection({
           <tbody>
             {ub.per_branch.map((b) => (
               <tr key={b.branch_name} className="border-b last:border-0 align-top">
-                <td className="py-2 pr-3 font-medium text-gray-900">{b.branch_name}</td>
+                <td className="py-2 pr-3 font-medium text-gray-900">
+                  {b.city_state ?? b.branch_name}
+                  {b.branch_name && b.city_state && b.branch_name !== b.city_state && (
+                    <div className="text-xs text-gray-400 font-normal italic">
+                      {b.branch_name}
+                    </div>
+                  )}
+                </td>
                 <td className="py-2 pr-3 text-right text-gray-600">{formatPop(b.population)}</td>
                 <td className="py-2 pr-3 text-right">{b.crew_count}</td>
                 <td className="py-2 pr-3 text-right">{b.work_hours.toLocaleString()}</td>

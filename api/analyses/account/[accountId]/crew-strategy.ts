@@ -296,6 +296,10 @@ export function computeCrewStrategy(
       population: nc?.population ?? null,
       state_id: nc?.state_id ?? null,
       region: nc?.state_id ? regionForState(nc.state_id) : 'Other',
+      // "Houston, TX" for the UI to render regardless of what the user named
+      // their branch in the selection workflow. Falls back to the raw name
+      // when no nearby city is in the dataset.
+      city_state: nc ? `${nc.city}, ${nc.state_id}` : b.name,
     }
   })
 
@@ -384,7 +388,7 @@ export function computeCrewStrategy(
 
     optionB_branch_breakdown.push({
       branch_name: branches[i].name,
-      city_state: branches[i].name,
+      city_state: branchMeta[i].city_state,
       population: branchMeta[i].population,
       crew_count: crews,
       work_hours: Math.round(branchHours[i]),
@@ -472,7 +476,7 @@ export function computeCrewStrategy(
     const region = branchMeta[i].region
     const cur =
       regionMap.get(region) ?? { branches_in_region: [], work_hours: 0, available_hours: 0 }
-    cur.branches_in_region.push(branches[i].name)
+    cur.branches_in_region.push(branchMeta[i].city_state)
     cur.work_hours += branchHours[i]
     cur.available_hours += crewsPerBranch[i] * FTE_HOURS_PER_YEAR
     regionMap.set(region, cur)
@@ -539,24 +543,24 @@ export function computeCrewStrategy(
         if (row.status === 'underutilized') {
           constraint_violations.push({
             scope: 'branch',
-            name: row.branch_name,
+            name: row.city_state,
             metric: 'utilization_pct',
             actual: row.utilization_pct,
             threshold_violated: 'hard_floor',
             severity: 'flag',
-            suggestion: `Consolidate with adjacent branch or add properties to ${row.branch_name}.`,
+            suggestion: `Consolidate with adjacent branch or add properties to ${row.city_state}.`,
           })
         } else if (row.status === 'overcapacity') {
           constraint_violations.push({
             scope: 'branch',
-            name: row.branch_name,
+            name: row.city_state,
             metric: 'utilization_pct',
             actual: row.utilization_pct,
             threshold_violated: 'soft_ceiling',
             severity: 'warning',
             suggestion: row.surge_recommendation
-              ? `Add ${row.surge_recommendation.surge_crews} surge crew${row.surge_recommendation.surge_crews === 1 ? '' : 's'} for ~${row.surge_recommendation.surge_weeks} weeks at ${row.branch_name}.`
-              : `Add a crew at ${row.branch_name}.`,
+              ? `Add ${row.surge_recommendation.surge_crews} surge crew${row.surge_recommendation.surge_crews === 1 ? '' : 's'} for ~${row.surge_recommendation.surge_weeks} weeks at ${row.city_state}.`
+              : `Add a crew at ${row.city_state}.`,
           })
         }
       }
@@ -699,6 +703,7 @@ export function computeCrewStrategy(
       total_project_hours_per_year: Math.round(totalProjectHours),
       branches: branches.map((b, i) => ({
         ...b,
+        city_state: branchMeta[i].city_state,
         population: branchMeta[i].population,
         state: branchMeta[i].state_id,
         region: branchMeta[i].region,
