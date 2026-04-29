@@ -19,6 +19,7 @@ interface KResult {
     city_state: string
     property_count: number
     total_sqft: number
+    locked?: boolean
     avg_drive_distance_miles: number
     max_drive_distance_miles: number
   }>
@@ -32,6 +33,7 @@ interface KResult {
 interface BranchOptOutputs {
   k_results: KResult[]
   recommended_k: number
+  floor_k?: number
 }
 
 export default function BranchOptimizationChart({ data }: { data: BranchOptOutputs }) {
@@ -67,6 +69,15 @@ export default function BranchOptimizationChart({ data }: { data: BranchOptOutpu
               />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <ReferenceLine x={data.recommended_k} stroke="#16a34a" strokeDasharray="3 3" yAxisId="cost" />
+              {data.floor_k && data.floor_k > 0 && (
+                <ReferenceLine
+                  x={data.floor_k}
+                  stroke="#dc2626"
+                  strokeDasharray="2 4"
+                  yAxisId="cost"
+                  label={{ value: 'Floor (locked)', fontSize: 10, fill: '#dc2626' }}
+                />
+              )}
               <Bar yAxisId="cost" dataKey="drive_cost" stackId="a" fill="#3b82f6" name="Drive cost" />
               <Bar yAxisId="cost" dataKey="branch_cost" stackId="a" fill="#a855f7" name="Branch cost">
                 {data.k_results.map((r, i) => (
@@ -109,7 +120,14 @@ export default function BranchOptimizationChart({ data }: { data: BranchOptOutpu
                   .sort((a, b) => b.property_count - a.property_count)
                   .map((b, i) => (
                     <tr key={i} className="border-b last:border-0">
-                      <td className="py-2 pr-4 font-medium text-gray-900">{b.city_state}</td>
+                      <td className="py-2 pr-4 font-medium text-gray-900">
+                        {b.city_state}
+                        {b.locked && (
+                          <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 align-middle">
+                            locked
+                          </span>
+                        )}
+                      </td>
                       <td className="py-2 pr-4 text-right">{b.property_count}</td>
                       <td className="py-2 pr-4 text-right">{b.total_sqft.toLocaleString()}</td>
                       <td className="py-2 pr-4 text-right">{b.avg_drive_distance_miles}</td>

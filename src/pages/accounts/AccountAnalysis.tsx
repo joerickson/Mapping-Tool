@@ -14,6 +14,7 @@ import CrewStrategyChart from '../../components/analysis/CrewStrategyChart'
 import WorkforceSizingChart from '../../components/analysis/WorkforceSizingChart'
 import SeasonalityChart from '../../components/analysis/SeasonalityChart'
 import BidPricingChart from '../../components/analysis/BidPricingChart'
+import OperationalConstraintsPanel from '../../components/analysis/OperationalConstraintsPanel'
 import AnalysisMap, {
   type AnalysisMapPoint,
   type AnalysisMapBranch,
@@ -118,6 +119,9 @@ export default function AccountAnalysisPage() {
   const [mapLoading, setMapLoading] = useState(true)
   const [reassessing, setReassessing] = useState(false)
   const [reassessMessage, setReassessMessage] = useState<string | null>(null)
+  // ISO timestamp of the most recent constraints save — used to flag any
+  // module whose last completed run is older than this as "stale vs constraints".
+  const [constraintsUpdatedAt, setConstraintsUpdatedAt] = useState<string | null>(null)
 
   // ─── Initial load: account + latest analysis per module + properties for map ───
   const loadEverything = useCallback(async () => {
@@ -530,6 +534,14 @@ export default function AccountAnalysisPage() {
             </Button>
           </div>
 
+          {/* Operational Constraints panel */}
+          {accountId && (
+            <OperationalConstraintsPanel
+              accountId={accountId}
+              onUpdatedAtChange={(iso) => setConstraintsUpdatedAt(iso)}
+            />
+          )}
+
           {/* Synthesis placeholder */}
           <div className="bg-white rounded-xl border shadow-sm px-5 py-4">
             <div className="flex items-center justify-between">
@@ -598,6 +610,10 @@ export default function AccountAnalysisPage() {
             {MODULES.map((m) => {
               const row = latestByModule[m.key]
               const status = statusFor(m.key)
+              const stale =
+                !!constraintsUpdatedAt &&
+                !!row?.completed_at &&
+                new Date(row.completed_at) < new Date(constraintsUpdatedAt)
               return (
                 <AnalysisCard
                   key={m.key}
@@ -615,6 +631,7 @@ export default function AccountAnalysisPage() {
                   analysisId={pollIds[m.key] ?? row?.id ?? null}
                   onCheckNow={pollIds[m.key] ? () => handleCheckNow(m.key) : undefined}
                   onMarkFailed={status === 'stuck' ? () => handleMarkFailed(m.key) : undefined}
+                  staleVsConstraints={stale}
                 >
                   {renderModuleBody(m.key)}
                 </AnalysisCard>

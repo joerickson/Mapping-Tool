@@ -20,6 +20,10 @@ import {
   classifyOffering,
 } from '../../../_lib/analysis/service-offerings.js'
 import { haversineMiles, type LatLng } from '../../../_lib/analysis/haversine.js'
+import {
+  loadConstraints,
+  applyExclusions,
+} from '../../../_lib/analysis/operational-constraints.js'
 
 export const config = { maxDuration: 60 }
 
@@ -58,26 +62,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const accountId = req.query.accountId as string
   const body = (req.body ?? {}) as Partial<CrewStrategyInputs>
-  const inputs: CrewStrategyInputs = {
-    client_id: body.client_id ?? null,
-    k: body.k ?? null,
-    branches: body.branches ?? null,
-    crew_size: body.crew_size ?? 3,
-    hours_per_day: body.hours_per_day ?? 10,
-    hourly_loaded_labor_cost: body.hourly_loaded_labor_cost ?? 28,
-    project_clean_base_hours: body.project_clean_base_hours ?? 3,
-    project_clean_hours_per_sqft: body.project_clean_hours_per_sqft ?? 0.0002,
-    upholstery_solo_hours: body.upholstery_solo_hours ?? 2,
-    upholstery_combo_hours_pct: body.upholstery_combo_hours_pct ?? 0.6,
-    visits_per_year_default: body.visits_per_year_default ?? 2,
-    surge_weeks_per_year: body.surge_weeks_per_year ?? 26,
-    surge_crew_count: body.surge_crew_count ?? 3,
-    surge_premium_multiplier: body.surge_premium_multiplier ?? 1.4,
-    fuel_cost_per_mile: body.fuel_cost_per_mile ?? 0.18,
-    vehicles_per_crew: body.vehicles_per_crew ?? 1,
-  }
 
   const db = createAdminClient()
+  const constraints = await loadConstraints(db, accountId)
+
+  const inputs: CrewStrategyInputs = {
+    client_id: body.client_id ?? constraints.client_id ?? null,
+    k: body.k ?? null,
+    branches: body.branches ?? null,
+    crew_size: body.crew_size ?? constraints.crew_size,
+    hours_per_day: body.hours_per_day ?? constraints.hours_per_day,
+    hourly_loaded_labor_cost:
+      body.hourly_loaded_labor_cost ?? constraints.hourly_loaded_labor_cost,
+    project_clean_base_hours:
+      body.project_clean_base_hours ?? constraints.project_clean_base_hours,
+    project_clean_hours_per_sqft:
+      body.project_clean_hours_per_sqft ?? constraints.project_clean_hours_per_sqft,
+    upholstery_solo_hours: body.upholstery_solo_hours ?? constraints.upholstery_solo_hours,
+    upholstery_combo_hours_pct:
+      body.upholstery_combo_hours_pct ?? constraints.upholstery_combo_hours_pct,
+    visits_per_year_default: body.visits_per_year_default ?? 2,
+    surge_weeks_per_year: body.surge_weeks_per_year ?? constraints.surge_weeks_per_year,
+    surge_crew_count: body.surge_crew_count ?? constraints.surge_crew_count,
+    surge_premium_multiplier:
+      body.surge_premium_multiplier ?? constraints.surge_premium_multiplier,
+    fuel_cost_per_mile: body.fuel_cost_per_mile ?? constraints.fuel_cost_per_mile,
+    vehicles_per_crew: body.vehicles_per_crew ?? constraints.vehicles_per_crew,
+  }
 
   let analysisId: string
   try {
@@ -93,12 +104,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const properties = await loadAccountProperties(db, accountId, inputs.client_id ?? null)
+    const allProperties = await loadAccountProperties(
+      db,
+      accountId,
+      inputs.client_id ?? null
+    )
+    const properties = applyExclusions(allProperties, constraints.excluded_property_ids)
     const offerings = await loadAccountOfferings(db, accountId)
 
-    // Resolve branch set: explicit > latest branch_optimization > default k=4 with no branches
+    // Resolve branch set: explicit body.branches > existing_branches from
+    // constraints > latest branch_optimization > error.
     let branches = inputs.branches
     let kUsed = inputs.k
+
+    if (!branches && constraints.existing_branches.length > 0) {
+      branches = constraints.existing_branches.map((b) => ({
+        name: b.name,
+        lat: b.lat,
+        lng: b.lng,
+      }))
+      kUsed = kUsed ?? branches.length
+    }
 
     if (!branches) {
       const bo = await fetchLatestCompletedAnalysis(db, accountId, 'branch_optimization')

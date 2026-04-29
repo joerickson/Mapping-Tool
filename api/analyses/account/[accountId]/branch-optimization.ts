@@ -16,6 +16,11 @@ import {
 import { haversineMiles, driveTimeMinutes, type LatLng } from '../../../_lib/analysis/haversine.js'
 import { kmeans } from '../../../_lib/analysis/kmeans.js'
 import { reverseGeocodeCityState } from '../../../_lib/analysis/reverse-geocode.js'
+import {
+  loadConstraints,
+  applyExclusions,
+  type ExistingBranch,
+} from '../../../_lib/analysis/operational-constraints.js'
 
 interface BranchOptInputs {
   client_id?: string | null
@@ -24,7 +29,7 @@ interface BranchOptInputs {
   hourly_labor_cost: number
   fuel_cost_per_mile: number
   fixed_branch_cost_annual: number
-  existing_branches: Array<{ name: string; lat: number; lng: number }>
+  existing_branches: ExistingBranch[]
 }
 
 const DEFAULT_VISITS_PER_YEAR = 4
@@ -45,25 +50,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const accountId = req.query.accountId as string
   const body = (req.body ?? {}) as Partial<BranchOptInputs>
-  const inputs: BranchOptInputs = {
-    client_id: body.client_id ?? null,
-    k_range: body.k_range ?? [1, 7],
-    drive_speed_mph: body.drive_speed_mph ?? 60,
-    hourly_labor_cost: body.hourly_labor_cost ?? 28,
-    fuel_cost_per_mile: body.fuel_cost_per_mile ?? 0.18,
-    fixed_branch_cost_annual: body.fixed_branch_cost_annual ?? 240000,
-    existing_branches: body.existing_branches ?? [],
-  }
 
   const db = createAdminClient()
+  const constraints = await loadConstraints(db, accountId)
+
+  const inputs: BranchOptInputs = {
+    client_id: body.client_id ?? constraints.client_id ?? null,
+    k_range: body.k_range ?? [1, 7],
+    drive_speed_mph: body.drive_speed_mph ?? constraints.drive_speed_mph,
+    hourly_labor_cost: body.hourly_labor_cost ?? constraints.hourly_loaded_labor_cost,
+    fuel_cost_per_mile: body.fuel_cost_per_mile ?? constraints.fuel_cost_per_mile,
+    fixed_branch_cost_annual: body.fixed_branch_cost_annual ?? constraints.branch_overhead_annual,
+    existing_branches: body.existing_branches ?? constraints.existing_branches ?? [],
+  }
+
+  // Validate: k_range[0] cannot be smaller than the locked branch count.
+  if (inputs.existing_branches.length > 0 && inputs.k_range[0] < inputs.existing_branches.length) {
+    return res.status(400).json({
+      error: `k cannot be less than existing branch count (${inputs.existing_branches.length})`,
+    })
+  }
 
   // Cache: if a completed run exists with the same inputs hash for this
   // account, return it. CACHE_VERSION is mixed into the hash so any change to
-  // the analysis output shape (e.g. reverse-geocoding logic) invalidates
-  // existing rows. Bump it whenever the output of computeBranchOptimization
-  // would differ for the same inputs.
-  const CACHE_VERSION = 2
-  const cacheKey = hashInputs({ accountId, _v: CACHE_VERSION, ...inputs })
+  // the analysis output shape (e.g. reverse-geocoding logic, or constraints
+  // wiring) invalidates existing rows. Bump it whenever the output of
+  // computeBranchOptimization would differ for the same inputs.
+  const CACHE_VERSION = 3
+  const cacheKey = hashInputs({
+    accountId,
+    _v: CACHE_VERSION,
+    ...inputs,
+    _excluded: constraints.excluded_property_ids,
+  })
   const cached = await db
     .from('portfolio_analyses')
     .select('id, inputs')
@@ -94,7 +113,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const properties = await loadAccountProperties(db, accountId, inputs.client_id ?? null)
+    const allProperties = await loadAccountProperties(db, accountId, inputs.client_id ?? null)
+    const properties = applyExclusions(allProperties, constraints.excluded_property_ids)
     const result = await computeBranchOptimization(properties, inputs)
     await completeAnalysisRecord(db, analysisId, {
       outputs: result.outputs,
@@ -127,9 +147,10 @@ async function computeBranchOptimization(
     lat: b.lat,
     lng: b.lng,
   }))
+  const floorK = lockedCentroids.length // can't have fewer branches than already-locked
 
   const [kMin, kMax] = inputs.k_range
-  const kStart = Math.max(1, Math.min(kMin, kMax))
+  const kStart = Math.max(1, floorK, Math.min(kMin, kMax))
   const kEnd = Math.max(kStart, Math.min(kMax, points.length))
 
   // Run k-means for each k
@@ -173,12 +194,15 @@ async function computeBranchOptimization(
         const sl = withCoords[i].service_locations
         return sum + sl.reduce((s, l) => s + (l.serviceable_sqft ?? 0), 0)
       }, 0)
+      const isLocked = idx < floorK
+      const lockedBranch = isLocked ? inputs.existing_branches[idx] : null
       return {
         lat: c.lat,
         lng: c.lng,
-        city_state: labelFor(c),
+        city_state: lockedBranch?.name ?? labelFor(c),
         property_count: memberIdx.length,
         total_sqft: memberSqft,
+        locked: isLocked,
         avg_drive_distance_miles:
           memberDistances.length > 0
             ? +(memberDistances.reduce((a, b) => a + b, 0) / memberDistances.length).toFixed(1)
@@ -255,11 +279,16 @@ async function computeBranchOptimization(
   summaryParts.push(
     `Evaluated branch counts k=${kStart}..${kEnd} over ${withCoords.length} properties with coordinates.`
   )
+  if (floorK > 0) {
+    summaryParts.push(
+      `${floorK} existing branch${floorK === 1 ? '' : 'es'} locked — k floor is ${floorK}.`
+    )
+  }
   if (recommendedRow) {
     const branchList = recommendedRow.branches
       .slice()
       .sort((a, b) => b.property_count - a.property_count)
-      .map((b) => b.city_state)
+      .map((b) => `${b.city_state}${b.locked ? ' (locked)' : ''}`)
       .join(', ')
     summaryParts.push(
       `Recommended k=${recommendedK} (elbow): annual cost ~$${recommendedRow.total_annual_cost.toLocaleString()} ($${recommendedRow.drive_cost.toLocaleString()} drive + $${recommendedRow.branch_cost.toLocaleString()} fixed).`
@@ -277,6 +306,8 @@ async function computeBranchOptimization(
       property_count: properties.length,
       k_results,
       recommended_k: recommendedK,
+      floor_k: floorK,
+      existing_branches: inputs.existing_branches,
       missing_coords_count: properties.length - withCoords.length,
     },
     summary_text: summaryParts.join(' '),

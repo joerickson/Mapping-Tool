@@ -16,6 +16,10 @@ import {
   type AccountProperty,
 } from '../../../_lib/analysis/account-data.js'
 import { haversineMiles, driveTimeMinutes, type LatLng } from '../../../_lib/analysis/haversine.js'
+import {
+  loadConstraints,
+  applyExclusions,
+} from '../../../_lib/analysis/operational-constraints.js'
 
 interface DriveInputs {
   client_id?: string | null
@@ -41,15 +45,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const accountId = req.query.accountId as string
   const body = (req.body ?? {}) as Partial<DriveInputs>
+  const db = createAdminClient()
+  const constraints = await loadConstraints(db, accountId)
   const inputs: DriveInputs = {
-    client_id: body.client_id ?? null,
+    client_id: body.client_id ?? constraints.client_id ?? null,
     k: body.k ?? null,
     branches: body.branches,
-    drive_speed_mph: body.drive_speed_mph ?? 60,
-    max_one_way_drive_minutes: body.max_one_way_drive_minutes ?? 120,
+    drive_speed_mph: body.drive_speed_mph ?? constraints.drive_speed_mph,
+    max_one_way_drive_minutes:
+      body.max_one_way_drive_minutes ?? constraints.max_one_way_drive_minutes,
   }
-
-  const db = createAdminClient()
 
   let analysisId: string
   try {
@@ -65,7 +70,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const properties = await loadAccountProperties(db, accountId, inputs.client_id ?? null)
+    const allProperties = await loadAccountProperties(
+      db,
+      accountId,
+      inputs.client_id ?? null
+    )
+    const properties = applyExclusions(allProperties, constraints.excluded_property_ids)
 
     // Resolve branches: explicit > latest branch_optimization > error
     let branches: Array<{ name: string; lat: number; lng: number }> = inputs.branches ?? []

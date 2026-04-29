@@ -20,6 +20,9 @@ interface AnalysisCardProps {
   analysisId?: string | null        // for "running" / "stuck" diagnostics
   onCheckNow?: () => void           // force-poll affordance
   onMarkFailed?: () => void         // shown when status === 'stuck'
+  // Stale-vs-constraints flag — true when constraints.updated_at is newer
+  // than the most recent completed run for this module.
+  staleVsConstraints?: boolean
   children?: ReactNode              // expanded content — visible only when completed
 }
 
@@ -43,6 +46,7 @@ export default function AnalysisCard({
   analysisId,
   onCheckNow,
   onMarkFailed,
+  staleVsConstraints,
   children,
 }: AnalysisCardProps) {
   // Re-render every second so elapsed counters tick.
@@ -92,6 +96,11 @@ export default function AnalysisCard({
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="font-semibold text-gray-900">{title}</h3>
             {statusBadge}
+            {staleVsConstraints && status === 'completed' && (
+              <span className="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-800 border border-yellow-200">
+                Constraints changed since last run — re-run to update
+              </span>
+            )}
           </div>
           <p className="text-sm text-gray-500 mt-1">{description}</p>
           {completedAt && status === 'completed' && (

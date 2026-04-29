@@ -16,6 +16,10 @@ import {
   loadAccountOfferings,
   isWorkforceBOffering,
 } from '../../../_lib/analysis/service-offerings.js'
+import {
+  loadConstraints,
+  applyExclusions,
+} from '../../../_lib/analysis/operational-constraints.js'
 
 export const config = { maxDuration: 60 }
 
@@ -41,16 +45,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const accountId = req.query.accountId as string
   const body = (req.body ?? {}) as Partial<WorkforceInputs>
+  const db = createAdminClient()
+  const constraints = await loadConstraints(db, accountId)
   const inputs: WorkforceInputs = {
-    client_id: body.client_id ?? null,
-    productivity_sqft_per_hour: body.productivity_sqft_per_hour ?? 3000,
+    client_id: body.client_id ?? constraints.client_id ?? null,
+    productivity_sqft_per_hour:
+      body.productivity_sqft_per_hour ?? constraints.recurring_productivity_sqft_per_hour,
     fte_hours_per_year: body.fte_hours_per_year ?? 1880,
     part_time_avg_hours_per_week: body.part_time_avg_hours_per_week ?? 25,
     workforce_b_offerings: body.workforce_b_offerings ?? null,
     recurring_visits_per_year_default: body.recurring_visits_per_year_default ?? 52,
   }
-
-  const db = createAdminClient()
 
   let analysisId: string
   try {
@@ -66,7 +71,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const properties = await loadAccountProperties(db, accountId, inputs.client_id ?? null)
+    const allProperties = await loadAccountProperties(
+      db,
+      accountId,
+      inputs.client_id ?? null
+    )
+    const properties = applyExclusions(allProperties, constraints.excluded_property_ids)
     const offerings = await loadAccountOfferings(db, accountId)
     const crewStrategy = await fetchLatestCompletedAnalysis(db, accountId, 'crew_strategy')
 

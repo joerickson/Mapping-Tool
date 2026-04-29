@@ -13,6 +13,10 @@ import {
 } from '../../../_lib/analysis/account-data.js'
 import { haversineMiles, centroid, type LatLng } from '../../../_lib/analysis/haversine.js'
 import { regionForState, REGION_MAP } from '../../../_lib/analysis/regions.js'
+import {
+  loadConstraints,
+  applyExclusions,
+} from '../../../_lib/analysis/operational-constraints.js'
 
 const OUTLIER_THRESHOLD_MI = 300
 
@@ -50,8 +54,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const properties = await loadAccountProperties(db, accountId, body.client_id ?? null)
-    const result = computeGeographicDistribution(properties)
+    const constraints = await loadConstraints(db, accountId)
+    const allProperties = await loadAccountProperties(
+      db,
+      accountId,
+      body.client_id ?? constraints.client_id ?? null
+    )
+    const properties = applyExclusions(allProperties, constraints.excluded_property_ids)
+    const result = computeGeographicDistribution(properties, allProperties.length - properties.length)
     await completeAnalysisRecord(db, analysisId, {
       outputs: result.outputs,
       summary_text: result.summary_text,
@@ -65,7 +75,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-function computeGeographicDistribution(properties: AccountProperty[]) {
+function computeGeographicDistribution(properties: AccountProperty[], excludedCount = 0) {
   const total = properties.length
   const withCoords = properties.filter(
     (p) => p.latitude != null && p.longitude != null
@@ -188,11 +198,17 @@ function computeGeographicDistribution(properties: AccountProperty[]) {
       `${missingCoords} ${missingCoords === 1 ? 'property is' : 'properties are'} missing coordinates and were skipped from outlier detection.`
     )
   }
+  if (excludedCount > 0) {
+    summaryParts.push(
+      `${excludedCount} ${excludedCount === 1 ? 'property was' : 'properties were'} excluded per operational constraints.`
+    )
+  }
   const summary_text = summaryParts.join(' ')
 
   return {
     outputs: {
       property_count: total,
+      excluded_property_count: excludedCount,
       states,
       regions,
       outliers,

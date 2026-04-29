@@ -17,6 +17,10 @@ import {
   classifyOffering,
   isSchoolWindowOffering,
 } from '../../../_lib/analysis/service-offerings.js'
+import {
+  loadConstraints,
+  applyExclusions,
+} from '../../../_lib/analysis/operational-constraints.js'
 
 export const config = { maxDuration: 60 }
 
@@ -88,17 +92,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const accountId = req.query.accountId as string
   const body = (req.body ?? {}) as Partial<SeasonalityInputs>
+  const db = createAdminClient()
+  const constraints = await loadConstraints(db, accountId)
   const inputs: SeasonalityInputs = {
-    client_id: body.client_id ?? null,
+    client_id: body.client_id ?? constraints.client_id ?? null,
     windows: body.windows ?? DEFAULT_WINDOWS,
-    crew_size: body.crew_size ?? 3,
-    hours_per_day: body.hours_per_day ?? 10,
-    project_clean_base_hours: body.project_clean_base_hours ?? 3,
-    project_clean_hours_per_sqft: body.project_clean_hours_per_sqft ?? 0.0002,
+    crew_size: body.crew_size ?? constraints.crew_size,
+    hours_per_day: body.hours_per_day ?? constraints.hours_per_day,
+    project_clean_base_hours:
+      body.project_clean_base_hours ?? constraints.project_clean_base_hours,
+    project_clean_hours_per_sqft:
+      body.project_clean_hours_per_sqft ?? constraints.project_clean_hours_per_sqft,
     visits_per_year_default: body.visits_per_year_default ?? 2,
   }
-
-  const db = createAdminClient()
 
   let analysisId: string
   try {
@@ -114,7 +120,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const properties = await loadAccountProperties(db, accountId, inputs.client_id ?? null)
+    const allProperties = await loadAccountProperties(
+      db,
+      accountId,
+      inputs.client_id ?? null
+    )
+    const properties = applyExclusions(allProperties, constraints.excluded_property_ids)
     const offerings = await loadAccountOfferings(db, accountId)
     const crewStrategy = await fetchLatestCompletedAnalysis(db, accountId, 'crew_strategy')
     const result = computeSeasonality(properties, offerings, crewStrategy?.outputs, inputs)

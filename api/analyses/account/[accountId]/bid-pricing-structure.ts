@@ -12,6 +12,10 @@ import {
   failAnalysisRecord,
   fetchLatestCompletedAnalysis,
 } from '../../../_lib/analysis/account-data.js'
+import {
+  loadConstraints,
+  applyExclusions,
+} from '../../../_lib/analysis/operational-constraints.js'
 
 export const config = { maxDuration: 60 }
 
@@ -44,23 +48,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const accountId = req.query.accountId as string
   const body = (req.body ?? {}) as Partial<BidInputs>
+  const db = createAdminClient()
+  const constraints = await loadConstraints(db, accountId)
   const inputs: BidInputs = {
-    client_id: body.client_id ?? null,
+    client_id: body.client_id ?? constraints.client_id ?? null,
     total_annual_labor_cost: body.total_annual_labor_cost ?? null,
     total_annual_vehicle_cost: body.total_annual_vehicle_cost ?? null,
     fte_count: body.fte_count ?? null,
-    hotels_annual: body.hotels_annual ?? 35000,
-    branch_overhead_annual: body.branch_overhead_annual ?? 240000,
-    vehicle_lease_annual_per_crew: body.vehicle_lease_annual_per_crew ?? 8400,
-    supplies_pct_of_labor: body.supplies_pct_of_labor ?? 0.04,
-    insurance_annual: body.insurance_annual ?? 18000,
-    corporate_overhead_pct: body.corporate_overhead_pct ?? 0.08,
-    target_gross_margin_pct: body.target_gross_margin_pct ?? 0.22,
+    hotels_annual: body.hotels_annual ?? constraints.hotels_annual,
+    branch_overhead_annual: body.branch_overhead_annual ?? constraints.branch_overhead_annual,
+    vehicle_lease_annual_per_crew:
+      body.vehicle_lease_annual_per_crew ?? constraints.vehicle_lease_annual_per_crew,
+    supplies_pct_of_labor: body.supplies_pct_of_labor ?? constraints.supplies_pct_of_labor,
+    insurance_annual: body.insurance_annual ?? constraints.insurance_annual,
+    corporate_overhead_pct:
+      body.corporate_overhead_pct ?? constraints.corporate_overhead_pct,
+    target_gross_margin_pct:
+      body.target_gross_margin_pct ?? constraints.target_gross_margin_pct,
     branch_count: body.branch_count ?? null,
     crew_count: body.crew_count ?? null,
   }
-
-  const db = createAdminClient()
 
   let analysisId: string
   try {
@@ -76,7 +83,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const properties = await loadAccountProperties(db, accountId, inputs.client_id ?? null)
+    const allProperties = await loadAccountProperties(
+      db,
+      accountId,
+      inputs.client_id ?? null
+    )
+    const properties = applyExclusions(allProperties, constraints.excluded_property_ids)
+
+    // If constraints provide existing branches, use that count as the default
+    // branch_count when nothing else is specified.
+    if (inputs.branch_count == null && constraints.existing_branches.length > 0) {
+      inputs.branch_count = constraints.existing_branches.length
+    }
 
     // Pull defaults from upstream modules
     const crewStrategy = await fetchLatestCompletedAnalysis(db, accountId, 'crew_strategy')
