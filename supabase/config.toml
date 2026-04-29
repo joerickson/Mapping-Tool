@@ -1,0 +1,2 @@
+[functions.process-upload-batch]
+verify_jwt = false
