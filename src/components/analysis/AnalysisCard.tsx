@@ -96,7 +96,7 @@ export default function AnalysisCard({
           <p className="text-sm text-gray-500 mt-1">{description}</p>
           {completedAt && status === 'completed' && (
             <p className="text-xs text-gray-400 mt-1">
-              Last run: {new Date(completedAt).toLocaleString()}
+              Last run {relativeTime(completedAt)} · {new Date(completedAt).toLocaleString()}
             </p>
           )}
         </div>
@@ -190,6 +190,20 @@ export default function AnalysisCard({
       )}
     </div>
   )
+}
+
+function relativeTime(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return 'just now'
+  const sec = Math.floor(ms / 1000)
+  if (sec < 60) return `${sec}s ago`
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min} min ago`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr} hr ago`
+  const day = Math.floor(hr / 24)
+  if (day < 30) return `${day} day${day === 1 ? '' : 's'} ago`
+  return `${Math.floor(day / 30)} mo ago`
 }
 
 function Spinner() {

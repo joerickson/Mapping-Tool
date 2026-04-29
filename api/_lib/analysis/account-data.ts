@@ -159,3 +159,22 @@ export async function failAnalysisRecord(
     })
     .eq('id', id)
 }
+
+// Fetch the most recent completed analysis row for a given account+module.
+// Used by chained modules (bid_pricing pulls from crew_strategy etc.).
+export async function fetchLatestCompletedAnalysis(
+  db: SupabaseClient,
+  accountId: string,
+  moduleKey: string
+): Promise<{ id: string; outputs: any; summary_text: string | null } | null> {
+  const { data } = await db
+    .from('portfolio_analyses')
+    .select('id, outputs, summary_text')
+    .eq('account_id', accountId)
+    .eq('module_key', moduleKey)
+    .eq('status', 'completed')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  return (data as any) ?? null
+}

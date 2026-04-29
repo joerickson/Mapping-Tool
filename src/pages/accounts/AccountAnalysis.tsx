@@ -10,12 +10,23 @@ import AnalysisCard, {
 import GeographicChart from '../../components/analysis/GeographicChart'
 import BranchOptimizationChart from '../../components/analysis/BranchOptimizationChart'
 import DriveTimeChart from '../../components/analysis/DriveTimeChart'
+import CrewStrategyChart from '../../components/analysis/CrewStrategyChart'
+import WorkforceSizingChart from '../../components/analysis/WorkforceSizingChart'
+import SeasonalityChart from '../../components/analysis/SeasonalityChart'
+import BidPricingChart from '../../components/analysis/BidPricingChart'
 import AnalysisMap, {
   type AnalysisMapPoint,
   type AnalysisMapBranch,
 } from '../../components/analysis/AnalysisMap'
 
-type ModuleKey = 'geographic_distribution' | 'branch_optimization' | 'drive_time_logistics'
+type ModuleKey =
+  | 'geographic_distribution'
+  | 'branch_optimization'
+  | 'drive_time_logistics'
+  | 'crew_strategy'
+  | 'workforce_sizing'
+  | 'seasonality_capacity'
+  | 'bid_pricing_structure'
 
 const MODULES: Array<{
   key: ModuleKey
@@ -40,6 +51,30 @@ const MODULES: Array<{
     endpoint: 'drive-time-logistics',
     title: 'Drive Time & Logistics',
     description: 'Per-property drive time from optimal branches; flags long drives.',
+  },
+  {
+    key: 'crew_strategy',
+    endpoint: 'crew-strategy',
+    title: 'Crew Strategy',
+    description: 'Roving / dedicated / surge crew options with full economics + recommendation.',
+  },
+  {
+    key: 'workforce_sizing',
+    endpoint: 'workforce-sizing',
+    title: 'Workforce Sizing',
+    description: 'FTE count for recurring janitorial workforce, plus reference to project crews.',
+  },
+  {
+    key: 'seasonality_capacity',
+    endpoint: 'seasonality-capacity',
+    title: 'Seasonality & Capacity',
+    description: 'School-break demand windows, surge crew requirements, peak-to-baseline ratio.',
+  },
+  {
+    key: 'bid_pricing_structure',
+    endpoint: 'bid-pricing-structure',
+    title: 'Bid Pricing Structure',
+    description: 'Full cost buildup → margin → final bid. Pulls from upstream modules.',
   },
 ]
 
@@ -104,6 +139,10 @@ export default function AccountAnalysisPage() {
         geographic_distribution: null,
         branch_optimization: null,
         drive_time_logistics: null,
+        crew_strategy: null,
+        workforce_sizing: null,
+        seasonality_capacity: null,
+        bid_pricing_structure: null,
       }
       if (analysesRes && analysesRes.ok) {
         const rows: AnalysisRow[] = await analysesRes.json()
@@ -456,6 +495,10 @@ export default function AccountAnalysisPage() {
     if (key === 'geographic_distribution') return <GeographicChart data={row.outputs} />
     if (key === 'branch_optimization') return <BranchOptimizationChart data={row.outputs} />
     if (key === 'drive_time_logistics') return <DriveTimeChart data={row.outputs} />
+    if (key === 'crew_strategy') return <CrewStrategyChart data={row.outputs} />
+    if (key === 'workforce_sizing') return <WorkforceSizingChart data={row.outputs} />
+    if (key === 'seasonality_capacity') return <SeasonalityChart data={row.outputs} />
+    if (key === 'bid_pricing_structure') return <BidPricingChart data={row.outputs} />
     return null
   }
 

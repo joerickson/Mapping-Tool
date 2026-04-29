@@ -5,6 +5,8 @@ import Navbar from '../components/ui/Navbar'
 import Button from '../components/ui/Button'
 import type { ServiceLocation } from '../types'
 import { CATEGORY_COLORS, STATUS_LABELS, STATUS_COLORS } from '../lib/constants'
+import ComparablesPanel from '../components/analysis/ComparablesPanel'
+import ServiceMixPanel from '../components/analysis/ServiceMixPanel'
 
 // Extends Property with DB fields that aren't in the base type + joined tables
 interface PropertyDetail {
@@ -604,6 +606,12 @@ export default function PropertyDetailPage() {
               </>
             )}
           </div>
+
+          {/* Comparable Properties */}
+          <ComparablesPanel propertyId={property.property_id} />
+
+          {/* Service Mix Recommendation */}
+          <ServiceMixPanel propertyId={property.property_id} />
 
           {/* Enrichment Metadata */}
           <div className="bg-white rounded-xl shadow-sm border p-6">
