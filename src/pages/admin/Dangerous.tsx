@@ -97,6 +97,7 @@ export default function DangerousAdminPage() {
           <div className="bg-white rounded-xl shadow-sm border p-5">
             <h2 className="font-semibold text-gray-800 mb-2">Other Admin Pages</h2>
             <ul className="space-y-1 text-sm">
+              <li><Link to="/admin/uploads" className="text-blue-600 hover:underline">Upload Batches</Link></li>
               <li><Link to="/admin/parcels/import" className="text-blue-600 hover:underline">Parcel Import</Link></li>
               <li><Link to="/admin/parcels/counties" className="text-blue-600 hover:underline">County Library</Link></li>
               <li><Link to="/admin/parcels/fallbacks" className="text-blue-600 hover:underline">Parcel Fallbacks</Link></li>
