@@ -46,6 +46,10 @@ interface PropertyDetail {
   validated_postal_code?: string | null
   address_validation_verdict?: string | null
   address_validated_at?: string | null
+  // Risk assessment
+  risk_flags?: Array<{ type: string; severity: 'low' | 'medium' | 'high'; description: string }> | null
+  risk_score?: number | null
+  risk_assessed_at?: string | null
   // Joined tables
   service_locations: ServiceLocation[]
   enrichment_jobs: Array<{
@@ -66,6 +70,7 @@ export default function PropertyDetailPage() {
   const [streetViewAvailable, setStreetViewAvailable] = useState<boolean | null>(null)
   const [enriching, setEnriching] = useState(false)
   const [enrichMsg, setEnrichMsg] = useState<string | null>(null)
+  const [reassessing, setReassessing] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -129,6 +134,34 @@ export default function PropertyDetailPage() {
       }
     } finally {
       setEnriching(false)
+    }
+  }
+
+  const handleReassessRisk = async () => {
+    if (!property) return
+    setReassessing(true)
+    try {
+      const token = await getToken()
+      const res = await fetch(`/api/analyses/properties/${property.property_id}/risk-flags`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({}),
+      })
+      if (res.ok) {
+        const result = await res.json()
+        setProperty((prev) =>
+          prev
+            ? {
+                ...prev,
+                risk_flags: result.risk_flags,
+                risk_score: result.risk_score,
+                risk_assessed_at: result.risk_assessed_at,
+              }
+            : prev
+        )
+      }
+    } finally {
+      setReassessing(false)
     }
   }
 
@@ -481,6 +514,96 @@ export default function PropertyDetailPage() {
               </dl>
             </div>
           )}
+
+          {/* Risk Assessment */}
+          <div className="bg-white rounded-xl shadow-sm border p-6">
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Risk Assessment</h2>
+                {property.risk_assessed_at && (
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Last assessed: {new Date(property.risk_assessed_at).toLocaleString()}
+                  </p>
+                )}
+              </div>
+              <Button size="sm" variant="secondary" onClick={handleReassessRisk} loading={reassessing}>
+                {property.risk_assessed_at ? 'Re-assess' : 'Assess'}
+              </Button>
+            </div>
+
+            {!property.risk_assessed_at ? (
+              <p className="text-sm text-gray-500">
+                No risk assessment yet. Click "Assess" to compute risk flags for this property.
+              </p>
+            ) : (
+              <>
+                <div className="flex items-center gap-3 mb-4">
+                  <div>
+                    <p className="text-xs text-gray-500 uppercase tracking-wide">Risk score</p>
+                    <p className="text-2xl font-bold text-gray-900">{property.risk_score ?? 0}</p>
+                  </div>
+                  <div>
+                    <span
+                      className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${
+                        (property.risk_score ?? 0) >= 6
+                          ? 'bg-red-100 text-red-700'
+                          : (property.risk_score ?? 0) >= 3
+                          ? 'bg-orange-100 text-orange-700'
+                          : (property.risk_score ?? 0) >= 1
+                          ? 'bg-yellow-100 text-yellow-700'
+                          : 'bg-green-100 text-green-700'
+                      }`}
+                    >
+                      {(property.risk_score ?? 0) >= 6
+                        ? 'High risk'
+                        : (property.risk_score ?? 0) >= 3
+                        ? 'Elevated'
+                        : (property.risk_score ?? 0) >= 1
+                        ? 'Mild'
+                        : 'No risk'}
+                    </span>
+                  </div>
+                </div>
+
+                {(property.risk_flags ?? []).length === 0 ? (
+                  <p className="text-sm text-gray-500">No risk flags detected.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {(property.risk_flags ?? []).map((f, i) => (
+                      <li
+                        key={i}
+                        className={`border-l-4 px-3 py-2 text-sm ${
+                          f.severity === 'high'
+                            ? 'border-red-400 bg-red-50'
+                            : f.severity === 'medium'
+                            ? 'border-orange-400 bg-orange-50'
+                            : 'border-yellow-400 bg-yellow-50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-gray-900">
+                            {f.type.replace(/_/g, ' ')}
+                          </span>
+                          <span
+                            className={`text-xs px-1.5 py-0.5 rounded ${
+                              f.severity === 'high'
+                                ? 'bg-red-100 text-red-700'
+                                : f.severity === 'medium'
+                                ? 'bg-orange-100 text-orange-700'
+                                : 'bg-yellow-100 text-yellow-700'
+                            }`}
+                          >
+                            {f.severity}
+                          </span>
+                        </div>
+                        <p className="text-gray-600 text-xs mt-0.5">{f.description}</p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
+          </div>
 
           {/* Enrichment Metadata */}
           <div className="bg-white rounded-xl shadow-sm border p-6">

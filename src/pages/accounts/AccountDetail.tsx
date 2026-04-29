@@ -136,7 +136,15 @@ export default function AccountDetailPage() {
               </div>
               {account.display_name && <p className="text-sm text-gray-400">{account.name}</p>}
             </div>
-            <Button size="sm" onClick={() => setEditing(true)}>Edit</Button>
+            <div className="flex items-center gap-2">
+              <Link
+                to={`/accounts/${id}/analysis`}
+                className="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                Smart Analysis →
+              </Link>
+              <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>Edit</Button>
+            </div>
           </div>
 
           {/* Stats */}

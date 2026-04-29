@@ -1,0 +1,261 @@
+// POST /api/analyses/[accountId]/drive-time-logistics
+// Per-property drive analysis from a set of branches; histograms drive time
+// buckets, flags long-drive properties, scores cluster efficiency.
+//
+// If `branches` is omitted, pulls the most recent completed branch_optimization
+// run for this account and uses the centroids for `k` (defaulting to that run's
+// recommended_k).
+import type { VercelRequest, VercelResponse } from '@vercel/node'
+import { createAdminClient } from '../../_lib/supabase.js'
+import { authenticateRequest } from '../../_lib/auth.js'
+import {
+  loadAccountProperties,
+  createAnalysisRecord,
+  completeAnalysisRecord,
+  failAnalysisRecord,
+  type AccountProperty,
+} from '../../_lib/analysis/account-data.js'
+import { haversineMiles, driveTimeMinutes, type LatLng } from '../../_lib/analysis/haversine.js'
+
+interface DriveInputs {
+  client_id?: string | null
+  k?: number | null
+  branches?: Array<{ name: string; lat: number; lng: number }>
+  drive_speed_mph: number
+  max_one_way_drive_minutes: number
+}
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method === 'OPTIONS') return res.status(200).end()
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
+
+  let ctx: Awaited<ReturnType<typeof authenticateRequest>>
+  try {
+    ctx = await authenticateRequest(req)
+  } catch (err: any) {
+    return res.status(err.statusCode ?? 401).json({ error: err.message ?? 'Unauthorized' })
+  }
+
+  const accountId = req.query.accountId as string
+  const body = (req.body ?? {}) as Partial<DriveInputs>
+  const inputs: DriveInputs = {
+    client_id: body.client_id ?? null,
+    k: body.k ?? null,
+    branches: body.branches,
+    drive_speed_mph: body.drive_speed_mph ?? 60,
+    max_one_way_drive_minutes: body.max_one_way_drive_minutes ?? 120,
+  }
+
+  const db = createAdminClient()
+
+  let analysisId: string
+  try {
+    analysisId = await createAnalysisRecord(db, {
+      account_id: accountId,
+      client_id: inputs.client_id ?? null,
+      module_key: 'drive_time_logistics',
+      inputs: inputs as unknown as Record<string, unknown>,
+      created_by: ctx.userId ?? null,
+    })
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message ?? 'Failed to create analysis record' })
+  }
+
+  res.status(202).json({ analysis_id: analysisId, status: 'running' })
+
+  ;(async () => {
+    try {
+      const properties = await loadAccountProperties(db, accountId, inputs.client_id ?? null)
+
+      // Resolve branches: explicit > latest branch_optimization > error
+      let branches: Array<{ name: string; lat: number; lng: number }> = inputs.branches ?? []
+      let kUsed: number | null = null
+
+      if (branches.length === 0) {
+        const { data: latestBranchOpt } = await db
+          .from('portfolio_analyses')
+          .select('outputs')
+          .eq('account_id', accountId)
+          .eq('module_key', 'branch_optimization')
+          .eq('status', 'completed')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+
+        if (!latestBranchOpt) {
+          throw new Error(
+            'No branches provided and no completed branch_optimization run found. Run Branch Optimization first or pass branches in the request body.'
+          )
+        }
+
+        const out = (latestBranchOpt as any).outputs as {
+          k_results: Array<{
+            k: number
+            is_elbow: boolean
+            branches: Array<{ city_state: string; lat: number; lng: number }>
+          }>
+          recommended_k: number
+        }
+        kUsed = inputs.k ?? out.recommended_k
+        const row = out.k_results.find((r) => r.k === kUsed)
+        if (!row) {
+          throw new Error(`branch_optimization has no result for k=${kUsed}`)
+        }
+        branches = row.branches.map((b) => ({
+          name: b.city_state,
+          lat: b.lat,
+          lng: b.lng,
+        }))
+      }
+
+      const result = computeDriveTimeLogistics(properties, branches, inputs, kUsed)
+      await completeAnalysisRecord(db, analysisId, {
+        outputs: result.outputs,
+        summary_text: result.summary_text,
+        property_count: properties.length,
+      })
+    } catch (err: any) {
+      await failAnalysisRecord(db, analysisId, err.message ?? String(err))
+    }
+  })()
+}
+
+function computeDriveTimeLogistics(
+  properties: AccountProperty[],
+  branches: Array<{ name: string; lat: number; lng: number }>,
+  inputs: DriveInputs,
+  kUsed: number | null
+) {
+  const withCoords = properties.filter((p) => p.latitude != null && p.longitude != null)
+
+  const buckets = {
+    under_30_min: 0,
+    '30_to_60_min': 0,
+    '60_to_90_min': 0,
+    '90_to_120_min': 0,
+    over_120_min: 0,
+  } as Record<string, number>
+
+  const perProperty: Array<{
+    property_id: string
+    address: string
+    nearest_branch: string
+    drive_distance_miles: number
+    drive_time_minutes: number
+    flags: string[]
+  }> = []
+
+  // per-branch tallies
+  const branchTallies = new Map<
+    string,
+    { name: string; total: number; durations: number[]; within60: number }
+  >()
+  for (const b of branches) {
+    branchTallies.set(b.name, { name: b.name, total: 0, durations: [], within60: 0 })
+  }
+
+  for (const p of withCoords) {
+    const me: LatLng = { lat: p.latitude!, lng: p.longitude! }
+    let bestBranch = branches[0]
+    let bestDist = Infinity
+    for (const b of branches) {
+      const d = haversineMiles(me, { lat: b.lat, lng: b.lng })
+      if (d < bestDist) {
+        bestDist = d
+        bestBranch = b
+      }
+    }
+    const minutes = driveTimeMinutes(bestDist, inputs.drive_speed_mph)
+    const flags: string[] = []
+    if (minutes > inputs.max_one_way_drive_minutes) flags.push('long_drive')
+    if (minutes > 180) flags.push('remote_outlier')
+
+    if (minutes < 30) buckets.under_30_min += 1
+    else if (minutes < 60) buckets['30_to_60_min'] += 1
+    else if (minutes < 90) buckets['60_to_90_min'] += 1
+    else if (minutes < 120) buckets['90_to_120_min'] += 1
+    else buckets.over_120_min += 1
+
+    const tally = branchTallies.get(bestBranch.name)!
+    tally.total += 1
+    tally.durations.push(minutes)
+    if (minutes <= 60) tally.within60 += 1
+
+    perProperty.push({
+      property_id: p.id,
+      address: `${p.address_line1}, ${p.city}, ${p.state}`,
+      nearest_branch: bestBranch.name,
+      drive_distance_miles: +bestDist.toFixed(1),
+      drive_time_minutes: Math.round(minutes),
+      flags,
+    })
+  }
+
+  perProperty.sort((a, b) => b.drive_time_minutes - a.drive_time_minutes)
+
+  const cluster_efficiency = Array.from(branchTallies.values()).map((t) => {
+    const avg =
+      t.durations.length > 0
+        ? Math.round(t.durations.reduce((a, b) => a + b, 0) / t.durations.length)
+        : 0
+    const pct = t.total > 0 ? Math.round((t.within60 / t.total) * 100) : 0
+    let efficiency_score: 'high' | 'medium' | 'low' = 'low'
+    if (pct >= 80) efficiency_score = 'high'
+    else if (pct >= 60) efficiency_score = 'medium'
+    return {
+      branch: t.name,
+      property_count: t.total,
+      avg_drive_minutes: avg,
+      properties_within_60min_pct: pct,
+      efficiency_score,
+    }
+  })
+
+  const long_drive_properties = perProperty
+    .filter((p) => p.drive_time_minutes > inputs.max_one_way_drive_minutes)
+    .map((p) => ({
+      property_id: p.property_id,
+      address: p.address,
+      drive_minutes: p.drive_time_minutes,
+    }))
+
+  const totalAnalyzed = withCoords.length
+  const within60 = buckets.under_30_min + buckets['30_to_60_min']
+  const summaryParts: string[] = []
+  summaryParts.push(
+    `${totalAnalyzed} properties analyzed against ${branches.length} branch${branches.length === 1 ? '' : 'es'}${
+      kUsed ? ` (k=${kUsed})` : ''
+    }.`
+  )
+  if (totalAnalyzed > 0) {
+    summaryParts.push(
+      `${within60} (${Math.round((within60 / totalAnalyzed) * 100)}%) are within 60-minute drive.`
+    )
+  }
+  if (long_drive_properties.length > 0) {
+    summaryParts.push(
+      `${long_drive_properties.length} ${
+        long_drive_properties.length === 1 ? 'property exceeds' : 'properties exceed'
+      } the ${inputs.max_one_way_drive_minutes}-min one-way threshold.`
+    )
+  }
+  if (properties.length - withCoords.length > 0) {
+    summaryParts.push(
+      `${properties.length - withCoords.length} properties without coordinates were skipped.`
+    )
+  }
+
+  return {
+    outputs: {
+      property_count: properties.length,
+      k_used: kUsed,
+      branches_used: branches,
+      drive_distribution: buckets,
+      per_property: perProperty,
+      cluster_efficiency,
+      long_drive_properties,
+      missing_coords_count: properties.length - withCoords.length,
+    },
+    summary_text: summaryParts.join(' '),
+  }
+}
