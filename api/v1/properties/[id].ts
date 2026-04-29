@@ -17,17 +17,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const db = createAdminClient()
 
   if (req.method === 'GET') {
+    // Embed service_locations only — enrichment_jobs has property_ids as a
+    // UUID[] array (no FK to properties), so PostgREST can't resolve it as
+    // an embedded relationship and the whole query fails. The property
+    // detail page only declares enrichment_jobs in its TS type and doesn't
+    // render it, so dropping it here loses nothing.
     const { data, error } = await db
       .from('properties')
-      .select(`
-        *,
-        service_locations(*),
-        enrichment_jobs(enrichment_job_id, status, completed_at, created_at)
-      `)
+      .select('*, service_locations(*)')
       .eq('id', id)
       .single()
 
-    if (error || !data) return res.status(404).json({ error: 'Not found' })
+    if (error || !data) {
+      return res.status(404).json({ error: error?.message ?? 'Not found' })
+    }
 
     // Alias real PKs (properties.id, service_locations.id) for frontend compatibility.
     const aliased = {

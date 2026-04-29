@@ -54,12 +54,6 @@ interface PropertyDetail {
   risk_assessed_at?: string | null
   // Joined tables
   service_locations: ServiceLocation[]
-  enrichment_jobs: Array<{
-    enrichment_job_id: string
-    status: string
-    completed_at: string | null
-    created_at: string
-  }>
 }
 
 export default function PropertyDetailPage() {
