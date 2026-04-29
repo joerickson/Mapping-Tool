@@ -76,13 +76,15 @@ export default function MapPage() {
 
   const pins = useMemo(
     () =>
-      propertiesWithLocations.map((p) => ({
-        property: p as Property,
-        locations: p.service_locations,
-        clientColor: p.service_locations[0]?.client_id
-          ? (clientColorMap[p.service_locations[0].client_id] ?? null)
-          : null,
-      })),
+      propertiesWithLocations
+        .filter((p) => p.property_id)
+        .map((p) => ({
+          property: p as Property,
+          locations: p.service_locations,
+          clientColor: p.service_locations?.[0]?.client_id
+            ? (clientColorMap[p.service_locations[0].client_id] ?? null)
+            : null,
+        })),
     [propertiesWithLocations, clientColorMap]
   )
 
