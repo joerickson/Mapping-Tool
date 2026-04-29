@@ -31,7 +31,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: `Cannot commit a batch with status "${batch.status}"` })
   }
 
-  // Fetch staged rows that should be committed
   const { data: stagedRows, error: rowsErr } = await db
     .from('upload_staged_rows')
     .select('*')
@@ -66,7 +65,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let updatedServiceLocations = 0
   const failedRows: Array<{ staged_row_id: string; reason: string }> = []
 
-  // Batch deduplication cache: dedupe_hash → property_id within this commit
   const dedupeCache = new Map<string, string>()
 
   for (const row of stagedRows) {
@@ -81,7 +79,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       propertyId = dedupeCache.get(row.dedupe_hash as string)!
       existingProperties++
     } else {
-      // Insert new property
+      // Insert new property — properties table PK is `id`
       const { data: prop, error: propErr } = await db
         .from('properties')
         .insert({
@@ -94,7 +92,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           client_id: batch.client_id as string | null,
           enrichment_status: 'pending',
         })
-        .select('property_id')
+        .select('id')
         .single()
 
       if (propErr) {
@@ -105,16 +103,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           state: pd.state,
           address_hash: row.dedupe_hash,
         })
-        // Attempt race-condition recovery on unique constraint violation
+        // Race-condition recovery on unique constraint violation
         if (propErr.code === '23505' && row.dedupe_hash) {
           const { data: existing } = await db
             .from('properties')
-            .select('property_id')
+            .select('id')
             .eq('address_hash', row.dedupe_hash as string)
             .eq('client_id', batch.client_id as string)
             .maybeSingle()
           if (existing) {
-            propertyId = existing.property_id
+            propertyId = existing.id as string
             existingProperties++
           }
         }
@@ -123,7 +121,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           continue
         }
       } else if (prop) {
-        propertyId = prop.property_id
+        propertyId = prop.id as string
         if (row.dedupe_hash) dedupeCache.set(row.dedupe_hash as string, propertyId!)
         newProperties++
       } else {
@@ -134,12 +132,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!propertyId) continue
 
-    // Check if service_location already exists (same property + service_offering + client)
     const serviceOfferingId = row.service_offering_id as string | null
     if (serviceOfferingId) {
+      // Lookup existing — service_locations PK is `id`
       const { data: existingSL, error: slLookupErr } = await db
         .from('service_locations')
-        .select('service_location_id')
+        .select('id')
         .eq('property_id', propertyId)
         .eq('service_offering_id', serviceOfferingId)
         .eq('client_id', batch.client_id as string)
@@ -156,7 +154,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       if (existingSL) {
-        // Update existing service_location
         const { error: slUpdateErr } = await db
           .from('service_locations')
           .update({
@@ -166,12 +163,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             custom_fields: (sld.custom_fields as Record<string, unknown>) ?? {},
             frequency_notes: (sld.frequency_notes as string | null) ?? null,
           })
-          .eq('service_location_id', existingSL.service_location_id)
+          .eq('id', existingSL.id as string)
 
         if (slUpdateErr) {
           console.error(`Service location update failed for staged_row ${row.id}:`, {
             error: slUpdateErr,
-            service_location_id: existingSL.service_location_id,
+            service_location_id: existingSL.id,
             property_id: propertyId,
           })
           failedRows.push({ staged_row_id: row.id as string, reason: slUpdateErr.message })
@@ -180,9 +177,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         updatedServiceLocations++
 
+        // upload_staged_rows.service_location_id IS the column on staged_rows (correct as-is)
         await db
           .from('upload_staged_rows')
-          .update({ service_location_id: existingSL.service_location_id, property_id: propertyId })
+          .update({ service_location_id: existingSL.id, property_id: propertyId })
           .eq('id', row.id)
       } else {
         const serviceOfferingName = offeringNameMap.get(serviceOfferingId) ?? serviceOfferingId
@@ -206,7 +204,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             frequency_notes: (sld.frequency_notes as string | null) ?? null,
             status: 'active',
           })
-          .select('service_location_id')
+          .select('id')
           .single()
 
         if (slInsertErr) {
@@ -224,7 +222,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           newServiceLocations++
           await db
             .from('upload_staged_rows')
-            .update({ service_location_id: sl.service_location_id, property_id: propertyId })
+            .update({ service_location_id: sl.id, property_id: propertyId })
             .eq('id', row.id)
         }
       }
@@ -243,7 +241,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         committed_new_service_locations: newServiceLocations,
         committed_updated_service_locations: updatedServiceLocations,
         commit_failure_count: failedRows.length,
-        commit_failures: failedRows.slice(0, 50), // cap at 50 for storage
+        commit_failures: failedRows.slice(0, 50),
       },
     })
     .eq('upload_batch_id', batchId)
