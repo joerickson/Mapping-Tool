@@ -18,6 +18,7 @@ import OperationalConstraintsPanel from '../../components/analysis/OperationalCo
 import SynthesisCard from '../../components/analysis/SynthesisCard'
 import ScenarioPanel from '../../components/analysis/ScenarioPanel'
 import ChatPanel from '../../components/analysis/ChatPanel'
+import CostAssumptionsPanel from '../../components/analysis/CostAssumptionsPanel'
 import BuildSelectionModal, {
   type SelectedBranch,
   type ExistingBranch as ModalExistingBranch,
@@ -27,7 +28,9 @@ import SelectionStatusBanner from '../../components/analysis/SelectionStatusBann
 import AnalysisMap, {
   type AnalysisMapPoint,
   type AnalysisMapBranch,
+  type ColorMode,
 } from '../../components/analysis/AnalysisMap'
+import { colorForBranchIndex } from '../../lib/branch-colors.js'
 
 type ModuleKey =
   | 'geographic_distribution'
@@ -134,6 +137,7 @@ export default function AccountAnalysisPage() {
   const [, setTick] = useState(0)
   const [mapPoints, setMapPoints] = useState<AnalysisMapPoint[]>([])
   const [mapBranches, setMapBranches] = useState<AnalysisMapBranch[]>([])
+  const [mapColorMode, setMapColorMode] = useState<ColorMode>('branch')
   const [mapLoading, setMapLoading] = useState(true)
   const [reassessing, setReassessing] = useState(false)
   const [reassessMessage, setReassessMessage] = useState<string | null>(null)
@@ -248,6 +252,8 @@ export default function AccountAnalysisPage() {
               name: b.city_state,
               lat: b.lat,
               lng: b.lng,
+              population: b.population ?? null,
+              property_count: b.property_count ?? undefined,
             }))
           )
         }
@@ -390,6 +396,8 @@ export default function AccountAnalysisPage() {
                   name: b.city_state,
                   lat: b.lat,
                   lng: b.lng,
+                  population: b.population ?? null,
+                  property_count: b.property_count ?? undefined,
                 }))
               )
             }
@@ -496,6 +504,8 @@ export default function AccountAnalysisPage() {
                     name: b.city_state,
                     lat: b.lat,
                     lng: b.lng,
+                    population: b.population ?? null,
+                    property_count: b.property_count ?? undefined,
                   }))
                 )
               }
@@ -642,6 +652,8 @@ export default function AccountAnalysisPage() {
           data={row.outputs}
           showTable={!hasSelection}
           onBuild={openBuildModal}
+          selectedK={selectedK}
+          selectedBranchNames={selectedBranches?.map((b) => b.city_state || b.name) ?? null}
         />
       )
     if (key === 'drive_time_logistics') return <DriveTimeChart data={row.outputs} />
@@ -699,6 +711,14 @@ export default function AccountAnalysisPage() {
               selectedAt={selectedAt}
               selectedFromAnalysisId={selectedFromAnalysisId}
               onChangeSelection={handleClearSelection}
+            />
+          )}
+
+          {/* Cost assumptions panel — collapsible, sits above Synthesis */}
+          {accountId && (
+            <CostAssumptionsPanel
+              accountId={accountId}
+              onSaved={() => refreshConstraints()}
             />
           )}
 
@@ -765,15 +785,65 @@ export default function AccountAnalysisPage() {
                   No properties found for this account.
                 </div>
               ) : (
-                <AnalysisMap points={mapPoints} branches={mapBranches} height={360} />
+                <AnalysisMap
+                  points={mapPoints}
+                  branches={mapBranches}
+                  height={360}
+                  colorMode={mapColorMode}
+                />
               )}
-              <div className="flex items-center gap-3 text-xs text-gray-500 mt-3">
-                <LegendDot color="#22c55e" label="Low / no risk" />
-                <LegendDot color="#facc15" label="Mild" />
-                <LegendDot color="#f97316" label="Elevated" />
-                <LegendDot color="#dc2626" label="High" />
-                <LegendDot color="#9ca3af" label="Not assessed" />
-              </div>
+
+              {/* Color mode toggle (only meaningful when branches are selected) */}
+              {hasSelection && mapBranches.length > 0 && (
+                <div className="flex items-center gap-3 text-xs text-gray-600 mt-3 flex-wrap">
+                  <span className="font-semibold uppercase tracking-wide text-gray-500">
+                    Color by:
+                  </span>
+                  {(
+                    [
+                      ['branch', 'Branch assignment'],
+                      ['risk', 'Risk score'],
+                      ['both', 'Both (fill = branch · border = risk)'],
+                    ] as Array<[ColorMode, string]>
+                  ).map(([mode, label]) => (
+                    <label key={mode} className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="map-color-mode"
+                        checked={mapColorMode === mode}
+                        onChange={() => setMapColorMode(mode)}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              {/* Legend — branch clusters when applicable, otherwise risk colors */}
+              {hasSelection && mapBranches.length > 0 && mapColorMode !== 'risk' ? (
+                <div className="flex items-center gap-3 text-xs text-gray-600 mt-3 flex-wrap">
+                  {mapBranches.map((b, i) => {
+                    const count = mapPoints.length
+                      ? mapPoints.filter((p) => nearestBranchIdx(p, mapBranches) === i).length
+                      : 0
+                    return (
+                      <LegendDot
+                        key={i}
+                        color={colorForBranchIndex(i)}
+                        label={`${b.name} · ${count}`}
+                      />
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 text-xs text-gray-500 mt-3 flex-wrap">
+                  <LegendDot color="#22c55e" label="Low / no risk" />
+                  <LegendDot color="#facc15" label="Mild" />
+                  <LegendDot color="#f97316" label="Elevated" />
+                  <LegendDot color="#dc2626" label="High" />
+                  <LegendDot color="#9ca3af" label="Not assessed" />
+                </div>
+              )}
             </div>
           </div>
 
@@ -850,6 +920,32 @@ function LegendDot({ color, label }: { color: string; label: string }) {
       {label}
     </span>
   )
+}
+
+// Cheap haversine for the legend's per-branch property counts. Lives here
+// (rather than inside the AnalysisMap component) so we don't recompute the
+// same nearest-branch lookup twice — the map already does it for coloring.
+function nearestBranchIdx(
+  pt: { lat: number; lng: number },
+  branches: AnalysisMapBranch[]
+): number | null {
+  if (!branches.length) return null
+  let bestIdx = 0
+  let bestDist = Infinity
+  for (let i = 0; i < branches.length; i++) {
+    const dLat = ((branches[i].lat - pt.lat) * Math.PI) / 180
+    const dLng = ((branches[i].lng - pt.lng) * Math.PI) / 180
+    const lat1 = (pt.lat * Math.PI) / 180
+    const lat2 = (branches[i].lat * Math.PI) / 180
+    const h =
+      Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2
+    const d = 2 * 3958.7613 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h))
+    if (d < bestDist) {
+      bestDist = d
+      bestIdx = i
+    }
+  }
+  return bestIdx
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

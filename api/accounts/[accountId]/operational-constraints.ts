@@ -11,6 +11,7 @@ import {
   type ExistingBranch,
 } from '../../_lib/analysis/operational-constraints.js'
 import { geocodeAddress } from '../../_lib/google-address.js'
+import { triggerSynthesisRefresh } from '../../_lib/synthesis-refresh.js'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end()
@@ -131,6 +132,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (body.utilization_constraint && typeof body.utilization_constraint === 'object') {
       upsert.utilization_constraint = body.utilization_constraint
     }
+    // Phase 3.5 — additional cost-assumption columns.
+    if ('working_days_per_year' in body) {
+      upsert.working_days_per_year =
+        body.working_days_per_year == null || body.working_days_per_year === ''
+          ? null
+          : Number(body.working_days_per_year)
+    }
+    if ('visits_per_year_default' in body) {
+      upsert.visits_per_year_default =
+        body.visits_per_year_default == null || body.visits_per_year_default === ''
+          ? null
+          : Number(body.visits_per_year_default)
+    }
+    if (body.labor_burden_breakdown && typeof body.labor_burden_breakdown === 'object') {
+      upsert.labor_burden_breakdown = body.labor_burden_breakdown
+    }
     for (const k of numericFields) {
       const raw = body[k]
       if (raw === undefined || raw === null || raw === '') {
@@ -149,6 +166,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(500).json({ error: `Failed to save: ${error.message}` })
     }
 
+    await triggerSynthesisRefresh(db, accountId)
     const merged = await loadConstraints(db, accountId)
     return res.status(200).json({ ...merged, system_defaults: SYSTEM_DEFAULTS })
   }

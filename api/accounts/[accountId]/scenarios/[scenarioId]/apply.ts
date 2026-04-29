@@ -7,6 +7,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createAdminClient } from '../../../../_lib/supabase.js'
 import { authenticateRequest } from '../../../../_lib/auth.js'
 import { loadConstraints } from '../../../../_lib/analysis/operational-constraints.js'
+import { triggerSynthesisRefresh } from '../../../../_lib/synthesis-refresh.js'
 
 const NUMERIC_KEYS = [
   'crew_size',
@@ -98,5 +99,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (error) return res.status(500).json({ error: error.message })
 
+  await triggerSynthesisRefresh(db, accountId)
   return res.status(200).json({ ok: true, applied_count: diff.length, diff })
 }

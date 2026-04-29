@@ -15,6 +15,7 @@ import {
   type SelectedBranch,
   type ExistingBranch,
 } from '../../_lib/analysis/operational-constraints.js'
+import { triggerSynthesisRefresh } from '../../_lib/synthesis-refresh.js'
 
 // Two coordinates within ~0.001 deg (~100m) are treated as the same branch
 // when matching the user's selection against locked existing_branches.
@@ -50,6 +51,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         { onConflict: 'account_id' }
       )
     if (error) return res.status(500).json({ error: error.message })
+    await triggerSynthesisRefresh(db, accountId)
     const merged = await loadConstraints(db, accountId)
     return res.status(200).json({ ...merged, system_defaults: SYSTEM_DEFAULTS })
   }
@@ -159,6 +161,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: upsertError.message })
   }
 
+  await triggerSynthesisRefresh(db, accountId)
   const merged = await loadConstraints(db, accountId)
   return res.status(200).json({ ...merged, system_defaults: SYSTEM_DEFAULTS })
 }

@@ -6,7 +6,11 @@ import { useAuth } from '../../hooks/useAuth'
 
 interface SynthesisRow {
   id: string
-  status: 'completed' | 'failed' | 'running' | 'pending'
+  // Phase 3.5 added 'stale' as a status set by triggerSynthesisRefresh whenever
+  // any upstream change invalidates the existing synthesis. The card auto-
+  // triggers a fresh /synthesize when it sees this and shows an "Updating…"
+  // spinner until it resolves.
+  status: 'completed' | 'failed' | 'running' | 'pending' | 'stale'
   outputs: any
   summary_text: string | null
   completed_at: string | null
@@ -54,6 +58,52 @@ export default function SynthesisCard({
     refresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId])
+
+  // Phase 3.5 — poll /synthesis-status every 5s. Auto-trigger a fresh
+  // synthesize when the row goes stale (any upstream change marks it). If
+  // completed_at advances since the last refetch, pull the new content.
+  useEffect(() => {
+    if (!hasSelection) return
+    let cancelled = false
+    let lastSeenCompletedAt: string | null = row?.completed_at ?? null
+    const tick = async () => {
+      try {
+        const token = await getToken()
+        const res = await fetch(
+          `/api/accounts/${accountId}/synthesis-status`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        )
+        if (!res.ok || cancelled) return
+        const status = await res.json()
+        // Stale + no run in flight + we're not already kicking one off →
+        // auto-refresh.
+        if (
+          status.status === 'stale' &&
+          !status.current_run_started_at &&
+          !running
+        ) {
+          await synthesize()
+          return
+        }
+        // Completed_at advanced since the last seen value → refetch the row.
+        if (
+          status.last_synthesis_completed_at &&
+          status.last_synthesis_completed_at !== lastSeenCompletedAt
+        ) {
+          lastSeenCompletedAt = status.last_synthesis_completed_at
+          await refresh()
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    const interval = setInterval(tick, 5000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountId, row?.completed_at, running, hasSelection])
 
   const synthesize = async () => {
     setRunning(true)
@@ -119,6 +169,15 @@ export default function SynthesisCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="font-semibold text-indigo-900">Portfolio Synthesis</h3>
+            {(running || row?.status === 'running' || row?.status === 'stale') && (
+              <span className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700 inline-flex items-center gap-1.5">
+                <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Updating…
+              </span>
+            )}
             {!loading && row?.status === 'completed' && !isStale && (
               <span className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700">Fresh</span>
             )}

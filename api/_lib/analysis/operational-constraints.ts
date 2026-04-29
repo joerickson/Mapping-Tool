@@ -69,6 +69,17 @@ export interface OperationalConstraints {
   drive_speed_mph: number
   max_one_way_drive_minutes: number
 
+  // Phase 3.5 — additional cost-assumption fields surfaced on the panel
+  working_days_per_year: number | null
+  visits_per_year_default: number | null
+  labor_burden_breakdown: {
+    wages: boolean
+    payroll_taxes: boolean
+    workers_comp: boolean
+    benefits: boolean
+    training: boolean
+  } | null
+
   // Branch Selection (Phase 2.5b) — null/empty until the user confirms
   // a branch set in the dashboard. Tier 2 modules require this to be set.
   selected_branches: SelectedBranch[] | null
@@ -181,6 +192,10 @@ export async function loadConstraints(
     target_gross_margin_pct: pickNumeric(r, 'target_gross_margin_pct'),
     drive_speed_mph: pickNumeric(r, 'drive_speed_mph'),
     max_one_way_drive_minutes: pickNumeric(r, 'max_one_way_drive_minutes'),
+
+    working_days_per_year: r?.working_days_per_year ?? null,
+    visits_per_year_default: r?.visits_per_year_default ?? null,
+    labor_burden_breakdown: r?.labor_burden_breakdown ?? null,
 
     selected_branches: (r?.selected_branches ?? null) as SelectedBranch[] | null,
     selected_k: r?.selected_k ?? null,

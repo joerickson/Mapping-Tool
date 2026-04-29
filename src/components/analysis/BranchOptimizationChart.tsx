@@ -64,17 +64,81 @@ interface SelectionTableProps {
   // the table (e.g. when a selection is already locked in).
   onBuild?: (k: number) => void
   showTable?: boolean
+  // Phase 3.5 — show a banner with both the optimization's recommended K
+  // and the user's confirmed selection so it's obvious when they diverge.
+  selectedK?: number | null
+  selectedBranchNames?: string[] | null
 }
 
 export default function BranchOptimizationChart({
   data,
   onBuild,
   showTable,
+  selectedK,
+  selectedBranchNames,
 }: { data: BranchOptOutputs } & SelectionTableProps) {
   const recommended = data.k_results.find((r) => r.k === data.recommended_k)
 
+  // Phase 3.5 — surface optimization-recommended K vs user-selected K when
+  // they differ so the card stops looking "frozen" on the original
+  // recommendation after a manual selection.
+  const recommendedBranchNames = recommended
+    ? recommended.branches.slice().sort((a, b) => b.property_count - a.property_count).map((b) => b.city_state)
+    : []
+  const selectionDiffers =
+    selectedK != null &&
+    (selectedK !== data.recommended_k ||
+      (selectedBranchNames && selectedBranchNames.join('|') !== recommendedBranchNames.join('|')))
+
   return (
     <div className="space-y-4">
+      {/* Recommended-vs-selected status banner */}
+      {(selectedK != null || data.recommended_k > 0) && (
+        <div
+          className={`rounded-lg border p-3 text-sm ${
+            selectionDiffers
+              ? 'bg-amber-50 border-amber-200'
+              : 'bg-blue-50 border-blue-200'
+          }`}
+        >
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                🟢 Optimization recommends
+              </div>
+              <div className="font-semibold text-gray-900">
+                K = {data.recommended_k}
+              </div>
+              {recommendedBranchNames.length > 0 && (
+                <div className="text-xs text-gray-600 mt-0.5">
+                  {recommendedBranchNames.join(' · ')}
+                </div>
+              )}
+            </div>
+            {selectedK != null && (
+              <div>
+                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  🔵 You selected
+                </div>
+                <div className="font-semibold text-gray-900">K = {selectedK}</div>
+                {selectedBranchNames?.length ? (
+                  <div className="text-xs text-gray-600 mt-0.5">
+                    {selectedBranchNames.join(' · ')}
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </div>
+          {selectionDiffers && (
+            <div className="mt-2 pt-2 border-t border-amber-200 text-xs text-amber-900">
+              Selection differs from current optimization recommendation. Re-run optimization
+              to refresh the recommendation, or update your selection if the new analysis
+              suggests a better fit.
+            </div>
+          )}
+        </div>
+      )}
+
       <div>
         <h4 className="text-sm font-semibold text-gray-700 mb-2">
           Annual cost by branch count (k) · recommended k = {data.recommended_k}
