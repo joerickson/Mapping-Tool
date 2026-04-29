@@ -218,7 +218,8 @@ export default function MapView({
       m.on('click', 'unclustered-point', (e) => {
         const feature = e.features?.[0]
         if (!feature) return
-        const propertyId = feature.properties?.property_id
+        const propertyId = feature.properties?.property_id as string | undefined
+        if (!propertyId) return
         const pin = pinsRef.current.find((p) => p.property.property_id === propertyId)
         if (!pin) return
 
