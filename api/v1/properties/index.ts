@@ -53,22 +53,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let propIdsFromServiceLocations: string[] | null = null
 
     // If we have any service_location filters, query them first
-    if (client_id || status || portfolio_id) {
+    // Only apply filters if parameters have truthy values
+    const hasClientFilter = client_id && String(client_id).trim().length > 0
+    const hasStatusFilter = status && String(status).trim().length > 0
+    const hasPortfolioFilter = portfolio_id && String(portfolio_id).trim().length > 0
+
+    if (hasClientFilter || hasStatusFilter || hasPortfolioFilter) {
       let slQuery = db.from('service_locations').select('property_id')
 
-      if (client_id) {
+      if (hasClientFilter) {
         slQuery = slQuery.in('client_id', String(client_id).split(','))
       }
-      if (status) {
+      if (hasStatusFilter) {
         slQuery = slQuery.in('status', String(status).split(','))
       }
-      if (portfolio_id) {
+      if (hasPortfolioFilter) {
         // portfolio_ids is an array field, use containedBy or overlaps
         const portfolioIds = String(portfolio_id).split(',')
         slQuery = slQuery.overlaps('portfolio_ids', portfolioIds)
       }
 
-      const { data: sls } = await slQuery
+      const { data: sls, error: slError } = await slQuery
+
+      // Return error if service_locations query fails
+      if (slError) {
+        return res.status(500).json({ error: `Service location query failed: ${slError.message}` })
+      }
+
       propIdsFromServiceLocations = [...new Set((sls ?? []).map((r: any) => r.property_id).filter((id: any) => id != null))]
 
       if (propIdsFromServiceLocations.length === 0) {
