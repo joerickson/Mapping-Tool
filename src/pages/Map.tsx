@@ -23,7 +23,7 @@ export default function MapPage() {
   const [propertiesWithLocations, setPropertiesWithLocations] = useState<PropertyWithLocations[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<MapFilter>(DEFAULT_FILTER)
-  const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null)
+  const [selectedProperty, setSelectedProperty] = useState<PropertyWithLocations | null>(null)
   const [panelOpen, setPanelOpen] = useState(false)
   const [bulkSelectMode, setBulkSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -86,11 +86,6 @@ export default function MapPage() {
     [propertiesWithLocations, clientColorMap]
   )
 
-  const selectedProperty = useMemo(
-    () => propertiesWithLocations.find((p) => p.property_id === selectedPropertyId) ?? null,
-    [propertiesWithLocations, selectedPropertyId]
-  )
-
   const handlePinClick = useCallback(
     (pin: { property: Property; locations: ServiceLocation[] }) => {
       if (bulkSelectMode) {
@@ -104,7 +99,7 @@ export default function MapPage() {
           return next
         })
       } else {
-        setSelectedPropertyId(pin.property.property_id)
+        setSelectedProperty(pin.property as PropertyWithLocations)
         setPanelOpen(true)
       }
     },
