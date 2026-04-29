@@ -75,7 +75,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-function computeGeographicDistribution(properties: AccountProperty[], excludedCount = 0) {
+export function computeGeographicDistribution(properties: AccountProperty[], excludedCount = 0) {
   const total = properties.length
   const withCoords = properties.filter(
     (p) => p.latitude != null && p.longitude != null

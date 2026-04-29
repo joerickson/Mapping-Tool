@@ -28,7 +28,7 @@ import {
 
 export const config = { maxDuration: 60 }
 
-interface CrewStrategyInputs {
+export interface CrewStrategyInputs {
   client_id?: string | null
   k: number | null
   branches: Array<{ name: string; lat: number; lng: number; property_count?: number }> | null
@@ -141,7 +141,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-function computeCrewStrategy(
+export function computeCrewStrategy(
   properties: AccountProperty[],
   offerings: Map<string, { id: string; name: string }>,
   branches: Array<{ name: string; lat: number; lng: number; property_count?: number }>,

@@ -23,7 +23,7 @@ import {
   NO_SELECTION_ERROR,
 } from '../../../_lib/analysis/operational-constraints.js'
 
-interface DriveInputs {
+export interface DriveInputs {
   client_id?: string | null
   k?: number | null
   branches?: Array<{ name: string; lat: number; lng: number }>
@@ -106,7 +106,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-function computeDriveTimeLogistics(
+export function computeDriveTimeLogistics(
   properties: AccountProperty[],
   branches: Array<{ name: string; lat: number; lng: number }>,
   inputs: DriveInputs,

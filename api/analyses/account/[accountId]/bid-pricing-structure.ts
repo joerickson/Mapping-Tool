@@ -21,7 +21,7 @@ import {
 
 export const config = { maxDuration: 60 }
 
-interface BidInputs {
+export interface BidInputs {
   client_id?: string | null
   total_annual_labor_cost: number | null
   total_annual_vehicle_cost: number | null
@@ -97,149 +97,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     )
     const properties = applyExclusions(allProperties, constraints.excluded_property_ids)
 
-    // Default branch_count to the user's selected_k (the source of truth for
-    // Tier 2). Body can still override.
     if (inputs.branch_count == null) {
       inputs.branch_count = constraints.selected_k ?? sel.branches.length
     }
 
-    // Pull defaults from upstream modules
     const crewStrategy = await fetchLatestCompletedAnalysis(db, accountId, 'crew_strategy')
     const branchOpt = await fetchLatestCompletedAnalysis(db, accountId, 'branch_optimization')
     const workforce = await fetchLatestCompletedAnalysis(db, accountId, 'workforce_sizing')
 
-    let resolvedLabor = inputs.total_annual_labor_cost
-    let resolvedVehicleFuel = inputs.total_annual_vehicle_cost
-    let resolvedCrewCount = inputs.crew_count
-    let recommendedOption: string | null = null
-
-    if (crewStrategy?.outputs) {
-      recommendedOption = crewStrategy.outputs.recommended_option
-      const opt = crewStrategy.outputs.options?.[recommendedOption ?? '']
-      if (opt) {
-        if (resolvedLabor == null) resolvedLabor = opt.annual_labor_cost
-        if (resolvedVehicleFuel == null) resolvedVehicleFuel = opt.annual_vehicle_cost
-        if (resolvedCrewCount == null) {
-          resolvedCrewCount =
-            (opt.crew_count ?? 0) +
-            (recommendedOption === 'C' ? opt.surge_crew_count ?? 0 : 0)
-        }
-      }
-    }
-
-    let resolvedBranchCount = inputs.branch_count
-    if (resolvedBranchCount == null && branchOpt?.outputs?.recommended_k) {
-      resolvedBranchCount = branchOpt.outputs.recommended_k
-    }
-    resolvedBranchCount = resolvedBranchCount ?? 4
-    resolvedCrewCount = resolvedCrewCount ?? resolvedBranchCount + 1
-
-    if (resolvedLabor == null) {
-      throw new Error(
-        'No labor cost available. Run Crew Strategy first, or pass total_annual_labor_cost in the request body.'
-      )
-    }
-    if (resolvedVehicleFuel == null) resolvedVehicleFuel = 0
-
-    const fteCount =
-      inputs.fte_count ??
-      (workforce?.outputs?.total_workforce_size?.fte_equivalent as number | undefined) ??
-      null
-
-    const totalSqft = properties.reduce(
-      (sum, p) =>
-        sum +
-        p.service_locations.reduce((s, sl) => s + (sl.serviceable_sqft ?? 0), 0),
-      0
+    const result = computeBidPricing(
+      properties,
+      inputs,
+      crewStrategy?.outputs,
+      branchOpt?.outputs,
+      workforce?.outputs
     )
-
-    // ── Cost buildup ────────────────────────────────────────────────────────
-    const direct_labor = resolvedLabor
-    const vehicle_fuel = resolvedVehicleFuel
-    const vehicle_lease = resolvedCrewCount * inputs.vehicle_lease_annual_per_crew
-    const hotels = inputs.hotels_annual
-    const supplies = direct_labor * inputs.supplies_pct_of_labor
-    const branch_overhead = resolvedBranchCount * inputs.branch_overhead_annual
-    const insurance = inputs.insurance_annual
-
-    const total_direct_cost =
-      direct_labor + vehicle_fuel + vehicle_lease + hotels + supplies + branch_overhead + insurance
-
-    const corporate_overhead = total_direct_cost * inputs.corporate_overhead_pct
-    const total_cost = total_direct_cost + corporate_overhead
-
-    // bid_total = cost / (1 - margin)
-    const bid_total =
-      inputs.target_gross_margin_pct < 1 ? total_cost / (1 - inputs.target_gross_margin_pct) : 0
-    const margin_amount = bid_total - total_cost
-
-    const bid_per_property = properties.length > 0 ? bid_total / properties.length : 0
-    const bid_per_sqft = totalSqft > 0 ? bid_total / totalSqft : 0
-    const monthly_invoice_estimate = bid_total / 12
-
-    // Cost breakdown percentages of bid_total
-    const pct = (n: number) =>
-      bid_total > 0 ? Math.round((n / bid_total) * 1000) / 10 : 0
-    const cost_breakdown_pct = {
-      labor: pct(direct_labor),
-      vehicle: pct(vehicle_fuel + vehicle_lease),
-      overhead: pct(branch_overhead + corporate_overhead + hotels + insurance + supplies),
-      margin: pct(margin_amount),
-      other: 0, // reserved for future supplies-vs-overhead split
-    }
-
-    const summaryParts: string[] = []
-    summaryParts.push(
-      `Recommended bid: $${(bid_total / 1_000_000).toFixed(2)}M annually = $${Math.round(
-        bid_per_property
-      ).toLocaleString()}/property/year.`
-    )
-    summaryParts.push(
-      `Cost structure: ${cost_breakdown_pct.labor}% labor, ${cost_breakdown_pct.vehicle}% vehicle/fuel, ${cost_breakdown_pct.overhead}% overhead, ${cost_breakdown_pct.margin}% margin.`
-    )
-    summaryParts.push(
-      `Monthly invoice estimate: $${Math.round(monthly_invoice_estimate).toLocaleString()}.`
-    )
-    if (recommendedOption) {
-      summaryParts.push(`Labor pulled from Crew Strategy Option ${recommendedOption}.`)
-    }
-
-    const result = {
-      outputs: {
-        property_count: properties.length,
-        total_sqft: totalSqft,
-        sourced_from: {
-          crew_strategy_option: recommendedOption,
-          crew_count: resolvedCrewCount,
-          branch_count: resolvedBranchCount,
-          fte_count: fteCount,
-        },
-        cost_buildup: {
-          direct_labor: Math.round(direct_labor),
-          vehicle_fuel: Math.round(vehicle_fuel),
-          vehicle_lease: Math.round(vehicle_lease),
-          hotels: Math.round(hotels),
-          supplies: Math.round(supplies),
-          branch_overhead: Math.round(branch_overhead),
-          insurance: Math.round(insurance),
-          total_direct_cost: Math.round(total_direct_cost),
-        },
-        indirect_cost: {
-          corporate_overhead: Math.round(corporate_overhead),
-        },
-        total_cost: Math.round(total_cost),
-        margin: {
-          target_pct: inputs.target_gross_margin_pct,
-          margin_amount: Math.round(margin_amount),
-        },
-        bid_total: Math.round(bid_total),
-        bid_per_property: Math.round(bid_per_property),
-        bid_per_sqft: +bid_per_sqft.toFixed(2),
-        monthly_invoice_estimate: Math.round(monthly_invoice_estimate),
-        cost_breakdown_pct,
-      },
-      summary_text: summaryParts.join(' '),
-    }
 
     await completeAnalysisRecord(db, analysisId, {
       outputs: result.outputs,
@@ -251,5 +123,141 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const msg = err?.message ?? String(err)
     await failAnalysisRecord(db, analysisId, msg)
     return res.status(500).json({ analysis_id: analysisId, status: 'failed', error: msg })
+  }
+}
+
+export function computeBidPricing(
+  properties: Awaited<ReturnType<typeof loadAccountProperties>>,
+  inputs: BidInputs,
+  crewStrategyOutputs: any,
+  branchOptOutputs: any,
+  workforceOutputs: any
+) {
+  let resolvedLabor = inputs.total_annual_labor_cost
+  let resolvedVehicleFuel = inputs.total_annual_vehicle_cost
+  let resolvedCrewCount = inputs.crew_count
+  let recommendedOption: string | null = null
+
+  if (crewStrategyOutputs) {
+    recommendedOption = crewStrategyOutputs.recommended_option
+    const opt = crewStrategyOutputs.options?.[recommendedOption ?? '']
+    if (opt) {
+      if (resolvedLabor == null) resolvedLabor = opt.annual_labor_cost
+      if (resolvedVehicleFuel == null) resolvedVehicleFuel = opt.annual_vehicle_cost
+      if (resolvedCrewCount == null) {
+        resolvedCrewCount =
+          (opt.crew_count ?? 0) +
+          (recommendedOption === 'C' ? opt.surge_crew_count ?? 0 : 0)
+      }
+    }
+  }
+
+  let resolvedBranchCount = inputs.branch_count
+  if (resolvedBranchCount == null && branchOptOutputs?.recommended_k) {
+    resolvedBranchCount = branchOptOutputs.recommended_k
+  }
+  resolvedBranchCount = resolvedBranchCount ?? 4
+  resolvedCrewCount = resolvedCrewCount ?? resolvedBranchCount + 1
+
+  if (resolvedLabor == null) {
+    throw new Error(
+      'No labor cost available. Run Crew Strategy first, or pass total_annual_labor_cost in the request body.'
+    )
+  }
+  if (resolvedVehicleFuel == null) resolvedVehicleFuel = 0
+
+  const fteCount =
+    inputs.fte_count ??
+    (workforceOutputs?.total_workforce_size?.fte_equivalent as number | undefined) ??
+    null
+
+  const totalSqft = properties.reduce(
+    (sum, p) =>
+      sum +
+      p.service_locations.reduce((s, sl) => s + (sl.serviceable_sqft ?? 0), 0),
+    0
+  )
+
+  const direct_labor = resolvedLabor
+  const vehicle_fuel = resolvedVehicleFuel
+  const vehicle_lease = resolvedCrewCount * inputs.vehicle_lease_annual_per_crew
+  const hotels = inputs.hotels_annual
+  const supplies = direct_labor * inputs.supplies_pct_of_labor
+  const branch_overhead = resolvedBranchCount * inputs.branch_overhead_annual
+  const insurance = inputs.insurance_annual
+
+  const total_direct_cost =
+    direct_labor + vehicle_fuel + vehicle_lease + hotels + supplies + branch_overhead + insurance
+
+  const corporate_overhead = total_direct_cost * inputs.corporate_overhead_pct
+  const total_cost = total_direct_cost + corporate_overhead
+
+  const bid_total =
+    inputs.target_gross_margin_pct < 1 ? total_cost / (1 - inputs.target_gross_margin_pct) : 0
+  const margin_amount = bid_total - total_cost
+
+  const bid_per_property = properties.length > 0 ? bid_total / properties.length : 0
+  const bid_per_sqft = totalSqft > 0 ? bid_total / totalSqft : 0
+  const monthly_invoice_estimate = bid_total / 12
+
+  const pct = (n: number) =>
+    bid_total > 0 ? Math.round((n / bid_total) * 1000) / 10 : 0
+  const cost_breakdown_pct = {
+    labor: pct(direct_labor),
+    vehicle: pct(vehicle_fuel + vehicle_lease),
+    overhead: pct(branch_overhead + corporate_overhead + hotels + insurance + supplies),
+    margin: pct(margin_amount),
+    other: 0,
+  }
+
+  const summaryParts: string[] = []
+  summaryParts.push(
+    `Recommended bid: $${(bid_total / 1_000_000).toFixed(2)}M annually = $${Math.round(
+      bid_per_property
+    ).toLocaleString()}/property/year.`
+  )
+  summaryParts.push(
+    `Cost structure: ${cost_breakdown_pct.labor}% labor, ${cost_breakdown_pct.vehicle}% vehicle/fuel, ${cost_breakdown_pct.overhead}% overhead, ${cost_breakdown_pct.margin}% margin.`
+  )
+  summaryParts.push(
+    `Monthly invoice estimate: $${Math.round(monthly_invoice_estimate).toLocaleString()}.`
+  )
+  if (recommendedOption) {
+    summaryParts.push(`Labor pulled from Crew Strategy Option ${recommendedOption}.`)
+  }
+
+  return {
+    outputs: {
+      property_count: properties.length,
+      total_sqft: totalSqft,
+      sourced_from: {
+        crew_strategy_option: recommendedOption,
+        crew_count: resolvedCrewCount,
+        branch_count: resolvedBranchCount,
+        fte_count: fteCount,
+      },
+      cost_buildup: {
+        direct_labor: Math.round(direct_labor),
+        vehicle_fuel: Math.round(vehicle_fuel),
+        vehicle_lease: Math.round(vehicle_lease),
+        hotels: Math.round(hotels),
+        supplies: Math.round(supplies),
+        branch_overhead: Math.round(branch_overhead),
+        insurance: Math.round(insurance),
+        total_direct_cost: Math.round(total_direct_cost),
+      },
+      indirect_cost: { corporate_overhead: Math.round(corporate_overhead) },
+      total_cost: Math.round(total_cost),
+      margin: {
+        target_pct: inputs.target_gross_margin_pct,
+        margin_amount: Math.round(margin_amount),
+      },
+      bid_total: Math.round(bid_total),
+      bid_per_property: Math.round(bid_per_property),
+      bid_per_sqft: +bid_per_sqft.toFixed(2),
+      monthly_invoice_estimate: Math.round(monthly_invoice_estimate),
+      cost_breakdown_pct,
+    },
+    summary_text: summaryParts.join(' '),
   }
 }

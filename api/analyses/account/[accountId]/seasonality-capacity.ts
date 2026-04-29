@@ -33,7 +33,7 @@ interface WindowSpec {
   end_day: number
 }
 
-interface SeasonalityInputs {
+export interface SeasonalityInputs {
   client_id?: string | null
   windows: {
     summer_break: WindowSpec
@@ -150,7 +150,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-function computeSeasonality(
+export function computeSeasonality(
   properties: AccountProperty[],
   offerings: Map<string, { id: string; name: string }>,
   crewStrategyOutputs: any,

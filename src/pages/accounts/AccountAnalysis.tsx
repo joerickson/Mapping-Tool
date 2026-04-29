@@ -15,6 +15,9 @@ import WorkforceSizingChart from '../../components/analysis/WorkforceSizingChart
 import SeasonalityChart from '../../components/analysis/SeasonalityChart'
 import BidPricingChart from '../../components/analysis/BidPricingChart'
 import OperationalConstraintsPanel from '../../components/analysis/OperationalConstraintsPanel'
+import SynthesisCard from '../../components/analysis/SynthesisCard'
+import ScenarioPanel from '../../components/analysis/ScenarioPanel'
+import ChatPanel from '../../components/analysis/ChatPanel'
 import BuildSelectionModal, {
   type SelectedBranch,
   type ExistingBranch as ModalExistingBranch,
@@ -143,6 +146,11 @@ export default function AccountAnalysisPage() {
   const [selectedAt, setSelectedAt] = useState<string | null>(null)
   const [selectedFromAnalysisId, setSelectedFromAnalysisId] = useState<string | null>(null)
   const [existingBranches, setExistingBranches] = useState<ModalExistingBranch[]>([])
+  // Numeric constraint baselines (used by ScenarioPanel to seed sliders)
+  const [baselineLaborCost, setBaselineLaborCost] = useState(28)
+  const [baselineFuelCost, setBaselineFuelCost] = useState(0.18)
+  const [baselineMargin, setBaselineMargin] = useState(0.22)
+  const [baselineSurgePremium, setBaselineSurgePremium] = useState(1.4)
   // Build-selection modal
   const [modalOpen, setModalOpen] = useState(false)
   const [modalK, setModalK] = useState(0)
@@ -165,6 +173,10 @@ export default function AccountAnalysisPage() {
       setSelectedFromAnalysisId(json.selected_from_analysis_id ?? null)
       setExistingBranches((json.existing_branches ?? []) as ModalExistingBranch[])
       setConstraintsUpdatedAt(json.updated_at ?? null)
+      if (typeof json.hourly_loaded_labor_cost === 'number') setBaselineLaborCost(json.hourly_loaded_labor_cost)
+      if (typeof json.fuel_cost_per_mile === 'number') setBaselineFuelCost(json.fuel_cost_per_mile)
+      if (typeof json.target_gross_margin_pct === 'number') setBaselineMargin(json.target_gross_margin_pct)
+      if (typeof json.surge_premium_multiplier === 'number') setBaselineSurgePremium(json.surge_premium_multiplier)
     } catch {
       /* ignore */
     }
@@ -690,18 +702,30 @@ export default function AccountAnalysisPage() {
             />
           )}
 
-          {/* Synthesis placeholder */}
-          <div className="bg-white rounded-xl border shadow-sm px-5 py-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-semibold text-gray-900">Portfolio Synthesis</h3>
-                <p className="text-sm text-gray-500 mt-1">
-                  Unified analysis combining all module outputs with scenario sliders + chat.
-                </p>
-              </div>
-              <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600">Coming in Phase 3</span>
-            </div>
-          </div>
+          {/* Synthesis card */}
+          {accountId && (
+            <SynthesisCard
+              accountId={accountId}
+              hasSelection={hasSelection}
+              latestModuleCompletedAts={MODULES.map(
+                (m) => latestByModule[m.key]?.completed_at ?? null
+              )}
+            />
+          )}
+
+          {/* Scenario sliders panel */}
+          {accountId && (
+            <ScenarioPanel
+              accountId={accountId}
+              hasSelection={hasSelection}
+              baselineLaborCost={baselineLaborCost}
+              baselineFuelCost={baselineFuelCost}
+              baselineMargin={baselineMargin}
+              baselineSurgePremium={baselineSurgePremium}
+              selectedBranches={selectedBranches}
+              selectedK={selectedK}
+            />
+          )}
 
           {/* Map snippet */}
           <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
@@ -796,6 +820,9 @@ export default function AccountAnalysisPage() {
               )
             })}
           </div>
+
+          {/* Chat panel — floating button, expands to drawer */}
+          {accountId && <ChatPanel accountId={accountId} />}
 
           {/* Build-selection modal */}
           {modalOpen && (

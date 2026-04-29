@@ -22,7 +22,7 @@ import {
   type ExistingBranch,
 } from '../../../_lib/analysis/operational-constraints.js'
 
-interface BranchOptInputs {
+export interface BranchOptInputs {
   client_id?: string | null
   k_range: [number, number]
   drive_speed_mph: number
@@ -129,7 +129,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-async function computeBranchOptimization(
+export async function computeBranchOptimization(
   properties: AccountProperty[],
   inputs: BranchOptInputs
 ) {
