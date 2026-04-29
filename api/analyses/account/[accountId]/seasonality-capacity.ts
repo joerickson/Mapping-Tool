@@ -20,6 +20,8 @@ import {
 import {
   loadConstraints,
   applyExclusions,
+  requireSelectedBranches,
+  NO_SELECTION_ERROR,
 } from '../../../_lib/analysis/operational-constraints.js'
 
 export const config = { maxDuration: 60 }
@@ -94,6 +96,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const body = (req.body ?? {}) as Partial<SeasonalityInputs>
   const db = createAdminClient()
   const constraints = await loadConstraints(db, accountId)
+
+  // Tier 2: requires the user to have confirmed a branch selection.
+  const sel = requireSelectedBranches(constraints)
+  if (!sel.ok) return res.status(400).json(NO_SELECTION_ERROR)
+
   const inputs: SeasonalityInputs = {
     client_id: body.client_id ?? constraints.client_id ?? null,
     windows: body.windows ?? DEFAULT_WINDOWS,

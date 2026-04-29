@@ -36,7 +36,19 @@ interface BranchOptOutputs {
   floor_k?: number
 }
 
-export default function BranchOptimizationChart({ data }: { data: BranchOptOutputs }) {
+interface SelectionTableProps {
+  // Render the per-K selection table that lets the user pick which K to
+  // build a manual selection for. Optional — when omitted, the chart skips
+  // the table (e.g. when a selection is already locked in).
+  onBuild?: (k: number) => void
+  showTable?: boolean
+}
+
+export default function BranchOptimizationChart({
+  data,
+  onBuild,
+  showTable,
+}: { data: BranchOptOutputs } & SelectionTableProps) {
   const recommended = data.k_results.find((r) => r.k === data.recommended_k)
 
   return (
@@ -134,6 +146,80 @@ export default function BranchOptimizationChart({ data }: { data: BranchOptOutpu
                       <td className="py-2 text-right">{b.max_drive_distance_miles}</td>
                     </tr>
                   ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Per-K selection table — drives the Branch Selection workflow */}
+      {showTable && onBuild && (
+        <div>
+          <h4 className="text-sm font-semibold text-gray-700 mb-1">
+            Pick a branch count to build your selection
+          </h4>
+          <p className="text-xs text-gray-500 mb-2">
+            Each row shows the modeled cost at K branches. Click a row's button to start
+            building your selection — you'll specify the actual locations manually.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left text-xs uppercase tracking-wide text-gray-500">
+                  <th className="py-2 pr-3">K</th>
+                  <th className="py-2 pr-3 text-right">Total $/yr</th>
+                  <th className="py-2 pr-3 text-right">Drive</th>
+                  <th className="py-2 pr-3 text-right">Branch</th>
+                  <th className="py-2 pr-3 text-right">Avg drive (mi)</th>
+                  <th className="py-2 pr-3">Optimization-suggested centroids</th>
+                  <th className="py-2 text-right"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.k_results.map((r) => {
+                  const isRec = r.k === data.recommended_k
+                  return (
+                    <tr
+                      key={r.k}
+                      className={`border-b last:border-0 ${
+                        isRec ? 'bg-green-50' : ''
+                      }`}
+                    >
+                      <td className="py-2 pr-3 font-mono font-semibold text-gray-900">
+                        {r.k}
+                        {isRec && (
+                          <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded bg-green-100 text-green-700 align-middle">
+                            Recommended
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-3 text-right font-mono">
+                        ${r.total_annual_cost.toLocaleString()}
+                      </td>
+                      <td className="py-2 pr-3 text-right text-gray-500">
+                        ${r.drive_cost.toLocaleString()}
+                      </td>
+                      <td className="py-2 pr-3 text-right text-gray-500">
+                        ${r.branch_cost.toLocaleString()}
+                      </td>
+                      <td className="py-2 pr-3 text-right text-gray-500">
+                        {r.avg_drive_per_property}
+                      </td>
+                      <td className="py-2 pr-3 text-xs text-gray-600">
+                        {r.branches.map((b) => b.city_state).join(' · ')}
+                      </td>
+                      <td className="py-2 text-right whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={() => onBuild(r.k)}
+                          className="px-2.5 py-1 rounded-md text-xs font-medium bg-blue-600 text-white hover:bg-blue-700"
+                        >
+                          Build my K={r.k} selection →
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

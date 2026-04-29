@@ -23,6 +23,10 @@ interface AnalysisCardProps {
   // Stale-vs-constraints flag — true when constraints.updated_at is newer
   // than the most recent completed run for this module.
   staleVsConstraints?: boolean
+  // Tier-2 gate: when true, the Run button is disabled and the card shows a
+  // placeholder explaining what's blocking the run (typically "Select branches
+  // in Branch Optimization first").
+  disabledReason?: string | null
   children?: ReactNode              // expanded content — visible only when completed
 }
 
@@ -47,6 +51,7 @@ export default function AnalysisCard({
   onCheckNow,
   onMarkFailed,
   staleVsConstraints,
+  disabledReason,
   children,
 }: AnalysisCardProps) {
   // Re-render every second so elapsed counters tick.
@@ -89,6 +94,7 @@ export default function AnalysisCard({
       className={clsx('bg-white rounded-xl border shadow-sm overflow-hidden', {
         'border-amber-300': status === 'stuck',
         'border-red-300': status === 'failed',
+        'opacity-60': !!disabledReason,
       })}
     >
       <div className="px-5 py-4 flex items-start justify-between gap-4">
@@ -114,11 +120,22 @@ export default function AnalysisCard({
           size="sm"
           onClick={onRun}
           loading={running && status !== 'stuck'}
-          disabled={running && status !== 'stuck'}
+          disabled={!!disabledReason || (running && status !== 'stuck')}
+          title={disabledReason ?? undefined}
         >
           {status === 'completed' ? 'Re-run' : status === 'stuck' || status === 'failed' ? 'Retry' : 'Run analysis'}
         </Button>
       </div>
+
+      {/* Tier-2 gate placeholder */}
+      {disabledReason && (
+        <div className="px-5 py-3 border-t bg-gray-50 text-sm text-gray-600 flex items-center gap-2">
+          <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m0 0v2m0-2h0m6.364-3a9 9 0 11-12.728 0M12 3v9" />
+          </svg>
+          {disabledReason}
+        </div>
+      )}
 
       {/* Live progress strip while running */}
       {(status === 'running' || status === 'stuck') && (
@@ -194,7 +211,7 @@ export default function AnalysisCard({
         </div>
       )}
 
-      {children && status === 'completed' && (
+      {children && status === 'completed' && !disabledReason && (
         <div className="border-t px-5 py-4">{children}</div>
       )}
     </div>

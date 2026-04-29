@@ -12,7 +12,6 @@ import {
   createAnalysisRecord,
   completeAnalysisRecord,
   failAnalysisRecord,
-  fetchLatestCompletedAnalysis,
   type AccountProperty,
 } from '../../../_lib/analysis/account-data.js'
 import {
@@ -23,6 +22,8 @@ import { haversineMiles, type LatLng } from '../../../_lib/analysis/haversine.js
 import {
   loadConstraints,
   applyExclusions,
+  requireSelectedBranches,
+  NO_SELECTION_ERROR,
 } from '../../../_lib/analysis/operational-constraints.js'
 
 export const config = { maxDuration: 60 }
@@ -65,6 +66,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const db = createAdminClient()
   const constraints = await loadConstraints(db, accountId)
+
+  // Tier 2: requires the user to have confirmed a branch selection.
+  const sel = requireSelectedBranches(constraints)
+  if (!sel.ok) return res.status(400).json(NO_SELECTION_ERROR)
 
   const inputs: CrewStrategyInputs = {
     client_id: body.client_id ?? constraints.client_id ?? null,
@@ -112,43 +117,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const properties = applyExclusions(allProperties, constraints.excluded_property_ids)
     const offerings = await loadAccountOfferings(db, accountId)
 
-    // Resolve branch set: explicit body.branches > existing_branches from
-    // constraints > latest branch_optimization > error.
-    let branches = inputs.branches
-    let kUsed = inputs.k
-
-    if (!branches && constraints.existing_branches.length > 0) {
-      branches = constraints.existing_branches.map((b) => ({
-        name: b.name,
-        lat: b.lat,
-        lng: b.lng,
-      }))
-      kUsed = kUsed ?? branches.length
-    }
-
-    if (!branches) {
-      const bo = await fetchLatestCompletedAnalysis(db, accountId, 'branch_optimization')
-      if (bo?.outputs?.k_results?.length) {
-        const k = inputs.k ?? bo.outputs.recommended_k
-        const row = bo.outputs.k_results.find((r: any) => r.k === k)
-        if (row) {
-          kUsed = k
-          branches = row.branches.map((b: any) => ({
-            name: b.city_state,
-            lat: b.lat,
-            lng: b.lng,
-            property_count: b.property_count,
-          }))
-        }
-      }
-    }
-
-    if (!branches) {
-      throw new Error(
-        'No branches available. Run Branch Optimization first or pass branches in the request body.'
-      )
-    }
-    if (kUsed == null) kUsed = branches.length
+    // Tier 2 always uses the user's confirmed selection. Body.branches is
+    // ignored — selection takes precedence per Phase 2.5b spec.
+    const branches = sel.branches.map((b) => ({
+      name: b.name,
+      lat: b.lat,
+      lng: b.lng,
+    }))
+    const kUsed = constraints.selected_k ?? branches.length
 
     const result = computeCrewStrategy(properties, offerings, branches, kUsed, inputs)
 

@@ -13,6 +13,19 @@ export interface ExistingBranch {
   locked?: boolean
 }
 
+// User's confirmed branch set, written by /api/accounts/[id]/select-branches.
+// Source = 'existing' if the row mirrors an existing_branches entry, 'manual'
+// if the user added it through the selection modal.
+export interface SelectedBranch {
+  name: string
+  address?: string | null
+  city_state: string
+  lat: number
+  lng: number
+  source: 'existing' | 'manual'
+  cluster_index?: number | null
+}
+
 export interface OperationalConstraints {
   account_id: string
   client_id: string | null
@@ -55,6 +68,14 @@ export interface OperationalConstraints {
   // Drive parameters
   drive_speed_mph: number
   max_one_way_drive_minutes: number
+
+  // Branch Selection (Phase 2.5b) — null/empty until the user confirms
+  // a branch set in the dashboard. Tier 2 modules require this to be set.
+  selected_branches: SelectedBranch[] | null
+  selected_k: number | null
+  selected_at: string | null
+  selected_from_analysis_id: string | null
+  selected_by: string | null
 
   // Metadata
   updated_at: string | null
@@ -141,6 +162,12 @@ export async function loadConstraints(
     drive_speed_mph: pickNumeric(r, 'drive_speed_mph'),
     max_one_way_drive_minutes: pickNumeric(r, 'max_one_way_drive_minutes'),
 
+    selected_branches: (r?.selected_branches ?? null) as SelectedBranch[] | null,
+    selected_k: r?.selected_k ?? null,
+    selected_at: r?.selected_at ?? null,
+    selected_from_analysis_id: r?.selected_from_analysis_id ?? null,
+    selected_by: r?.selected_by ?? null,
+
     updated_at: r?.updated_at ?? null,
     updated_by: r?.updated_by ?? null,
     has_saved_row: r != null,
@@ -158,6 +185,23 @@ export function applyExclusions<T extends { id: string }>(
   if (!excludedIds.length) return properties
   const set = new Set(excludedIds)
   return properties.filter((p) => !set.has(p.id))
+}
+
+// Tier 2 modules call this at the top of their handler. If no branches are
+// selected, returns the canonical 400 error body so all five modules give
+// identical guidance to the dashboard.
+export const NO_SELECTION_ERROR = {
+  error:
+    'No branches selected. Run Branch Optimization and select branch locations first.',
+  code: 'BRANCHES_NOT_SELECTED' as const,
+}
+
+export function requireSelectedBranches(
+  constraints: OperationalConstraints
+): { ok: true; branches: SelectedBranch[] } | { ok: false } {
+  const selected = constraints.selected_branches
+  if (!selected || selected.length === 0) return { ok: false }
+  return { ok: true, branches: selected }
 }
 
 export { NUMERIC_KEYS }

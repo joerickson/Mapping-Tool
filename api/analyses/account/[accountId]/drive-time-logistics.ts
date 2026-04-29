@@ -19,6 +19,8 @@ import { haversineMiles, driveTimeMinutes, type LatLng } from '../../../_lib/ana
 import {
   loadConstraints,
   applyExclusions,
+  requireSelectedBranches,
+  NO_SELECTION_ERROR,
 } from '../../../_lib/analysis/operational-constraints.js'
 
 interface DriveInputs {
@@ -47,10 +49,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const body = (req.body ?? {}) as Partial<DriveInputs>
   const db = createAdminClient()
   const constraints = await loadConstraints(db, accountId)
+
+  // Tier 2: requires the user to have confirmed a branch selection.
+  const sel = requireSelectedBranches(constraints)
+  if (!sel.ok) return res.status(400).json(NO_SELECTION_ERROR)
+
   const inputs: DriveInputs = {
     client_id: body.client_id ?? constraints.client_id ?? null,
-    k: body.k ?? null,
-    branches: body.branches,
+    k: body.k ?? constraints.selected_k ?? null,
+    branches: undefined, // selected_branches always wins
     drive_speed_mph: body.drive_speed_mph ?? constraints.drive_speed_mph,
     max_one_way_drive_minutes:
       body.max_one_way_drive_minutes ?? constraints.max_one_way_drive_minutes,
@@ -77,46 +84,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     )
     const properties = applyExclusions(allProperties, constraints.excluded_property_ids)
 
-    // Resolve branches: explicit > latest branch_optimization > error
-    let branches: Array<{ name: string; lat: number; lng: number }> = inputs.branches ?? []
-    let kUsed: number | null = null
-
-    if (branches.length === 0) {
-      const { data: latestBranchOpt } = await db
-        .from('portfolio_analyses')
-        .select('outputs')
-        .eq('account_id', accountId)
-        .eq('module_key', 'branch_optimization')
-        .eq('status', 'completed')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-
-      if (!latestBranchOpt) {
-        throw new Error(
-          'No branches provided and no completed branch_optimization run found. Run Branch Optimization first or pass branches in the request body.'
-        )
-      }
-
-      const out = (latestBranchOpt as any).outputs as {
-        k_results: Array<{
-          k: number
-          is_elbow: boolean
-          branches: Array<{ city_state: string; lat: number; lng: number }>
-        }>
-        recommended_k: number
-      }
-      kUsed = inputs.k ?? out.recommended_k
-      const row = out.k_results.find((r) => r.k === kUsed)
-      if (!row) {
-        throw new Error(`branch_optimization has no result for k=${kUsed}`)
-      }
-      branches = row.branches.map((b) => ({
-        name: b.city_state,
-        lat: b.lat,
-        lng: b.lng,
-      }))
-    }
+    // Tier 2 always uses the user's confirmed branch selection.
+    const branches = sel.branches.map((b) => ({
+      name: b.name,
+      lat: b.lat,
+      lng: b.lng,
+    }))
+    const kUsed = constraints.selected_k ?? branches.length
 
     const result = computeDriveTimeLogistics(properties, branches, inputs, kUsed)
     await completeAnalysisRecord(db, analysisId, {

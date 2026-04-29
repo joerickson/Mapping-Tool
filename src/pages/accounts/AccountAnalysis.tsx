@@ -15,6 +15,12 @@ import WorkforceSizingChart from '../../components/analysis/WorkforceSizingChart
 import SeasonalityChart from '../../components/analysis/SeasonalityChart'
 import BidPricingChart from '../../components/analysis/BidPricingChart'
 import OperationalConstraintsPanel from '../../components/analysis/OperationalConstraintsPanel'
+import BuildSelectionModal, {
+  type SelectedBranch,
+  type ExistingBranch as ModalExistingBranch,
+  type ReferenceCentroid,
+} from '../../components/analysis/BuildSelectionModal'
+import SelectionStatusBanner from '../../components/analysis/SelectionStatusBanner'
 import AnalysisMap, {
   type AnalysisMapPoint,
   type AnalysisMapBranch,
@@ -28,6 +34,15 @@ type ModuleKey =
   | 'workforce_sizing'
   | 'seasonality_capacity'
   | 'bid_pricing_structure'
+
+// Tier 1 = no selection required. Tier 2 = gated on selected_branches.
+const TIER_2_MODULES: Set<ModuleKey> = new Set([
+  'drive_time_logistics',
+  'crew_strategy',
+  'workforce_sizing',
+  'seasonality_capacity',
+  'bid_pricing_structure',
+])
 
 const MODULES: Array<{
   key: ModuleKey
@@ -122,6 +137,38 @@ export default function AccountAnalysisPage() {
   // ISO timestamp of the most recent constraints save — used to flag any
   // module whose last completed run is older than this as "stale vs constraints".
   const [constraintsUpdatedAt, setConstraintsUpdatedAt] = useState<string | null>(null)
+  // Selection state mirrored from the constraints endpoint.
+  const [selectedBranches, setSelectedBranches] = useState<SelectedBranch[] | null>(null)
+  const [selectedK, setSelectedK] = useState<number | null>(null)
+  const [selectedAt, setSelectedAt] = useState<string | null>(null)
+  const [selectedFromAnalysisId, setSelectedFromAnalysisId] = useState<string | null>(null)
+  const [existingBranches, setExistingBranches] = useState<ModalExistingBranch[]>([])
+  // Build-selection modal
+  const [modalOpen, setModalOpen] = useState(false)
+  const [modalK, setModalK] = useState(0)
+  const [modalCentroids, setModalCentroids] = useState<ReferenceCentroid[]>([])
+  const [modalSourceAnalysisId, setModalSourceAnalysisId] = useState<string | null>(null)
+
+  // ─── Constraints refresh — call after any save / select / clear ───
+  const refreshConstraints = useCallback(async () => {
+    if (!accountId) return
+    try {
+      const token = await getToken()
+      const res = await fetch(`/api/accounts/${accountId}/operational-constraints`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) return
+      const json = await res.json()
+      setSelectedBranches(json.selected_branches ?? null)
+      setSelectedK(json.selected_k ?? null)
+      setSelectedAt(json.selected_at ?? null)
+      setSelectedFromAnalysisId(json.selected_from_analysis_id ?? null)
+      setExistingBranches((json.existing_branches ?? []) as ModalExistingBranch[])
+      setConstraintsUpdatedAt(json.updated_at ?? null)
+    } catch {
+      /* ignore */
+    }
+  }, [accountId, getToken])
 
   // ─── Initial load: account + latest analysis per module + properties for map ───
   const loadEverything = useCallback(async () => {
@@ -202,7 +249,85 @@ export default function AccountAnalysisPage() {
 
   useEffect(() => {
     loadEverything()
-  }, [loadEverything])
+    refreshConstraints()
+  }, [loadEverything, refreshConstraints])
+
+  // ─── Build-selection modal handlers ───
+  const openBuildModal = useCallback(
+    (k: number) => {
+      const bo = latestByModule.branch_optimization
+      const centroids: ReferenceCentroid[] = []
+      let sourceId: string | null = null
+      if (bo?.outputs?.k_results) {
+        const row = bo.outputs.k_results.find((r: any) => r.k === k)
+        if (row?.branches) {
+          for (const b of row.branches as any[]) {
+            centroids.push({
+              city_state: b.city_state,
+              lat: b.lat,
+              lng: b.lng,
+              property_count: b.property_count,
+              locked: !!b.locked,
+            })
+          }
+          sourceId = bo.id ?? null
+        }
+      }
+      setModalK(k)
+      setModalCentroids(centroids)
+      setModalSourceAnalysisId(sourceId)
+      setModalOpen(true)
+    },
+    [latestByModule]
+  )
+
+  const handleConfirmSelection = useCallback(
+    async (payload: {
+      k: number
+      branches: SelectedBranch[]
+      source_analysis_id: string | null
+    }) => {
+      if (!accountId) return
+      const token = await getToken()
+      const res = await fetch(`/api/accounts/${accountId}/select-branches`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(json.error ?? `HTTP ${res.status}`)
+      }
+      setSelectedBranches(json.selected_branches ?? null)
+      setSelectedK(json.selected_k ?? null)
+      setSelectedAt(json.selected_at ?? null)
+      setSelectedFromAnalysisId(json.selected_from_analysis_id ?? null)
+      setConstraintsUpdatedAt(json.updated_at ?? null)
+      setModalOpen(false)
+    },
+    [accountId, getToken]
+  )
+
+  const handleClearSelection = useCallback(async () => {
+    if (!accountId) return
+    const token = await getToken()
+    const res = await fetch(`/api/accounts/${accountId}/select-branches`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) return
+    const json = await res.json().catch(() => ({}))
+    setSelectedBranches(json.selected_branches ?? null)
+    setSelectedK(json.selected_k ?? null)
+    setSelectedAt(json.selected_at ?? null)
+    setSelectedFromAnalysisId(json.selected_from_analysis_id ?? null)
+    setConstraintsUpdatedAt(json.updated_at ?? null)
+  }, [accountId, getToken])
+
+  const hasSelection = !!selectedBranches && selectedBranches.length > 0
 
   // ─── Tick every 1s so elapsed-time displays + stuck-state derivation refresh
   // even between polls. Only ticks while something is running. ───
@@ -397,12 +522,14 @@ export default function AccountAnalysisPage() {
 
   const runAll = useCallback(async () => {
     // Endpoints are synchronous now — runModule resolves only when the work
-    // is done — so a plain sequential loop is enough.
+    // is done — so a plain sequential loop is enough. Tier 2 modules are
+    // skipped automatically when no branch selection exists.
     for (const m of MODULES) {
+      if (TIER_2_MODULES.has(m.key) && !hasSelection) continue
       // eslint-disable-next-line no-await-in-loop
       await runModule(m.key, m.endpoint)
     }
-  }, [runModule])
+  }, [runModule, hasSelection])
 
   const handleCheckNow = useCallback(
     (moduleKey: string) => {
@@ -497,7 +624,14 @@ export default function AccountAnalysisPage() {
     const row = latestByModule[key]
     if (!row || row.status !== 'completed' || !row.outputs) return null
     if (key === 'geographic_distribution') return <GeographicChart data={row.outputs} />
-    if (key === 'branch_optimization') return <BranchOptimizationChart data={row.outputs} />
+    if (key === 'branch_optimization')
+      return (
+        <BranchOptimizationChart
+          data={row.outputs}
+          showTable={!hasSelection}
+          onBuild={openBuildModal}
+        />
+      )
     if (key === 'drive_time_logistics') return <DriveTimeChart data={row.outputs} />
     if (key === 'crew_strategy') return <CrewStrategyChart data={row.outputs} />
     if (key === 'workforce_sizing') return <WorkforceSizingChart data={row.outputs} />
@@ -538,7 +672,21 @@ export default function AccountAnalysisPage() {
           {accountId && (
             <OperationalConstraintsPanel
               accountId={accountId}
-              onUpdatedAtChange={(iso) => setConstraintsUpdatedAt(iso)}
+              onUpdatedAtChange={(iso) => {
+                setConstraintsUpdatedAt(iso)
+                refreshConstraints()
+              }}
+              onSaved={() => refreshConstraints()}
+            />
+          )}
+
+          {/* Branch selection status banner — only when a selection exists */}
+          {hasSelection && selectedBranches && (
+            <SelectionStatusBanner
+              branches={selectedBranches}
+              selectedAt={selectedAt}
+              selectedFromAnalysisId={selectedFromAnalysisId}
+              onChangeSelection={handleClearSelection}
             />
           )}
 
@@ -614,11 +762,20 @@ export default function AccountAnalysisPage() {
                 !!constraintsUpdatedAt &&
                 !!row?.completed_at &&
                 new Date(row.completed_at) < new Date(constraintsUpdatedAt)
+              const isTier2 = TIER_2_MODULES.has(m.key)
+              const disabledReason =
+                isTier2 && !hasSelection
+                  ? 'Select branches in Branch Optimization to enable this analysis'
+                  : null
+              const description =
+                isTier2 && hasSelection
+                  ? `${m.description} · Using K=${selectedK ?? selectedBranches?.length ?? '?'} selected branches`
+                  : m.description
               return (
                 <AnalysisCard
                   key={m.key}
                   title={m.title}
-                  description={m.description}
+                  description={description}
                   status={status}
                   completedAt={row?.completed_at ?? null}
                   errorMessage={row?.status === 'failed' ? row.error_message : null}
@@ -632,12 +789,26 @@ export default function AccountAnalysisPage() {
                   onCheckNow={pollIds[m.key] ? () => handleCheckNow(m.key) : undefined}
                   onMarkFailed={status === 'stuck' ? () => handleMarkFailed(m.key) : undefined}
                   staleVsConstraints={stale}
+                  disabledReason={disabledReason}
                 >
                   {renderModuleBody(m.key)}
                 </AnalysisCard>
               )
             })}
           </div>
+
+          {/* Build-selection modal */}
+          {modalOpen && (
+            <BuildSelectionModal
+              open={modalOpen}
+              onClose={() => setModalOpen(false)}
+              k={modalK}
+              existingBranches={existingBranches}
+              referenceCentroids={modalCentroids}
+              sourceAnalysisId={modalSourceAnalysisId}
+              onConfirm={handleConfirmSelection}
+            />
+          )}
 
         </div>
       </div>
