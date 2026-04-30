@@ -1,6 +1,6 @@
-// Phase 4d — Cycle instance detail.
-// Summary cards + list view of crew_day_routes + visits with edit affordances
-// (move/lock/mark-completed). Calendar grid + crew swimlanes deferred to 4f.
+// Phase 4f-1 — Cycle instance detail with view switcher (Gantt /
+// Calendar / List / Map), polished header summary, status bar, and
+// undo/redo history drawer. Drag-drop + multi-select ship in 4f-2.
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { Lock, Unlock, Check, MoveRight, Calendar } from 'lucide-react'
@@ -16,6 +16,11 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '../../../components/ui/Table'
+import ViewSwitcher, { type CycleViewKind } from '../../../components/scheduler/ViewSwitcher'
+import GanttView, { type UtilDay } from '../../../components/scheduler/GanttView'
+import CalendarView from '../../../components/scheduler/CalendarView'
+import HistoryDrawer from '../../../components/scheduler/HistoryDrawer'
+import StatusBar, { type SaveState } from '../../../components/scheduler/StatusBar'
 
 interface Cycle {
   id: string
@@ -66,23 +71,42 @@ export default function CycleDetailPage() {
   const [cycle, setCycle] = useState<Cycle | null>(null)
   const [visits, setVisits] = useState<Visit[]>([])
   const [crewDays, setCrewDays] = useState<CrewDay[]>([])
+  const [utilDays, setUtilDays] = useState<UtilDay[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [moveTarget, setMoveTarget] = useState<Visit | null>(null)
+  const [view, setView] = useState<CycleViewKind>('gantt')
+  const [saveState, setSaveState] = useState<SaveState>('saved')
+  const [optimizationScore, setOptimizationScore] = useState<number | null>(null)
 
   const load = useCallback(async () => {
     if (!cycleId) return
     setLoading(true)
     try {
       const token = await getToken()
-      const res = await fetch(`/api/scheduler/cycles/${cycleId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(`Load failed (${res.status})`)
-      const data = await res.json()
+      const [cycleRes, utilRes] = await Promise.all([
+        fetch(`/api/scheduler/cycles/${cycleId}`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`/api/scheduler/cycles/${cycleId}/crew-utilization`, { headers: { Authorization: `Bearer ${token}` } }),
+      ])
+      if (!cycleRes.ok) throw new Error(`Load failed (${cycleRes.status})`)
+      const data = await cycleRes.json()
       setCycle(data.cycle)
       setVisits(data.visits ?? [])
       setCrewDays(data.crew_days ?? [])
+      if (utilRes.ok) {
+        const u = await utilRes.json()
+        setUtilDays(u.days ?? [])
+      }
+      // Pull optimization score from the parent template for the status bar.
+      if (data.cycle?.template_id) {
+        const tplRes = await fetch(`/api/scheduler/templates/${data.cycle.template_id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (tplRes.ok) {
+          const tpl = await tplRes.json()
+          setOptimizationScore(tpl.template?.optimization_score ?? null)
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -108,6 +132,7 @@ export default function CycleDetailPage() {
   }, [crewDays])
 
   async function handleAction(visitId: string, path: string, body?: object) {
+    setSaveState('saving')
     try {
       const token = await getToken()
       const res = await fetch(`/api/scheduler/visits/${visitId}/${path}`, {
@@ -120,10 +145,26 @@ export default function CycleDetailPage() {
         throw new Error(errBody.error ?? `${path} failed (${res.status})`)
       }
       await load()
+      setSaveState('saved')
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+      setSaveState('failed')
     }
   }
+
+  // Portfolio-level utilization stats, used by Gantt summary banner +
+  // bottom status bar.
+  const portfolioUtilization = useMemo(() => {
+    if (utilDays.length === 0) return null
+    const totalHours = utilDays.reduce((s, d) => s + d.work_hours_scheduled, 0)
+    const totalCapacity = utilDays.reduce((s, d) => s + d.work_hours_capacity, 0)
+    return totalCapacity > 0 ? Math.round((totalHours / totalCapacity) * 100) : 0
+  }, [utilDays])
+
+  const idleDayCount = useMemo(
+    () => utilDays.filter((d) => d.state.kind === 'idle' || d.state.kind === 'between_trips').length,
+    [utilDays]
+  )
 
   if (loading || !cycle) {
     return (
@@ -141,32 +182,97 @@ export default function CycleDetailPage() {
       { label: 'Routing templates', to: `/accounts/${accountId}/clients/${clientId}/scheduler/templates` },
       { label: `Cycle ${cycle.cycle_number}` },
     ]}>
-      <div className="mx-auto max-w-6xl px-6 py-10 space-y-6">
-        <header className="space-y-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-2xl font-semibold tracking-tight text-fg">
-              Cycle {cycle.cycle_number}
-            </h1>
-            <Badge variant={cycle.status === 'completed' ? 'success' : cycle.status === 'in_progress' ? 'accent' : 'outline'}>
-              {cycle.status}
-            </Badge>
+      <div className="mx-auto max-w-7xl px-6 py-10 space-y-6 pb-12">
+        <header className="space-y-2">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-2xl font-semibold tracking-tight text-fg">
+                  Cycle {cycle.cycle_number}
+                </h1>
+                <Badge variant={cycle.status === 'completed' ? 'success' : cycle.status === 'in_progress' ? 'accent' : 'outline'}>
+                  {cycle.status}
+                </Badge>
+              </div>
+              <p className="text-sm text-fg-muted font-tabular">
+                <Calendar className="inline h-3.5 w-3.5 mr-1" />
+                {cycle.start_date} — {cycle.end_date}
+              </p>
+            </div>
+            <ViewSwitcher value={view} onChange={setView} />
           </div>
-          <p className="text-sm text-fg-muted font-tabular">
-            <Calendar className="inline h-3.5 w-3.5 mr-1" />
-            {cycle.start_date} — {cycle.end_date}
-          </p>
         </header>
 
         {error && <p className="text-sm text-danger">{error}</p>}
 
-        {/* Summary cards */}
+        {/* Polished summary cards (4 across). Color-coded for at-a-
+            glance status. */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Stat label="Visits placed" value={`${placedVisits.length} / ${visits.length}`} sub={`${unplacedVisits.length} unplaced · ${completedVisits.length} completed`} />
-          <Stat label="Crew-days" value={String(crewDays.length)} />
-          <Stat label="Drive" value={`${formatMin(summary.driveMin)} · ${Math.round(summary.driveMiles)} mi`} />
-          <Stat label="Work" value={formatMin(summary.workMin)} />
+          <Stat
+            label="Visits placed"
+            value={`${placedVisits.length} / ${visits.length}`}
+            sub={`${unplacedVisits.length} unplaced · ${completedVisits.length} completed`}
+            tone={unplacedVisits.length > 0 ? 'warning' : 'success'}
+          />
+          <Stat
+            label="Total work hrs"
+            value={formatMin(summary.workMin)}
+            sub={`${formatMin(summary.driveMin)} drive · ${Math.round(summary.driveMiles)} mi`}
+          />
+          <Stat
+            label="Portfolio utilization"
+            value={portfolioUtilization != null ? `${portfolioUtilization}%` : '—'}
+            sub={`${idleDayCount} idle/between days`}
+            tone={
+              portfolioUtilization == null
+                ? 'default'
+                : portfolioUtilization >= 80
+                  ? 'success'
+                  : portfolioUtilization >= 60
+                    ? 'warning'
+                    : 'danger'
+            }
+          />
+          <Stat
+            label="Optimization score"
+            value={optimizationScore != null ? `${Math.round(optimizationScore)}/100` : '—'}
+            tone={optimizationScore != null && optimizationScore >= 80 ? 'success' : 'default'}
+          />
         </div>
 
+        {/* View switcher content */}
+        {view === 'gantt' && (
+          <div className="space-y-4">
+            <h2 className="text-base font-semibold tracking-tight text-fg">
+              Gantt — Crew × day utilization
+            </h2>
+            <p className="text-xs text-fg-muted">
+              Each cell is one crew on one workday. Click a cell to inspect the route. Drag-drop ships in 4f-2.
+            </p>
+            <GanttView days={utilDays} />
+          </div>
+        )}
+
+        {view === 'calendar' && (
+          <div className="space-y-4">
+            <h2 className="text-base font-semibold tracking-tight text-fg">Calendar</h2>
+            <p className="text-xs text-fg-muted">
+              Month grid showing per-day crew bars. Bar width ≈ utilization. Idle days highlighted yellow.
+            </p>
+            <CalendarView days={utilDays} />
+          </div>
+        )}
+
+        {view === 'map' && (
+          <div className="rounded-md border border-border bg-surface p-6 text-sm text-fg-muted">
+            Map view ships in 4f-3. Will plot all properties + branches on a Mapbox map with a
+            time scrubber to step through the cycle day-by-day.
+          </div>
+        )}
+
+        {/* List view: existing crew_days + visits tables */}
+        {view === 'list' && (
+        <>
         {/* Crew days */}
         <Card padding="none">
           <div className="border-b border-border px-4 py-3">
@@ -317,12 +423,28 @@ export default function CycleDetailPage() {
             </Table>
           )}
         </Card>
+        </>
+        )}
       </div>
 
       <MoveVisitDialog
         visit={moveTarget}
         onClose={() => setMoveTarget(null)}
         onMoved={() => { setMoveTarget(null); load() }}
+      />
+
+      <HistoryDrawer cycleId={cycleId!} onChange={load} />
+
+      <StatusBar
+        cycleName={`Cycle ${cycle.cycle_number}`}
+        startDate={cycle.start_date}
+        endDate={cycle.end_date}
+        visitsPlaced={placedVisits.length}
+        visitsTotal={visits.length}
+        utilizationPct={portfolioUtilization}
+        idleDays={idleDayCount}
+        optimizationScore={optimizationScore}
+        saveState={saveState}
       />
     </AppShell>
   )
@@ -415,7 +537,35 @@ function MoveVisitDialog({
   )
 }
 
-function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function Stat({
+  label,
+  value,
+  sub,
+  tone = 'default',
+}: {
+  label: string
+  value: string
+  sub?: string
+  tone?: 'default' | 'success' | 'warning' | 'danger'
+}) {
+  const toneClass =
+    tone === 'success'
+      ? 'border-success/40 bg-success/5'
+      : tone === 'warning'
+        ? 'border-warning/40 bg-warning/5'
+        : tone === 'danger'
+          ? 'border-danger/40 bg-danger/5'
+          : 'border-border bg-surface'
+  return (
+    <div className={`rounded-md border ${toneClass} px-3 py-2`}>
+      <p className="text-[10px] uppercase tracking-wider text-fg-subtle">{label}</p>
+      <p className="font-mono text-base font-semibold tabular-nums text-fg leading-tight">{value}</p>
+      {sub && <p className="text-[11px] text-fg-muted font-tabular">{sub}</p>}
+    </div>
+  )
+}
+
+function StatLegacy({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="rounded-md border border-border bg-surface px-3 py-2">
       <p className="text-[10px] uppercase tracking-wider text-fg-subtle">{label}</p>
