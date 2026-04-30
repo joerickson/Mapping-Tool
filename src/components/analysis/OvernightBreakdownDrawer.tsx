@@ -3,9 +3,11 @@
 // how many nights, annual cost). Built fresh on design tokens rather than
 // reusing SlideOver because we need a wider panel + tabular data layout.
 import { useEffect, useState } from 'react'
-import { X } from 'lucide-react'
+import { Loader2, RotateCcw, X } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import { Badge } from '../ui/Badge'
+import Button from '../ui/Button'
+import { Input } from '../ui/Input'
 import { cn } from '../../lib/cn'
 
 interface Trip {
@@ -52,6 +54,13 @@ interface Props {
   onClose: () => void
   accountId: string
   clientId: string
+  // Optional: when set, shows an override input + save/clear so the
+  // user can write hotels_annual_override without leaving the drawer.
+  // Defaults to true; pass `false` for read-only consumers.
+  allowOverride?: boolean
+  // Called after a successful override save so the parent can refresh
+  // its data (e.g. re-run bid pricing).
+  onOverrideSaved?: () => void
 }
 
 export default function OvernightBreakdownDrawer({
@@ -59,11 +68,17 @@ export default function OvernightBreakdownDrawer({
   onClose,
   accountId,
   clientId,
+  allowOverride = true,
+  onOverrideSaved,
 }: Props) {
   const { getToken } = useAuth()
   const [data, setData] = useState<BreakdownData | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [overrideDraft, setOverrideDraft] = useState('')
+  const [overrideEditing, setOverrideEditing] = useState(false)
+  const [savingOverride, setSavingOverride] = useState(false)
+  const [overrideError, setOverrideError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -88,6 +103,57 @@ export default function OvernightBreakdownDrawer({
     load()
     return () => { cancelled = true }
   }, [open, accountId, clientId, getToken])
+
+  // Hydrate the override draft whenever fresh data loads so the input
+  // shows the current override (or blank if none).
+  useEffect(() => {
+    if (!data) return
+    if (data.resolved.basis === 'override') {
+      setOverrideDraft(String(data.resolved.value))
+    } else {
+      setOverrideDraft('')
+    }
+    setOverrideEditing(false)
+    setOverrideError(null)
+  }, [data])
+
+  const refresh = async () => {
+    const token = await getToken()
+    const res = await fetch(
+      `/api/analyses/account/${accountId}/clients/${clientId}/overnight-breakdown`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    )
+    if (res.ok) setData(await res.json())
+  }
+
+  const saveOverride = async (value: number | null) => {
+    setSavingOverride(true)
+    setOverrideError(null)
+    try {
+      const token = await getToken()
+      const res = await fetch(
+        `/api/accounts/${accountId}/clients/${clientId}/operational-constraints`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ hotels_annual_override: value }),
+        }
+      )
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        throw new Error((j as any).error ?? `Save failed: ${res.status}`)
+      }
+      await refresh()
+      onOverrideSaved?.()
+    } catch (err) {
+      setOverrideError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSavingOverride(false)
+    }
+  }
 
   useEffect(() => {
     if (!open) return
@@ -134,7 +200,33 @@ export default function OvernightBreakdownDrawer({
           {error && <p className="text-sm text-danger">{error}</p>}
           {data && (
             <>
-              <SummaryStrip data={data} />
+              <SummaryStrip
+                data={data}
+                allowOverride={allowOverride}
+                editing={overrideEditing}
+                draft={overrideDraft}
+                onDraftChange={setOverrideDraft}
+                onStartEdit={() => setOverrideEditing(true)}
+                onCancel={() => {
+                  setOverrideEditing(false)
+                  setOverrideError(null)
+                  if (data.resolved.basis === 'override') {
+                    setOverrideDraft(String(data.resolved.value))
+                  } else {
+                    setOverrideDraft('')
+                  }
+                }}
+                onSave={async () => {
+                  const n = parseFloat(overrideDraft)
+                  await saveOverride(Number.isFinite(n) ? n : null)
+                  setOverrideEditing(false)
+                }}
+                onClear={async () => {
+                  await saveOverride(null)
+                }}
+                saving={savingOverride}
+                error={overrideError}
+              />
               {data.result.trips.length === 0 ? (
                 <div className="rounded-md border border-border bg-surface-subtle px-4 py-6 text-sm text-fg-muted text-center">
                   No overnight stays required — all properties are within{' '}
@@ -212,18 +304,43 @@ export default function OvernightBreakdownDrawer({
   )
 }
 
-function SummaryStrip({ data }: { data: BreakdownData }) {
+function SummaryStrip({
+  data,
+  allowOverride,
+  editing,
+  draft,
+  onDraftChange,
+  onStartEdit,
+  onCancel,
+  onSave,
+  onClear,
+  saving,
+  error,
+}: {
+  data: BreakdownData
+  allowOverride: boolean
+  editing: boolean
+  draft: string
+  onDraftChange: (v: string) => void
+  onStartEdit: () => void
+  onCancel: () => void
+  onSave: () => void | Promise<void>
+  onClear: () => void | Promise<void>
+  saving: boolean
+  error: string | null
+}) {
+  const isOverride = data.resolved.basis === 'override'
   return (
     <div className="rounded-md border border-border bg-surface-subtle px-4 py-3">
       <div className="flex items-baseline justify-between gap-3 flex-wrap">
         <p className="text-xs uppercase tracking-wider text-fg-subtle">
-          {data.resolved.basis === 'override' ? 'Annual cost (override)' : 'Annual cost (calculated)'}
+          {isOverride ? 'Annual cost (override)' : 'Annual cost (calculated)'}
         </p>
         <p className="font-mono text-2xl font-semibold tabular-nums text-fg">
           ${data.resolved.value.toLocaleString()}
         </p>
       </div>
-      {data.resolved.basis === 'override' && (
+      {isOverride && (
         <p className="mt-1 text-xs text-fg-muted">
           Calculated would have been:{' '}
           <span className="font-tabular">
@@ -243,6 +360,64 @@ function SummaryStrip({ data }: { data: BreakdownData }) {
           value={`${data.result.avg_drive_hours_to_overnight_property} hr`}
         />
       </dl>
+
+      {allowOverride && (
+        <div className="mt-3 pt-3 border-t border-border space-y-1.5">
+          <p className="text-[10px] uppercase tracking-wider text-fg-subtle font-semibold">
+            Override
+          </p>
+          {!editing ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-xs text-fg-muted flex-1">
+                {isOverride
+                  ? `Manually overridden to $${data.resolved.value.toLocaleString()}/yr.`
+                  : 'No override set — bid pricing uses the calculated total.'}
+              </p>
+              <Button size="sm" variant="ghost" onClick={onStartEdit}>
+                {isOverride ? 'Edit' : 'Set override'}
+              </Button>
+              {isOverride && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={onClear}
+                  disabled={saving}
+                  title="Clear override and use the calculated total"
+                >
+                  <RotateCcw className="h-3 w-3 mr-1" />
+                  Clear
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-fg-muted text-sm">$</span>
+              <Input
+                type="number"
+                step="100"
+                value={draft}
+                onChange={(e) => onDraftChange(e.target.value)}
+                className="max-w-[180px]"
+                autoFocus
+              />
+              <Button size="sm" onClick={onSave} disabled={saving}>
+                {saving ? (
+                  <>
+                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    Saving…
+                  </>
+                ) : (
+                  'Save'
+                )}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>
+                Cancel
+              </Button>
+            </div>
+          )}
+          {error && <p className="text-xs text-danger">{error}</p>}
+        </div>
+      )}
     </div>
   )
 }
