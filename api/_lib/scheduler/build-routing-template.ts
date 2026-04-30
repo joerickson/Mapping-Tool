@@ -31,6 +31,9 @@ export interface PropertyForBuild {
   parent_visit_interval_years: number
   base_hours_per_visit: number
   constraints: StoredConstraint[]
+  // Phase 3.8 — per-SL building-size override (forwarded to routeDay so
+  // the in-day pairing rule respects manual reclassifications).
+  building_size_class_override?: 'small' | 'standard' | 'large' | 'multi_day' | null
   eligible_addons: Array<{
     cohort_assignment_id: string
     offering_id: string
@@ -94,6 +97,7 @@ interface VisitSpec {
   lng: number
   constraints: StoredConstraint[]
   address: string
+  building_size_class_override?: 'small' | 'standard' | 'large' | 'multi_day' | null
 }
 
 interface ClusterSpec {
@@ -210,6 +214,7 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
         lng: p.lng,
         constraints: p.constraints,
         address: p.address,
+        building_size_class_override: p.building_size_class_override ?? null,
       })
     }
   }
@@ -396,6 +401,7 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
             hours_per_visit: v.hours_per_visit,
             visits_per_year: 1,
             constraints: v.constraints,
+            building_size_class_override: v.building_size_class_override ?? null,
           }))
           const baseRoutingConfig = {
             crew_size: input.config.crew_size,

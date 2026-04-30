@@ -46,8 +46,10 @@ export default function NewTemplatePage() {
   const [crewCount, setCrewCount] = useState(2)
   const [crewCountUserEdited, setCrewCountUserEdited] = useState(false)
   const [recommendedCrew, setRecommendedCrew] = useState<{
-    count: number
+    count: number // conservative — what to default to
+    optimistic: number | null
     option: string
+    source: 'building_count' | 'option_count'
   } | null>(null)
   const [cycleStartYear, setCycleStartYear] = useState(new Date().getUTCFullYear())
   const [planningMode, setPlanningMode] = useState<'auto' | 'hybrid' | 'manual'>('auto')
@@ -79,14 +81,35 @@ export default function NewTemplatePage() {
         const rows = await latestRes.json()
         const cs = (rows as any[]).find((r) => r.module_key === 'crew_strategy' && r.status === 'completed')
         if (cs?.outputs) {
+          // Phase 3.8 — prefer the new building-count math when present.
+          const cca = cs.outputs.crew_count_analysis as
+            | {
+                conservative: { crews_needed: number }
+                optimistic: { crews_needed: number }
+              }
+            | undefined
           const opt = cs.outputs.recommended_option as string | undefined
-          const count = opt
+          const optionCount = opt
             ? (cs.outputs.options?.[opt]?.crew_count as number | undefined)
             : undefined
-          if (count != null) {
-            setRecommendedCrew({ count, option: opt ?? '?' })
-            // Default to recommendation only if user hasn't manually edited.
-            if (!crewCountUserEdited) setCrewCount(count)
+          if (cca) {
+            const cons = cca.conservative.crews_needed
+            const optimi = cca.optimistic.crews_needed
+            setRecommendedCrew({
+              count: cons,
+              optimistic: optimi !== cons ? optimi : null,
+              option: opt ?? '?',
+              source: 'building_count',
+            })
+            if (!crewCountUserEdited) setCrewCount(cons)
+          } else if (optionCount != null) {
+            setRecommendedCrew({
+              count: optionCount,
+              optimistic: null,
+              option: opt ?? '?',
+              source: 'option_count',
+            })
+            if (!crewCountUserEdited) setCrewCount(optionCount)
           }
         }
       }
@@ -220,9 +243,13 @@ export default function NewTemplatePage() {
               label="Crew count"
               helper={
                 recommendedCrew
-                  ? crewCount === recommendedCrew.count
-                    ? `Recommended from Crew Strategy (Option ${recommendedCrew.option}).`
-                    : `Crew Strategy recommends ${recommendedCrew.count} (Option ${recommendedCrew.option}).`
+                  ? recommendedCrew.source === 'building_count'
+                    ? recommendedCrew.optimistic != null
+                      ? `Recommended: ${recommendedCrew.count} crews (conservative). ${recommendedCrew.optimistic} with small-property pairing.`
+                      : `Recommended: ${recommendedCrew.count} crews from building-count math.`
+                    : crewCount === recommendedCrew.count
+                      ? `Recommended from Crew Strategy (Option ${recommendedCrew.option}).`
+                      : `Crew Strategy recommends ${recommendedCrew.count} (Option ${recommendedCrew.option}).`
                   : 'Run Crew Strategy in Smart Analysis to get a recommendation.'
               }
             >

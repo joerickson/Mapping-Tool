@@ -215,6 +215,9 @@ export interface ServiceLocation {
   display_name?: string | null
   suite_or_floor?: string | null
   serviceable_sqft?: number | null
+  hours_per_visit_override?: number | null
+  building_size_class_override?: 'small' | 'standard' | 'large' | 'multi_day' | null
+  building_size_override_reason?: string | null
   status: ServiceLocationStatus
   winteam_job_number?: string | null
   portfolio_ids?: string[] | null

@@ -55,8 +55,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const rejected: string[] = []
     for (const [k, v] of Object.entries(body)) {
       if (k === 'edit_reason') continue
-      if (isEditableServiceLocationField(k)) updates[k] = v
-      else rejected.push(k)
+      if (isEditableServiceLocationField(k)) {
+        // Phase 3.8 — empty string on the size-class override means "use
+        // auto-computed", which the DB stores as NULL.
+        if (k === 'building_size_class_override' && v === '') {
+          updates[k] = null
+        } else {
+          updates[k] = v
+        }
+      } else rejected.push(k)
     }
 
     if (Object.keys(updates).length === 0) {

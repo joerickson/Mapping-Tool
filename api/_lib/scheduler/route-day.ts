@@ -13,6 +13,10 @@ import {
   type ConstraintEvaluation,
   type StoredConstraint,
 } from './constraint-evaluator.js'
+import {
+  effectiveSizeClass,
+  type BuildingSizeClass,
+} from '../analysis/building-size.js'
 
 export interface PropertyForRouting {
   id: string // service_location_id
@@ -23,6 +27,8 @@ export interface PropertyForRouting {
   hours_per_visit: number
   visits_per_year: number
   constraints: StoredConstraint[]
+  // Phase 3.8 — optional per-SL override of auto-computed size class.
+  building_size_class_override?: BuildingSizeClass | null
 }
 
 export interface DayRoutingInput {
@@ -37,6 +43,11 @@ export interface DayRoutingInput {
     buffer_minutes_per_stop: number
     drive_speed_mph: number
     return_to_branch: boolean
+    // Phase 3.8 — in-day pairing rule. Default cap of 2 buildings/day,
+    // and the second slot only opens when both buildings are 'small'
+    // size class and within the max drive minutes of each other.
+    in_day_pairing_max_drive_minutes?: number
+    in_day_pairing_max_buildings_per_day?: number
   }
   preferences: {
     objective: 'minimize_drive' | 'maximize_properties' | 'balanced'
@@ -152,7 +163,15 @@ export function routeDay(input: DayRoutingInput): DayRoutingResult {
   let currentMin = toMinutes(input.config.work_start_time)
   let sequence = 1
 
+  // Phase 3.8 — in-day pairing rule (max 2 buildings, both small + close
+  // for the second slot). Hardcap regardless of size keeps the operational
+  // reality (setup/breakdown overhead) honest.
+  const maxPerDay = input.config.in_day_pairing_max_buildings_per_day ?? 2
+  const maxPairDriveMin = input.config.in_day_pairing_max_drive_minutes ?? 30
+
   while (remaining.size > 0) {
+    if (route.length >= maxPerDay) break
+
     let bestId: string | null = null
     let bestScore = Infinity
     let bestMeta: {
@@ -182,6 +201,26 @@ export function routeDay(input: DayRoutingInput): DayRoutingResult {
           )
         : 0
       if (workEndMin + returnDriveMin > workEnd) continue
+
+      // Pairing rule: a second building only fits if both are 'small'
+      // class AND within the configured drive radius of each other.
+      if (route.length >= 1) {
+        const candidateClass = effectiveSizeClass({
+          hours_per_visit: p.hours_per_visit,
+          building_size_class_override: p.building_size_class_override,
+        })
+        if (candidateClass !== 'small') continue
+        const firstStop = route[0]
+        const firstProp = candidates.find((c) => c.id === firstStop.service_location_id)
+        if (firstProp) {
+          const firstClass = effectiveSizeClass({
+            hours_per_visit: firstProp.hours_per_visit,
+            building_size_class_override: firstProp.building_size_class_override,
+          })
+          if (firstClass !== 'small') continue
+        }
+        if (driveMin > maxPairDriveMin) continue
+      }
 
       // Soft-constraint penalty at this proposed schedule
       const ctx = {

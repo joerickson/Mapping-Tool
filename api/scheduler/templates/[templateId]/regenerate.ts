@@ -85,7 +85,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Re-load offerings + property hours + cohorts
   const { data: slRows } = await db
     .from('service_locations')
-    .select('id, property_id, service_offering_id, serviceable_sqft, hours_per_visit_override, property:properties(id, address_line1, latitude, longitude)')
+    .select('id, property_id, service_offering_id, serviceable_sqft, hours_per_visit_override, building_size_class_override, property:properties(id, address_line1, latitude, longitude)')
     .in('id', slIds)
   const { data: offeringRows } = await db
     .from('service_offerings')
@@ -203,6 +203,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       parent_visit_interval_years: Number(r.offering.visit_interval_years ?? 0.5),
       base_hours_per_visit: baseHours,
       constraints: constraintsBySl.get(r.sl.id) ?? [],
+      building_size_class_override:
+        (r.sl as any).building_size_class_override ?? null,
       eligible_addons: eligibleAddons,
     }
   }).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))

@@ -33,6 +33,8 @@ import {
   type OvernightConfig,
   type OvernightResult,
 } from '../../../../../_lib/analysis/overnight-calculator.js'
+import { computeCrewCount } from '../../../../../_lib/analysis/crew-count.js'
+import type { BuildingSizeClass } from '../../../../../_lib/analysis/building-size.js'
 
 // Status enum for utilization band evaluation. Order matters for severity:
 // 'overcapacity' > 'underutilized' > 'acceptable' > 'ideal'.
@@ -239,6 +241,13 @@ export function computeCrewStrategy(
   }
 
   const perProperty: PropertyHours[] = []
+  // Phase 3.8 — per-visit list for building-count crew math.
+  const routedVisits: Array<{
+    service_location_id: string
+    hours_per_visit: number
+    building_size_class_override?: BuildingSizeClass | null
+    branch_idx: number
+  }> = []
   let totalAnnualHours = 0
   let totalProjectHours = 0
   let propertiesMissingCoords = 0
@@ -256,6 +265,12 @@ export function computeCrewStrategy(
     }
 
     let propAnnualHours = 0
+    const slHoursForProperty: Array<{
+      sl_id: string
+      hours_per_visit: number
+      visits: number
+      override: BuildingSizeClass | null
+    }> = []
     for (const sl of p.service_locations) {
       const offering = sl.service_offering_id ? offerings.get(sl.service_offering_id) : null
       const cls = offering ? classifyOffering(offering.name) : 'other'
@@ -279,6 +294,13 @@ export function computeCrewStrategy(
       hoursPerVisit = Math.max(hoursPerVisit, 1)
 
       propAnnualHours += hoursPerVisit * visits
+      slHoursForProperty.push({
+        sl_id: sl.id,
+        hours_per_visit: hoursPerVisit,
+        visits,
+        override:
+          (sl.building_size_class_override as BuildingSizeClass | null | undefined) ?? null,
+      })
     }
 
     // Find nearest branch (re-cluster against the chosen branch set so we can
@@ -298,6 +320,20 @@ export function computeCrewStrategy(
       propertiesMissingCoords += 1
     }
 
+    // Emit one routed_visit per (SL × visits/year) for the building-count
+    // math. branch_idx attribution lets us split into per-branch counts
+    // for Option B.
+    for (const sh of slHoursForProperty) {
+      for (let v = 0; v < sh.visits; v++) {
+        routedVisits.push({
+          service_location_id: sh.sl_id,
+          hours_per_visit: sh.hours_per_visit,
+          building_size_class_override: sh.override,
+          branch_idx: bestIdx,
+        })
+      }
+    }
+
     perProperty.push({ property: p, annual_hours: propAnnualHours, branch_idx: bestIdx })
     totalAnnualHours += propAnnualHours
     totalProjectHours += propAnnualHours
@@ -311,10 +347,37 @@ export function computeCrewStrategy(
     branchPropCount[ph.branch_idx] += 1
   }
 
+  // ── Phase 3.8 — Building-count crew math (replaces hours-based) ──────────
+  // 1 building = 1 crew-day (default), with small-property pairing as the
+  // optimistic ceiling. Uses actual working days, not 5/7 of calendar.
+  const crewCountAnalysis = computeCrewCount({
+    routed_visits: routedVisits,
+    cycle_length_days: 365,
+    cycles_per_year: 1,
+  })
+  // Per-branch slice for Option B (each branch's crews scale with its own
+  // building-day workload).
+  const crewCountPerBranch = branches.map((_, i) => {
+    const branchVisits = routedVisits.filter((v) => v.branch_idx === i)
+    if (branchVisits.length === 0) {
+      return { conservative: 1, optimistic: 1 }
+    }
+    const a = computeCrewCount({
+      routed_visits: branchVisits,
+      cycle_length_days: 365,
+      cycles_per_year: 1,
+    })
+    return {
+      conservative: a.conservative.crews_needed,
+      optimistic: a.optimistic.crews_needed,
+    }
+  })
+
   // ── Option A: Roving ──────────────────────────────────────────────────────
-  // Variable cost — paid only for hours worked. Right-size crew count so that
-  // crews × FTE-hours ≈ work-hours / target-utilization.
-  const optionA_crews = Math.max(1, Math.ceil(totalAnnualHours / (FTE_HOURS_PER_YEAR * 0.89)))
+  // Variable cost — paid only for hours worked. Crew count comes from the
+  // building-count math (conservative); cost is hours-based regardless.
+  const optionA_crews = crewCountAnalysis.conservative.crews_needed
+  const optionA_crews_optimistic = crewCountAnalysis.optimistic.crews_needed
   const optionA_labor =
     totalAnnualHours * inputs.hourly_loaded_labor_cost * inputs.crew_size
   const optionA_util_pct =
@@ -349,49 +412,19 @@ export function computeCrewStrategy(
     }
   })
 
-  // ── Option B: Dedicated — size each branch to fit the utilization band ───
-  // Algorithm per spec:
-  //   start = max(1, floor(work / FTE))
-  //   if util > soft_ceiling, try N+1 until in band or no improvement
-  //   if util < hard_floor, try N-1 (min 1) until in band or no improvement
-  // Status comes from classifyUtilization on the final crew count.
+  // ── Option B: Dedicated — size each branch from building-count math ──────
+  // Each branch gets ceil(branch_building_days / branch_working_days).
+  // The utilization band is no longer the primary driver — it survives
+  // below as informational annotation on the per-branch breakdown.
   const band = inputs.utilization_constraint
   const bandActive = band.enabled
-  const crewsPerBranch = new Array(branches.length).fill(1)
-  for (let i = 0; i < branches.length; i++) {
-    const work = branchHours[i]
-    if (work <= 0) {
-      crewsPerBranch[i] = 1
-      continue
-    }
-    let n = Math.max(1, Math.floor(work / FTE_HOURS_PER_YEAR))
-    if (bandActive) {
-      // Bump up while overcapacity
-      let util = (work / (n * FTE_HOURS_PER_YEAR)) * 100
-      while (util > band.soft_ceiling_pct && n < 10) {
-        n += 1
-        util = (work / (n * FTE_HOURS_PER_YEAR)) * 100
-      }
-      // Bump down while underutilized + still has slack
-      while (n > 1 && (work / ((n - 1) * FTE_HOURS_PER_YEAR)) * 100 <= band.soft_ceiling_pct) {
-        const newUtil = (work / ((n - 1) * FTE_HOURS_PER_YEAR)) * 100
-        if (newUtil < band.hard_floor_pct) break // would push below floor — stop
-        n -= 1
-      }
-    } else {
-      // Constraint disabled → fall back to legacy "largest branch gets +1"
-      n = 1
-    }
-    crewsPerBranch[i] = n
-  }
-  // Legacy "+1 to largest" fallback when band disabled
-  if (!bandActive && branches.length >= 1) {
-    const largestIdx = branches
-      .map((_, i) => i)
-      .sort((a, b) => branchHours[b] - branchHours[a])[0]
-    crewsPerBranch[largestIdx] = 2
-  }
+  const crewsPerBranch = crewCountPerBranch.map((c) => Math.max(1, c.conservative))
+  const crewsPerBranchOptimistic = crewCountPerBranch.map((c) => Math.max(1, c.optimistic))
   const optionB_crews = crewsPerBranch.reduce((a: number, b: number) => a + b, 0)
+  const optionB_crews_optimistic = crewsPerBranchOptimistic.reduce(
+    (a: number, b: number) => a + b,
+    0
+  )
 
   const optionB_labor =
     optionB_crews * FTE_HOURS_PER_YEAR * inputs.hourly_loaded_labor_cost * inputs.crew_size
@@ -404,6 +437,7 @@ export function computeCrewStrategy(
     city_state: string
     population: number | null
     crew_count: number
+    crew_count_optimistic: number
     work_hours: number
     available_hours: number
     utilization_pct: number
@@ -437,6 +471,7 @@ export function computeCrewStrategy(
       city_state: branchMeta[i].city_state,
       population: branchMeta[i].population,
       crew_count: crews,
+      crew_count_optimistic: crewsPerBranchOptimistic[i],
       work_hours: Math.round(branchHours[i]),
       available_hours: Math.round(available),
       utilization_pct: utilPct,
@@ -500,17 +535,22 @@ export function computeCrewStrategy(
 
   let recommended: 'A' | 'B' | 'C' = 'B'
   let recommendedRationale = ''
+  const buildingMath = `${routedVisits.length} building-days ÷ ${crewCountAnalysis.conservative.working_days_per_cycle} working days = ${crewCountAnalysis.conservative.crews_needed} crews (conservative)${
+    crewCountAnalysis.optimistic.crews_needed !== crewCountAnalysis.conservative.crews_needed
+      ? `, ${crewCountAnalysis.optimistic.crews_needed} with small-property pairing`
+      : ''
+  }.`
   if (properties.length > 400 && distinctStates > 5) {
     recommended = 'B'
-    recommendedRationale = `${properties.length} properties across ${distinctStates} states — Option B (Dedicated) is the most defensible choice for Year 1. Predictable operations, simple to staff, and easier to bid against. Consider Option A in Year 2-3 once dispatch is dialed in.`
+    recommendedRationale = `${properties.length} properties across ${distinctStates} states — Option B (Dedicated) is the most defensible choice for Year 1. ${buildingMath} Predictable operations, simple to staff, and easier to bid against. Consider Option A in Year 2-3 once dispatch is dialed in.`
   } else if (cVsBSavingsPct > 0.15) {
     recommended = 'C'
     recommendedRationale = `Option C saves ${Math.round(
       cVsBSavingsPct * 100
-    )}% in labor vs Option B. Strong candidate IF surge sourcing is reliable in this region — verify with regional ops before committing.`
+    )}% in labor vs Option B. ${buildingMath} Strong candidate IF surge sourcing is reliable in this region — verify with regional ops before committing.`
   } else {
     recommended = 'B'
-    recommendedRationale = `Option B (Dedicated) is the recommended baseline. Option C savings are below the 15% threshold needed to justify surge sourcing risk.`
+    recommendedRationale = `Option B (Dedicated) is the recommended baseline. ${buildingMath} Option C savings are below the 15% threshold needed to justify surge sourcing risk.`
   }
 
   // ── Per-region rollup for Option B ────────────────────────────────────────
@@ -677,6 +717,7 @@ export function computeCrewStrategy(
     A: {
       label: 'Roving Crews',
       crew_count: optionA_crews,
+      crew_count_optimistic: optionA_crews_optimistic,
       utilization_pct: optionA_util_pct,
       annual_labor_cost: Math.round(optionA_labor),
       annual_vehicle_cost: Math.round(optionA_vehicle),
@@ -699,6 +740,7 @@ export function computeCrewStrategy(
     B: {
       label: 'Dedicated Crews',
       crew_count: optionB_crews,
+      crew_count_optimistic: optionB_crews_optimistic,
       utilization_pct: optionB_util_pct,
       annual_labor_cost: Math.round(optionB_labor),
       annual_vehicle_cost: Math.round(optionB_vehicle),
@@ -775,6 +817,7 @@ export function computeCrewStrategy(
       property_count: properties.length,
       k_used: kUsed,
       total_project_hours_per_year: Math.round(totalProjectHours),
+      crew_count_analysis: crewCountAnalysis,
       branches: branches.map((b, i) => ({
         ...b,
         city_state: branchMeta[i].city_state,
