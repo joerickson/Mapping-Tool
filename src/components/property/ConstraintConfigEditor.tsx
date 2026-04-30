@@ -79,23 +79,26 @@ function DayOfWeekForm({
         {DAY_LABELS.map((label, i) => {
           const on = days.has(i)
           return (
-            <label
+            <button
               key={i}
-              className={cn(
-                'flex-1 text-center rounded-md border-2 px-2 py-2 text-xs font-medium transition-colors cursor-pointer',
-                on
-                  ? 'border-accent bg-accent text-accent-fg'
-                  : 'border-border bg-surface text-fg-subtle hover:border-border-strong hover:text-fg'
-              )}
+              type="button"
+              onClick={() => toggle(i)}
+              style={{
+                flex: 1,
+                borderRadius: 6,
+                borderWidth: 2,
+                borderStyle: 'solid',
+                padding: '8px',
+                fontSize: 12,
+                fontWeight: 500,
+                cursor: 'pointer',
+                backgroundColor: on ? '#4f46e5' : '#ffffff',
+                color: on ? '#ffffff' : '#71717a',
+                borderColor: on ? '#4f46e5' : '#e4e4e7',
+              }}
             >
-              <input
-                type="checkbox"
-                checked={on}
-                onChange={() => toggle(i)}
-                className="sr-only"
-              />
               {label}
-            </label>
+            </button>
           )
         })}
       </div>

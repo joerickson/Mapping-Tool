@@ -38,17 +38,22 @@ SelectTrigger.displayName = SelectPrimitive.Trigger.displayName
 export const SelectContent = forwardRef<
   React.ElementRef<typeof SelectPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Content>
->(({ className, children, position = 'popper', ...props }, ref) => (
+>(({ className, children, position = 'popper', style, ...props }, ref) => (
   <SelectPrimitive.Portal>
     <SelectPrimitive.Content
       ref={ref}
       position={position}
-      // No fade-in — user reported the open animation showed content
-      // through the dropdown. Skip the opacity transition; keep the
-      // subtle scale.
+      // Inline opaque background — user reported dropdowns showed
+      // content through them. Inline style overrides any class merge
+      // ordering issue.
+      style={{
+        backgroundColor: 'var(--color-bg-elevated, #ffffff)',
+        opacity: 1,
+        ...style,
+      }}
       className={cn(
-        'relative z-50 max-h-96 min-w-[8rem] overflow-hidden rounded-md border border-border bg-surface-elevated text-fg',
-        'shadow-md',
+        'relative z-50 max-h-96 min-w-[8rem] overflow-hidden rounded-md border border-border text-fg',
+        'shadow-2xl',
         'data-[state=open]:animate-in data-[state=closed]:animate-out',
         'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
         position === 'popper' &&

@@ -43,17 +43,22 @@ export interface DialogContentProps
 export const DialogContent = forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
->(({ className, children, hideClose, ...props }, ref) => (
+>(({ className, children, hideClose, style, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}
-      // No fade-in — the user reported the open animation made the
-      // dialog briefly transparent enough to read content underneath.
-      // Keep the gentle scale (zoom-in-95) but skip opacity entirely.
+      // Inline opaque background as a defensive measure — user reported
+      // popups appearing translucent across browsers. An inline style
+      // can't be overridden by tailwind class-merge order.
+      style={{
+        backgroundColor: 'var(--color-bg-elevated, #ffffff)',
+        opacity: 1,
+        ...style,
+      }}
       className={cn(
         'fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%]',
-        'gap-4 border border-border bg-surface-elevated p-6 shadow-lg rounded-lg',
+        'gap-4 border border-border p-6 shadow-2xl rounded-lg',
         'data-[state=open]:animate-in data-[state=closed]:animate-out',
         'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
         className

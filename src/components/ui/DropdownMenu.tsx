@@ -19,11 +19,14 @@ export const DropdownMenuContent = forwardRef<
     <DropdownMenuPrimitive.Content
       ref={ref}
       sideOffset={sideOffset}
-      // No fade-in — popups must be solid from the moment they appear so
-      // labels behind them can never be read through.
+      // Inline opaque background. Defensive against class-merge ordering.
+      style={{
+        backgroundColor: 'var(--color-bg-elevated, #ffffff)',
+        opacity: 1,
+      }}
       className={cn(
-        'z-50 min-w-[12rem] overflow-hidden rounded-md border border-border bg-surface-elevated p-1',
-        'shadow-md text-fg',
+        'z-50 min-w-[12rem] overflow-hidden rounded-md border border-border p-1',
+        'shadow-2xl text-fg',
         'data-[state=open]:animate-in data-[state=closed]:animate-out',
         'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
         'data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2',
