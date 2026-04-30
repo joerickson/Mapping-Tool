@@ -12,6 +12,7 @@ import {
   applyVisitStatus,
   recordEdit,
 } from '../../_lib/scheduler/edit-history.js'
+import { moveVisit } from '../../_lib/scheduler/edit-propagation.js'
 
 export const config = { maxDuration: 60 }
 
@@ -72,7 +73,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (action === 'move') {
         const newDate = body.payload?.to_date as string | undefined
         if (!newDate) continue
-        await applyVisitMove(db, { visit_id: id, to_date: newDate })
+        const propagate = body.payload?.propagate_to_template === true
+        if (propagate) {
+          // Use the propagation helper so template.trips is also updated.
+          // moveVisit handles per-row propagation under the hood.
+          await moveVisit(db, {
+            visitId: id,
+            newScheduledDate: newDate,
+            propagateToTemplate: true,
+            editedBy: userId,
+          })
+        } else {
+          await applyVisitMove(db, { visit_id: id, to_date: newDate })
+        }
         forward.push({ visit_id: id, to_date: newDate })
         reverse.push({ visit_id: id, to_date: cur.scheduled_date, to_sequence: cur.sequence_in_day })
       } else if (action === 'lock') {
@@ -104,6 +117,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         reverse_payload: { action: reverseAction(action), items: reverse },
         description: bulkDescription(action, forward.length),
         edited_by: userId,
+        propagated_to_template: action === 'move' && body.payload?.propagate_to_template === true,
       })
     } catch (err) {
       console.error('[bulk-action] history record failed:', err)

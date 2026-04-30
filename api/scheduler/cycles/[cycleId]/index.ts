@@ -15,7 +15,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!cycle) return res.status(404).json({ error: 'Cycle not found' })
     const { data: visits } = await db
       .from('scheduled_visits')
-      .select('*, service_locations(id, display_name, property:properties(id, address_line1))')
+      .select('*, service_locations(id, display_name, property:properties(id, address_line1, latitude, longitude))')
       .eq('cycle_instance_id', id)
       .order('scheduled_date', { ascending: true })
     const { data: crewDays } = await db
