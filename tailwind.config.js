@@ -102,6 +102,20 @@ export default {
       ringColor: {
         DEFAULT: 'var(--color-ring)',
       },
+
+      // Phase E — page-route transition. AppShell re-keys <main> on
+      // pathname change so this animation replays. Tailwind's motion-safe:
+      // variant pairs with prefers-reduced-motion to skip the animation
+      // when the user has requested less motion.
+      keyframes: {
+        'page-fade-in': {
+          '0%': { opacity: '0', transform: 'translateY(2px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+      },
+      animation: {
+        'page-fade-in': 'page-fade-in 150ms ease-out',
+      },
     },
   },
   plugins: [

@@ -13,6 +13,7 @@
 // `sidebar={null}` or just omit the prop. The shell still renders the
 // TopBar so the chrome stays consistent.
 import { useSyncExternalStore, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 import TopBar, { type BreadcrumbItem } from './TopBar'
@@ -51,6 +52,10 @@ export default function AppShell({
   )
   const [mobileOpen, setMobileOpen] = useState(false)
   const hasSidebar = !!sidebar
+  // Phase E — re-key the <main> on each pathname so the fade-in transition
+  // re-runs between routes. Hash changes (#module-…) don't bump the key,
+  // which is what we want — anchor scroll shouldn't trigger a fade.
+  const { pathname } = useLocation()
 
   return (
     <div className="flex h-screen flex-col bg-surface text-fg">
@@ -138,10 +143,12 @@ export default function AppShell({
           </DialogPrimitive.Root>
         )}
 
-        {/* Main content */}
+        {/* Main content. Re-keyed by pathname so the route-change fade-in
+            replays — see comment in the page-transition CSS in index.css. */}
         <main
+          key={pathname}
           className={cn(
-            'flex-1 min-w-0',
+            'flex-1 min-w-0 motion-safe:animate-page-fade-in',
             fullBleed ? 'overflow-hidden' : 'overflow-y-auto'
           )}
         >
