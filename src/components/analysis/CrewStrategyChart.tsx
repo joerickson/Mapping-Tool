@@ -181,6 +181,11 @@ export default function CrewStrategyChart({
   // if the user hasn't picked one.
   const [selectedOption, setSelectedOption] = useState<'A' | 'B' | 'C' | null>(null)
   const [savingSelection, setSavingSelection] = useState<'A' | 'B' | 'C' | null>(null)
+  // Phase 4.2 — manual per-branch crew override. Empty object = no
+  // override; non-empty = bid pricing uses these counts.
+  const [crewOverride, setCrewOverride] = useState<Record<string, number>>({})
+  const [overrideEnabled, setOverrideEnabled] = useState(false)
+  const [savingOverride, setSavingOverride] = useState(false)
 
   useEffect(() => {
     if (!accountId || !clientId) return
@@ -197,6 +202,16 @@ export default function CrewStrategyChart({
         if (!cancelled) {
           const v = j?.crew_strategy_selected_option
           setSelectedOption(v === 'A' || v === 'B' || v === 'C' ? v : null)
+          const ov = j?.crew_count_per_branch_override
+          if (ov && typeof ov === 'object') {
+            const cleaned: Record<string, number> = {}
+            for (const [k, val] of Object.entries(ov)) {
+              const n = Number(val)
+              if (Number.isFinite(n) && n > 0) cleaned[k] = Math.floor(n)
+            }
+            setCrewOverride(cleaned)
+            setOverrideEnabled(Object.keys(cleaned).length > 0)
+          }
         }
       } catch {
         // non-fatal — fall back to recommended_option
@@ -236,6 +251,37 @@ export default function CrewStrategyChart({
     }
   }
 
+  const saveOverride = async (
+    nextOverride: Record<string, number>,
+    enabled: boolean
+  ) => {
+    if (!accountId || !clientId) return
+    setSavingOverride(true)
+    try {
+      const token = await getToken()
+      const body = enabled && Object.keys(nextOverride).length > 0
+        ? { crew_count_per_branch_override: nextOverride }
+        : { crew_count_per_branch_override: null }
+      await fetch(
+        `/api/accounts/${accountId}/clients/${clientId}/operational-constraints`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(body),
+        }
+      )
+    } finally {
+      setSavingOverride(false)
+    }
+  }
+
+  const overrideTotal = Object.values(crewOverride).reduce(
+    (s, v) => s + (Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0),
+    0
+  )
   const activeOption: 'A' | 'B' | 'C' = selectedOption ?? data.recommended_option
   // Per-branch breakdown comes from Option B but applies to any allocation
   // discussion; surface it as a dedicated panel above the option cards.
@@ -568,6 +614,117 @@ export default function CrewStrategyChart({
           )
         })}
       </div>
+
+      {/* Phase 4.2 — Manual per-branch crew override. Beats A/B/C
+          selection in Bid Pricing when toggled on. */}
+      {(data.branches?.length ?? 0) > 0 && (
+        <Card padding="md" className={overrideEnabled ? 'border-accent ring-1 ring-accent' : undefined}>
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+                Manual crew override
+              </p>
+              <p className="mt-1 text-sm text-fg">
+                Set the exact number of crews per branch. When on,
+                Bid Pricing uses these counts instead of Option {activeOption}.
+              </p>
+            </div>
+            <label className="inline-flex items-center gap-2 text-sm cursor-pointer self-center">
+              <input
+                type="checkbox"
+                checked={overrideEnabled}
+                onChange={(e) => {
+                  const enabled = e.target.checked
+                  setOverrideEnabled(enabled)
+                  // Auto-seed inputs from Option B branch breakdown so the user
+                  // has a starting point on first enable.
+                  if (enabled && Object.keys(crewOverride).length === 0) {
+                    const seed: Record<string, number> = {}
+                    for (const b of branchBreakdown) {
+                      seed[b.branch_name] = b.crew_count
+                    }
+                    setCrewOverride(seed)
+                    void saveOverride(seed, true)
+                  } else {
+                    void saveOverride(crewOverride, enabled)
+                  }
+                }}
+                className="rounded border-border accent-accent"
+              />
+              <span className="font-medium text-fg">
+                {overrideEnabled ? 'Override active' : 'Use Option ' + activeOption}
+              </span>
+            </label>
+          </div>
+
+          {overrideEnabled && (
+            <div className="mt-4 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {(data.branches ?? []).map((b) => {
+                  const value = crewOverride[b.name] ?? 0
+                  const breakdown = branchBreakdown.find(
+                    (bb) => bb.branch_name === b.name
+                  )
+                  return (
+                    <div
+                      key={b.name}
+                      className="rounded-md border border-border bg-surface-subtle/40 p-3"
+                    >
+                      <p className="text-sm font-semibold text-fg truncate">
+                        {b.city_state || b.name}
+                      </p>
+                      {breakdown && (
+                        <p className="text-[10px] text-fg-subtle mt-0.5">
+                          {breakdown.property_count} properties ·{' '}
+                          {breakdown.work_hours.toLocaleString()} hr/yr · rec:{' '}
+                          <span className="font-tabular">{breakdown.crew_count}</span> crews
+                        </p>
+                      )}
+                      <div className="mt-2 flex items-center gap-2">
+                        <label className="text-xs text-fg-muted">Crews:</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          value={value}
+                          onChange={(e) => {
+                            const raw = e.target.value
+                            const n = raw === '' ? 0 : Math.max(0, Math.floor(Number(raw)))
+                            setCrewOverride((prev) => {
+                              const next = { ...prev, [b.name]: n }
+                              return next
+                            })
+                          }}
+                          onBlur={() => void saveOverride(crewOverride, true)}
+                          className="w-20 h-8 rounded-md border border-border bg-surface px-2 text-sm font-mono text-fg focus-visible:outline-none focus-visible:border-border-focus focus-visible:ring-2 focus-visible:ring-accent"
+                        />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+              <div className="flex items-center justify-between pt-2 border-t border-border">
+                <p className="text-sm text-fg">
+                  Total crews:{' '}
+                  <span className="font-mono font-semibold tabular-nums">
+                    {overrideTotal}
+                  </span>
+                  <span className="text-xs text-fg-muted ml-2">
+                    (vs Option {activeOption}:{' '}
+                    <span className="font-tabular">
+                      {data.options[activeOption].crew_count}
+                    </span>
+                    )
+                  </span>
+                </p>
+                <p className="text-xs text-fg-subtle">
+                  {savingOverride ? 'Saving…' : 'Auto-saves on blur. Re-run Bid Pricing to apply.'}
+                </p>
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
 
       {/* Utilization breakdown for Option B (driven by user-selected scope) */}
       {data.options.B.utilization_breakdown && (
