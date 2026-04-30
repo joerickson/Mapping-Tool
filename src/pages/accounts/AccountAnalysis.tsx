@@ -287,25 +287,8 @@ export default function AccountAnalysisPage() {
         setRunning((prev) => ({ ...prev, ...resumeRunning }))
       }
 
-      // Hydrate map branches from the latest completed branch_optimization
-      const bo = byModule.branch_optimization
-      if (bo && bo.status === 'completed' && bo.outputs) {
-        const recommended = bo.outputs.k_results?.find(
-          (r: any) => r.k === bo.outputs.recommended_k
-        )
-        if (recommended) {
-          setMapBranches(
-            recommended.branches.map((b: any) => ({
-              name: b.city_state,
-              lat: b.lat,
-              lng: b.lng,
-              population: b.population ?? null,
-              property_count: b.property_count ?? undefined,
-            }))
-          )
-        }
-      }
-
+      // mapBranches is derived in a separate effect that prefers the user's
+      // selected_branches over the optimization's recommended_k.
       setMapPoints(propsRes.points)
     } finally {
       setMapLoading(false)
@@ -316,6 +299,63 @@ export default function AccountAnalysisPage() {
     loadEverything()
     refreshConstraints()
   }, [loadEverything, refreshConstraints])
+
+  // Derive the map's branch markers from whatever the user is *actually*
+  // committed to. Prefers their saved selection (selectedBranches) over the
+  // optimization's recommended_k — those can diverge (e.g. recommended K=2,
+  // user picked K=3) and the map needs to reflect what's deployed, not what
+  // was suggested. Re-runs whenever either source changes (a fresh
+  // optimization run or a save in the Build Selection modal).
+  useEffect(() => {
+    // 1. User selection wins.
+    if (selectedBranches && selectedBranches.length > 0) {
+      // Try to enrich with population/property_count from the matching
+      // recommended row when K matches — falls back to bare selection
+      // otherwise. Coordinate match within ~1km tolerance.
+      const bo = latestByModule.branch_optimization
+      const recRow =
+        bo?.outputs?.k_results?.find((r: any) => r.k === selectedBranches.length) ?? null
+      const recBranches: any[] = recRow?.branches ?? []
+      const findMatch = (lat: number, lng: number) =>
+        recBranches.find(
+          (rb) => Math.abs(rb.lat - lat) < 0.01 && Math.abs(rb.lng - lng) < 0.01
+        )
+      setMapBranches(
+        selectedBranches.map((b) => {
+          const m = findMatch(b.lat, b.lng)
+          return {
+            name: b.city_state || b.name,
+            lat: b.lat,
+            lng: b.lng,
+            population: m?.population ?? null,
+            property_count: m?.property_count ?? undefined,
+          }
+        })
+      )
+      return
+    }
+    // 2. Fallback: optimization's recommended branches.
+    const bo = latestByModule.branch_optimization
+    if (bo && bo.status === 'completed' && bo.outputs) {
+      const recommended = bo.outputs.k_results?.find(
+        (r: any) => r.k === bo.outputs.recommended_k
+      )
+      if (recommended) {
+        setMapBranches(
+          recommended.branches.map((b: any) => ({
+            name: b.city_state,
+            lat: b.lat,
+            lng: b.lng,
+            population: b.population ?? null,
+            property_count: b.property_count ?? undefined,
+          }))
+        )
+        return
+      }
+    }
+    // 3. Nothing to render.
+    setMapBranches([])
+  }, [selectedBranches, latestByModule.branch_optimization])
 
   // ─── Build-selection modal handlers ───
   const openBuildModal = useCallback(
@@ -429,26 +469,9 @@ export default function AccountAnalysisPage() {
             delete next[moduleKey]
             return next
           })
-          if (
-            row.status === 'completed' &&
-            row.module_key === 'branch_optimization' &&
-            row.outputs
-          ) {
-            const recommended = row.outputs.k_results?.find(
-              (r: any) => r.k === row.outputs.recommended_k
-            )
-            if (recommended) {
-              setMapBranches(
-                recommended.branches.map((b: any) => ({
-                  name: b.city_state,
-                  lat: b.lat,
-                  lng: b.lng,
-                  population: b.population ?? null,
-                  property_count: b.property_count ?? undefined,
-                }))
-              )
-            }
-          }
+          // mapBranches updates via the derive-from-state effect above; no
+          // inline setMapBranches needed here. The setLatestByModule call
+          // triggers the dependency.
         }
       } catch (err: any) {
         setLastPollError((prev) => ({
@@ -537,26 +560,7 @@ export default function AccountAnalysisPage() {
           if (rowRes.ok) {
             const row: AnalysisRow = await rowRes.json()
             setLatestByModule((prev) => ({ ...prev, [moduleKey]: row }))
-            if (
-              row.status === 'completed' &&
-              row.module_key === 'branch_optimization' &&
-              row.outputs
-            ) {
-              const recommended = row.outputs.k_results?.find(
-                (r: any) => r.k === row.outputs.recommended_k
-              )
-              if (recommended) {
-                setMapBranches(
-                  recommended.branches.map((b: any) => ({
-                    name: b.city_state,
-                    lat: b.lat,
-                    lng: b.lng,
-                    population: b.population ?? null,
-                    property_count: b.property_count ?? undefined,
-                  }))
-                )
-              }
-            }
+            // mapBranches derives via the effect; no inline update needed.
           }
         }
 
