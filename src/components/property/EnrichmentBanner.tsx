@@ -2,7 +2,7 @@
 // every property under (account, client) is already enriched. Surfaces
 // pending+failed counts and lets the user kick off a scoped run.
 import { useCallback, useEffect, useState } from 'react'
-import { Loader2, MapPinOff, Sparkles, CheckCircle2 } from 'lucide-react'
+import { Loader2, MapPinOff, Sparkles, CheckCircle2, RefreshCw } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import Button from '../ui/Button'
 
@@ -90,15 +90,41 @@ export default function EnrichmentBanner({ clientId, onEnriched, refreshKey }: P
     }
   }
 
-  if (loading) return null
+  // Always render some state — silent null-returns hid bugs in the past
+  // (e.g. when an upstream fetch errored and the banner just disappeared
+  // with no signal to the user that enrichment was needed). Loading
+  // shows a small placeholder, error shows itself with a Refresh button,
+  // and total=0 shows a tiny "no properties yet" line.
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 rounded-md border border-border bg-surface-subtle px-4 py-2 text-xs text-fg-muted">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        Checking enrichment status…
+      </div>
+    )
+  }
+  if (error && !stats) {
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-md border border-danger/30 bg-danger/5 px-4 py-2 text-xs">
+        <span className="text-danger">Couldn't load enrichment status: {error}</span>
+        <Button size="sm" variant="ghost" onClick={fetchStats}>
+          <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+          Retry
+        </Button>
+      </div>
+    )
+  }
   if (!stats) return null
-  // Hide entirely when there's nothing to do AND nothing to report.
-  const everythingEnriched = stats.total > 0 && stats.pending === 0 && stats.failed === 0
 
   if (stats.total === 0) {
-    return null
+    return (
+      <div className="flex items-center gap-2 rounded-md border border-border bg-surface-subtle px-4 py-2 text-xs text-fg-muted">
+        No properties under this client yet.
+      </div>
+    )
   }
 
+  const everythingEnriched = stats.total > 0 && stats.pending === 0 && stats.failed === 0
   if (everythingEnriched && !message && !error) {
     return (
       <div className="flex items-center justify-between gap-3 rounded-md border border-success/30 bg-success/5 px-4 py-2.5 text-sm">
@@ -108,11 +134,19 @@ export default function EnrichmentBanner({ clientId, onEnriched, refreshKey }: P
             All <span className="font-tabular">{stats.enriched}</span> properties enriched.
           </span>
         </div>
-        {stats.no_coords > 0 && (
-          <span className="text-xs text-fg-muted">
-            {stats.no_coords} still missing coordinates
-          </span>
-        )}
+        <div className="flex items-center gap-3 text-xs text-fg-muted">
+          {stats.no_coords > 0 && (
+            <span>{stats.no_coords} still missing coordinates</span>
+          )}
+          <button
+            onClick={fetchStats}
+            className="text-fg-subtle hover:text-fg transition-colors inline-flex items-center gap-1"
+            aria-label="Refresh enrichment status"
+            title="Refresh enrichment status"
+          >
+            <RefreshCw className="h-3 w-3" />
+          </button>
+        </div>
       </div>
     )
   }
