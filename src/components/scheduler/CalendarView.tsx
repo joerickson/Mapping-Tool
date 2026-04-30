@@ -130,6 +130,13 @@ export default function CalendarView({ days, onDayClick, onCellDrop }: Props) {
           const cellDays = cellsByDate.get(c.date) ?? []
           const hasIdle = cellDays.some((d) => d.state.kind === 'idle')
           const isDragOver = dragOverDate === c.date
+          // Sort: working crews first, idle/between last (so the
+          // useful info reads top-down in the cell).
+          const sortedCellDays = [...cellDays].sort((a, b) => {
+            const order = (k: string) =>
+              k === 'idle' || k === 'between_trips' ? 1 : 0
+            return order(a.state.kind) - order(b.state.kind) || a.crew_index - b.crew_index
+          })
           return (
             <div
               key={c.date}
@@ -156,17 +163,19 @@ export default function CalendarView({ days, onDayClick, onCellDrop }: Props) {
               }}
               onClick={() => onDayClick?.(c.date!)}
               className={cn(
-                'border-r border-b border-border p-1.5 text-left flex flex-col gap-1 hover:bg-surface-subtle transition-colors cursor-pointer',
+                'border-r border-b border-border p-1.5 text-left flex flex-col gap-0.5 hover:bg-surface-subtle transition-colors cursor-pointer',
                 hasIdle && 'bg-warning/5',
                 isDragOver && 'ring-2 ring-warning ring-inset'
               )}
-              style={{ minHeight: 96 }}
+              style={{ minHeight: 110 }}
             >
               <p className="text-xs font-tabular text-fg-muted">{c.dom}</p>
-              {cellDays.map((d) => {
-                const pct = d.utilization_pct
+              {sortedCellDays.map((d) => {
                 const isIdle = d.state.kind === 'idle' || d.state.kind === 'between_trips'
                 const draggable = !isIdle
+                const label = isIdle
+                  ? d.state.kind === 'idle' ? 'idle' : 'between'
+                  : d.trip_label ?? '—'
                 return (
                   <div
                     key={d.crew_index}
@@ -183,18 +192,32 @@ export default function CalendarView({ days, onDayClick, onCellDrop }: Props) {
                       setDragOverDate(null)
                     }}
                     className={cn(
-                      'h-1.5 rounded-sm',
-                      isIdle ? 'bg-fg-subtle/30' : CREW_COLORS[d.crew_index % CREW_COLORS.length],
-                      d.state.kind === 'partial' && 'opacity-50',
+                      'flex items-center gap-1 text-[10px] leading-tight rounded px-1 py-0.5',
+                      isIdle
+                        ? 'bg-danger/10 text-danger'
+                        : 'bg-surface-subtle hover:bg-surface',
+                      d.state.kind === 'partial' && 'opacity-80',
                       draggable && 'cursor-grab'
                     )}
-                    style={{ width: `${Math.max(10, pct)}%` }}
                     title={`${d.crew_label}: ${d.work_hours_scheduled.toFixed(1)}h · ${d.state.kind}${draggable ? ' (drag to move)' : ''}`}
-                  />
+                  >
+                    <span
+                      className={cn(
+                        'h-2 w-2 rounded-full shrink-0',
+                        isIdle ? 'bg-danger/60' : CREW_COLORS[d.crew_index % CREW_COLORS.length]
+                      )}
+                    />
+                    <span className="truncate flex-1 font-medium text-fg">{label}</span>
+                    {!isIdle && (
+                      <span className="font-tabular text-fg-muted shrink-0">
+                        {d.work_hours_scheduled.toFixed(1)}h
+                      </span>
+                    )}
+                  </div>
                 )
               })}
               {hasIdle && (
-                <div className="text-[10px] text-danger flex items-center gap-1 mt-auto">
+                <div className="text-[9px] text-danger/70 flex items-center gap-1 mt-auto pt-0.5">
                   <AlertTriangle className="h-2.5 w-2.5" />
                   {cellDays.filter((d) => d.state.kind === 'idle').length} idle
                 </div>
