@@ -1,4 +1,20 @@
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+  CartesianGrid,
+} from 'recharts'
+import { Card } from '../ui/Card'
+import {
+  CHART_CATEGORICAL,
+  tickStyle,
+  tooltipStyle,
+  useChartTheme,
+} from '../../hooks/useChartTheme'
 
 interface BidOutputs {
   property_count: number
@@ -35,18 +51,6 @@ interface BidOutputs {
   }
 }
 
-const BUILDUP_COLOR: Record<string, string> = {
-  direct_labor: '#3b82f6',
-  vehicle_fuel: '#0891b2',
-  vehicle_lease: '#0284c7',
-  hotels: '#14b8a6',
-  supplies: '#84cc16',
-  branch_overhead: '#a855f7',
-  insurance: '#d946ef',
-  corporate_overhead: '#ec4899',
-  margin: '#16a34a',
-}
-
 const ROW_LABELS: Record<string, string> = {
   direct_labor: 'Direct labor',
   vehicle_fuel: 'Vehicle fuel',
@@ -60,6 +64,7 @@ const ROW_LABELS: Record<string, string> = {
 }
 
 export default function BidPricingChart({ data }: { data: BidOutputs }) {
+  const theme = useChartTheme()
   const buildupRows = [
     { key: 'direct_labor', value: data.cost_buildup.direct_labor },
     { key: 'vehicle_fuel', value: data.cost_buildup.vehicle_fuel },
@@ -73,116 +78,155 @@ export default function BidPricingChart({ data }: { data: BidOutputs }) {
   ].filter((r) => r.value > 0)
 
   return (
-    <div className="space-y-5">
-      {/* Headline bid number */}
-      <div className="bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 border-2 border-green-200 rounded-xl p-5">
-        <div className="text-xs font-semibold text-green-800 uppercase tracking-wide">
+    <div className="space-y-6">
+      {/* Headline bid number — quiet 1px-bordered card per design rules
+          (the legacy version used a green→teal gradient + 2px border which
+          shouted; we let the typography do the work instead). */}
+      <Card padding="md">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
           Recommended bid
+        </p>
+        <p className="mt-1 leading-none">
+          <span className="font-mono text-4xl font-semibold tabular-nums text-fg">
+            ${(data.bid_total / 1_000_000).toFixed(2)}M
+          </span>
+          <span className="ml-2 text-base text-fg-muted">/year</span>
+        </p>
+        <div className="mt-4 grid grid-cols-3 gap-4 text-sm">
+          <BidStat
+            label="Per property"
+            value={`$${data.bid_per_property.toLocaleString()}`}
+          />
+          <BidStat label="Per sqft" value={`$${data.bid_per_sqft.toFixed(2)}`} />
+          <BidStat
+            label="Monthly invoice"
+            value={`$${data.monthly_invoice_estimate.toLocaleString()}`}
+          />
         </div>
-        <div className="text-4xl font-bold text-gray-900 mt-1">
-          ${(data.bid_total / 1_000_000).toFixed(2)}M
-          <span className="text-base font-medium text-gray-500 ml-1">/year</span>
-        </div>
-        <div className="grid grid-cols-3 gap-3 mt-3 text-sm">
-          <div>
-            <div className="text-xs text-gray-500 uppercase tracking-wide">Per property</div>
-            <div className="font-semibold text-gray-900">
-              ${data.bid_per_property.toLocaleString()}
-            </div>
-          </div>
-          <div>
-            <div className="text-xs text-gray-500 uppercase tracking-wide">Per sqft</div>
-            <div className="font-semibold text-gray-900">
-              ${data.bid_per_sqft.toFixed(2)}
-            </div>
-          </div>
-          <div>
-            <div className="text-xs text-gray-500 uppercase tracking-wide">Monthly invoice</div>
-            <div className="font-semibold text-gray-900">
-              ${data.monthly_invoice_estimate.toLocaleString()}
-            </div>
-          </div>
-        </div>
-      </div>
+      </Card>
 
       {/* Cost buildup bars */}
-      <div>
-        <h4 className="text-sm font-semibold text-gray-700 mb-2">Cost buildup</h4>
+      <section className="space-y-2">
+        <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+          Cost buildup
+        </h4>
         <div className="h-72 w-full">
           <ResponsiveContainer>
-            <BarChart data={buildupRows.map((r) => ({ ...r, name: ROW_LABELS[r.key] }))} layout="vertical" margin={{ left: 100 }}>
+            <BarChart
+              data={buildupRows.map((r) => ({ ...r, name: ROW_LABELS[r.key] }))}
+              layout="vertical"
+              margin={{ top: 4, right: 8, left: 100, bottom: 0 }}
+            >
+              <CartesianGrid stroke={theme.grid} strokeDasharray="3 3" horizontal={false} />
               <XAxis
                 type="number"
-                tick={{ fontSize: 11 }}
+                tick={tickStyle(theme)}
+                axisLine={{ stroke: theme.grid }}
+                tickLine={false}
                 tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}k`}
               />
-              <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={140} />
-              <Tooltip
-                formatter={(v: number) => [`$${v.toLocaleString()}`, 'Amount']}
-                contentStyle={{ fontSize: 12 }}
+              <YAxis
+                type="category"
+                dataKey="name"
+                tick={tickStyle(theme)}
+                axisLine={false}
+                tickLine={false}
+                width={140}
               />
-              <Bar dataKey="value">
-                {buildupRows.map((r, i) => (
-                  <Cell key={i} fill={BUILDUP_COLOR[r.key] ?? '#6b7280'} />
+              <Tooltip
+                cursor={{ fill: theme.grid, opacity: 0.4 }}
+                contentStyle={tooltipStyle(theme)}
+                formatter={(v: number) => [`$${v.toLocaleString()}`, 'Amount']}
+              />
+              <Bar dataKey="value" radius={[0, 2, 2, 0]}>
+                {buildupRows.map((_, i) => (
+                  <Cell key={i} fill={CHART_CATEGORICAL[i % CHART_CATEGORICAL.length]} />
                 ))}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
-      </div>
+      </section>
 
-      {/* Breakdown table */}
-      <div>
-        <h4 className="text-sm font-semibold text-gray-700 mb-2">Detailed breakdown</h4>
-        <table className="w-full text-sm">
-          <tbody>
-            {buildupRows.map((r) => (
-              <tr key={r.key} className="border-b last:border-0">
-                <td className="py-1.5 pr-4 text-gray-700">{ROW_LABELS[r.key]}</td>
-                <td className="py-1.5 text-right font-mono text-gray-900">
-                  ${r.value.toLocaleString()}
-                </td>
-              </tr>
-            ))}
-            <tr className="border-t-2">
-              <td className="py-2 pr-4 font-semibold text-gray-900">Total bid</td>
-              <td className="py-2 text-right font-mono font-bold text-gray-900">
-                ${data.bid_total.toLocaleString()}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      {/* Detailed breakdown */}
+      <section className="space-y-2">
+        <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+          Detailed breakdown
+        </h4>
+        <ul className="divide-y divide-border rounded-md border border-border bg-surface">
+          {buildupRows.map((r) => (
+            <li key={r.key} className="flex items-center justify-between px-4 py-2 text-sm">
+              <span className="text-fg-muted">{ROW_LABELS[r.key]}</span>
+              <span className="font-mono tabular-nums text-fg">
+                ${r.value.toLocaleString()}
+              </span>
+            </li>
+          ))}
+          <li className="flex items-center justify-between border-t-2 border-border-strong px-4 py-2.5 text-sm">
+            <span className="font-semibold text-fg">Total bid</span>
+            <span className="font-mono text-base font-semibold tabular-nums text-fg">
+              ${data.bid_total.toLocaleString()}
+            </span>
+          </li>
+        </ul>
+      </section>
 
       {/* Composition pct */}
-      <div>
-        <h4 className="text-sm font-semibold text-gray-700 mb-2">Bid composition</h4>
+      <section className="space-y-2">
+        <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+          Bid composition
+        </h4>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
-          <CompCard label="Labor" pct={data.cost_breakdown_pct.labor} color="#3b82f6" />
-          <CompCard label="Vehicle/fuel" pct={data.cost_breakdown_pct.vehicle} color="#0891b2" />
+          <CompCard label="Labor" pct={data.cost_breakdown_pct.labor} color={theme.accent} />
+          <CompCard
+            label="Vehicle / fuel"
+            pct={data.cost_breakdown_pct.vehicle}
+            color="#0891b2"
+          />
           <CompCard label="Overhead" pct={data.cost_breakdown_pct.overhead} color="#a855f7" />
-          <CompCard label="Margin" pct={data.cost_breakdown_pct.margin} color="#16a34a" />
+          <CompCard label="Margin" pct={data.cost_breakdown_pct.margin} color={theme.success} />
         </div>
-      </div>
+      </section>
 
       {data.sourced_from.crew_strategy_option && (
-        <div className="text-xs text-gray-500 italic border-t pt-2">
-          Labor sourced from Crew Strategy Option {data.sourced_from.crew_strategy_option} ·{' '}
-          {data.sourced_from.crew_count} crews ·{' '}
-          {data.sourced_from.branch_count} branches
-        </div>
+        <p className="border-t border-border pt-3 text-xs italic text-fg-subtle">
+          Labor sourced from Crew Strategy Option{' '}
+          <span className="font-mono not-italic">{data.sourced_from.crew_strategy_option}</span>{' '}
+          · <span className="font-tabular not-italic">{data.sourced_from.crew_count}</span> crews
+          · <span className="font-tabular not-italic">{data.sourced_from.branch_count}</span> branches
+        </p>
       )}
+    </div>
+  )
+}
+
+function BidStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+        {label}
+      </p>
+      <p className="mt-0.5 font-mono text-base font-semibold tabular-nums text-fg">
+        {value}
+      </p>
     </div>
   )
 }
 
 function CompCard({ label, pct, color }: { label: string; pct: number; color: string }) {
   return (
-    <div className="border rounded-lg p-2.5">
-      <div className="text-xs text-gray-500 uppercase tracking-wide">{label}</div>
-      <div className="font-semibold text-gray-900 mt-0.5">{pct}%</div>
-      <div className="h-1.5 mt-1 rounded bg-gray-100 overflow-hidden">
-        <div className="h-full" style={{ width: `${Math.min(100, pct)}%`, background: color }} />
+    <div className="rounded-md border border-border bg-surface p-2.5">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+        {label}
+      </p>
+      <p className="mt-0.5 font-mono text-base font-semibold tabular-nums text-fg">
+        {pct}%
+      </p>
+      <div className="mt-1.5 h-1 overflow-hidden rounded bg-surface-muted">
+        <div
+          className="h-full"
+          style={{ width: `${Math.min(100, pct)}%`, background: color }}
+        />
       </div>
     </div>
   )

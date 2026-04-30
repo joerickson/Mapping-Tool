@@ -1,4 +1,20 @@
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+  CartesianGrid,
+} from 'recharts'
+import { TriangleAlert } from 'lucide-react'
+import {
+  CHART_CATEGORICAL,
+  tickStyle,
+  tooltipStyle,
+  useChartTheme,
+} from '../../hooks/useChartTheme'
 
 interface StateRow {
   state: string
@@ -31,67 +47,85 @@ interface GeographicOutputs {
   outliers: Outlier[]
 }
 
-const COLORS = ['#2563eb', '#7c3aed', '#0891b2', '#059669', '#d97706', '#dc2626', '#9333ea', '#0284c7']
-
 export default function GeographicChart({ data }: { data: GeographicOutputs }) {
-  const stateData = data.states.slice(0, 12) // top N states
+  const theme = useChartTheme()
+  const stateData = data.states.slice(0, 12)
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h4 className="text-sm font-semibold text-gray-700 mb-2">Properties by state (top 12)</h4>
+    <div className="space-y-6">
+      <section className="space-y-2">
+        <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+          Properties by state (top 12)
+        </h4>
         <div className="h-56 w-full">
           <ResponsiveContainer>
-            <BarChart data={stateData}>
-              <XAxis dataKey="state" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} />
-              <Tooltip
-                formatter={(v: number) => [`${v} properties`, 'Count']}
-                contentStyle={{ fontSize: 12 }}
+            <BarChart data={stateData} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+              <CartesianGrid stroke={theme.grid} strokeDasharray="3 3" vertical={false} />
+              <XAxis
+                dataKey="state"
+                tick={tickStyle(theme)}
+                axisLine={{ stroke: theme.grid }}
+                tickLine={false}
               />
-              <Bar dataKey="property_count">
+              <YAxis tick={tickStyle(theme)} axisLine={false} tickLine={false} />
+              <Tooltip
+                cursor={{ fill: theme.grid, opacity: 0.4 }}
+                contentStyle={tooltipStyle(theme)}
+                formatter={(v: number) => [`${v} properties`, 'Count']}
+              />
+              <Bar dataKey="property_count" radius={[2, 2, 0, 0]}>
                 {stateData.map((_, i) => (
-                  <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                  <Cell key={i} fill={CHART_CATEGORICAL[i % CHART_CATEGORICAL.length]} />
                 ))}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
-      </div>
+      </section>
 
-      <div>
-        <h4 className="text-sm font-semibold text-gray-700 mb-2">Regions</h4>
+      <section className="space-y-2">
+        <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+          Regions
+        </h4>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
           {data.regions.map((r) => (
-            <div key={r.region_name} className="border rounded-lg px-3 py-2 text-sm">
-              <div className="font-medium text-gray-900">{r.region_name}</div>
-              <div className="text-xs text-gray-500">
-                {r.property_count} properties · {r.states.join(', ')}
-              </div>
+            <div
+              key={r.region_name}
+              className="rounded-md border border-border bg-surface px-3 py-2 text-sm"
+            >
+              <p className="font-medium text-fg">{r.region_name}</p>
+              <p className="text-xs text-fg-muted">
+                <span className="font-tabular">{r.property_count}</span>{' '}
+                {r.property_count === 1 ? 'property' : 'properties'}
+                {r.states.length > 0 && ` · ${r.states.join(', ')}`}
+              </p>
             </div>
           ))}
         </div>
-      </div>
+      </section>
 
       {data.outliers.length > 0 && (
-        <div>
-          <h4 className="text-sm font-semibold text-gray-700 mb-2">
+        <section className="space-y-2">
+          <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
             Outliers ({data.outliers.length})
           </h4>
-          <div className="space-y-1.5 max-h-64 overflow-y-auto">
+          <ul className="max-h-64 space-y-1.5 overflow-y-auto">
             {data.outliers.map((o) => (
-              <div
+              <li
                 key={o.property_id}
-                className="border-l-4 border-amber-400 bg-amber-50 px-3 py-2 text-sm"
+                className="flex items-start gap-2 rounded-md border-l-2 border-warning bg-warning-subtle px-3 py-2 text-sm"
               >
-                <div className="font-medium text-gray-900">
-                  {o.address}, {o.city}, {o.state}
+                <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" aria-hidden />
+                <div className="min-w-0">
+                  <p className="font-medium text-fg">
+                    {o.address}, {o.city}, {o.state}
+                  </p>
+                  <p className="text-xs text-fg-muted">{o.note}</p>
                 </div>
-                <div className="text-xs text-gray-600">{o.note}</div>
-              </div>
+              </li>
             ))}
-          </div>
-        </div>
+          </ul>
+        </section>
       )}
     </div>
   )
