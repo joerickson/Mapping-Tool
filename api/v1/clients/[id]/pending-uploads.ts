@@ -44,18 +44,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     created_at: string
     committed_at: string | null
   }>
+  if (rows.length === 0) {
+    return res.status(200).json({ batches: [] })
+  }
+
+  // Per-batch true committed/valid counts from staged_rows. summary_stats
+  // can lag (Vercel timeout cuts the function before the final write),
+  // so we count staged_rows.service_location_id IS NOT NULL as the
+  // source of truth for "committed". Valid rows are anything with an
+  // outcome that's eligible for commit.
+  const batchIds = rows.map((r) => r.upload_batch_id)
+  const trueCounts = new Map<string, { valid: number; committed: number }>()
+  // Total valid (eligible) rows per batch.
+  {
+    const { data, error: cErr } = await db
+      .from('upload_staged_rows')
+      .select('upload_batch_id', { count: undefined })
+      .in('upload_batch_id', batchIds)
+      .in('outcome', ['valid', 'corrected', 'duplicate_existing'])
+    if (cErr) return res.status(500).json({ error: cErr.message })
+    for (const r of (data ?? []) as Array<{ upload_batch_id: string }>) {
+      const cur = trueCounts.get(r.upload_batch_id) ?? { valid: 0, committed: 0 }
+      cur.valid += 1
+      trueCounts.set(r.upload_batch_id, cur)
+    }
+  }
+  // Already-committed rows per batch (have service_location_id set).
+  {
+    const { data, error: cErr } = await db
+      .from('upload_staged_rows')
+      .select('upload_batch_id')
+      .in('upload_batch_id', batchIds)
+      .in('outcome', ['valid', 'corrected', 'duplicate_existing'])
+      .not('service_location_id', 'is', null)
+    if (cErr) return res.status(500).json({ error: cErr.message })
+    for (const r of (data ?? []) as Array<{ upload_batch_id: string }>) {
+      const cur = trueCounts.get(r.upload_batch_id) ?? { valid: 0, committed: 0 }
+      cur.committed += 1
+      trueCounts.set(r.upload_batch_id, cur)
+    }
+  }
 
   const pending = rows
     .map((b) => {
       const stats = b.summary_stats ?? {}
       const failureCount = Number(stats.commit_failure_count ?? 0)
-      const validCount =
-        Number(stats.valid ?? 0) +
-        Number(stats.corrected ?? 0) +
-        Number(stats.duplicate_existing ?? 0)
-      const committedNew = Number(stats.committed_new_properties ?? 0)
-      const committedExisting = Number(stats.committed_existing_properties ?? 0)
-      const committedTotal = committedNew + committedExisting
+      const counts = trueCounts.get(b.upload_batch_id) ?? { valid: 0, committed: 0 }
+      const validCount = counts.valid
+      const committedTotal = counts.committed
       const isCompletedNeverCommitted = b.status === 'completed' && validCount > 0
       const isCommittedWithFailures = b.status === 'committed' && failureCount > 0
       const isCommittedShortOfValid =

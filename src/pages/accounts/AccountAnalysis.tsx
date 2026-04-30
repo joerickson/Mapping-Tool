@@ -160,6 +160,10 @@ export default function AccountAnalysisPage() {
   const [account, setAccount] = useState<AccountInfo | null>(null)
   const [client, setClient] = useState<ClientInfo | null>(null)
   const [editClientOpen, setEditClientOpen] = useState(false)
+  // Bumped whenever a Retry commit lands new properties — kicks the
+  // EnrichmentBanner to re-fetch its stats so the new pending rows
+  // surface immediately.
+  const [enrichRefreshKey, setEnrichRefreshKey] = useState(0)
   const [latestByModule, setLatestByModule] = useState<Record<string, AnalysisRow | null>>({})
   const [running, setRunning] = useState<Record<string, boolean>>({})
   const [pollIds, setPollIds] = useState<Record<string, string>>({})
@@ -766,13 +770,10 @@ export default function AccountAnalysisPage() {
         {clientId && (
           <PendingUploadsBanner
             clientId={clientId}
-            onCommitted={() => {
-              // Newly-committed properties show up as "pending enrichment"
-              // — kick the enrichment banner to refresh too.
-            }}
+            onCommitted={() => setEnrichRefreshKey((k) => k + 1)}
           />
         )}
-        {clientId && <EnrichmentBanner clientId={clientId} />}
+        {clientId && <EnrichmentBanner clientId={clientId} refreshKey={enrichRefreshKey} />}
 
         {/* Header — title + metadata row + run-all CTA. Breadcrumb is in
             the TopBar so we don't repeat it inline. */}

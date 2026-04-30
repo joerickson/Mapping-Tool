@@ -19,9 +19,14 @@ interface Props {
   // Optional callback when an enrichment run completes (e.g. so a parent
   // page can re-fetch property lists).
   onEnriched?: () => void
+  // Optional bump to force a stats refetch — change the value (e.g.
+  // increment a counter) when something happens elsewhere on the page
+  // that would change the pending count, like a Retry commit landing
+  // new properties in 'pending' state.
+  refreshKey?: number | string
 }
 
-export default function EnrichmentBanner({ clientId, onEnriched }: Props) {
+export default function EnrichmentBanner({ clientId, onEnriched, refreshKey }: Props) {
   const { getToken } = useAuth()
   const [stats, setStats] = useState<Stats | null>(null)
   const [loading, setLoading] = useState(true)
@@ -48,7 +53,10 @@ export default function EnrichmentBanner({ clientId, onEnriched }: Props) {
 
   useEffect(() => {
     fetchStats()
-  }, [fetchStats])
+    // refreshKey is intentionally listed so callers can bump it to
+    // force a re-fetch (e.g. after a Retry commit).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchStats, refreshKey])
 
   const runEnrichment = async () => {
     setRunning(true)
