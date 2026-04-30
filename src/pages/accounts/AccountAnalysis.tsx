@@ -15,6 +15,7 @@ import { useAuth } from '../../hooks/useAuth'
 import Button from '../../components/ui/Button'
 import AppShell from '../../components/layout/AppShell'
 import EnrichmentBanner from '../../components/property/EnrichmentBanner'
+import PendingUploadsBanner from '../../components/upload/PendingUploadsBanner'
 import ClientEditDialog from '../../components/client/ClientEditDialog'
 import {
   Sidebar,
@@ -762,6 +763,15 @@ export default function AccountAnalysisPage() {
         {/* Enrichment status — surfaces pending/failed counts and lets
             the user kick off a scoped run. Hides itself when everything's
             already enriched. */}
+        {clientId && (
+          <PendingUploadsBanner
+            clientId={clientId}
+            onCommitted={() => {
+              // Newly-committed properties show up as "pending enrichment"
+              // — kick the enrichment banner to refresh too.
+            }}
+          />
+        )}
         {clientId && <EnrichmentBanner clientId={clientId} />}
 
         {/* Header — title + metadata row + run-all CTA. Breadcrumb is in
