@@ -30,6 +30,8 @@ import ClientDetailPage from './pages/clients/ClientDetail'
 import ClientSetupPage from './pages/clients/ClientSetup'
 import UploadSummaryPage from './pages/UploadSummary'
 import PropertyDetailPage from './pages/PropertyDetail'
+import DesignSystemPage from './pages/DesignSystem'
+import { ToastProvider } from './components/ui/Toast'
 
 // Phase 3.6 — old /accounts/:accountId/analysis bounces to the new Account
 // Overview where the user picks a client.
@@ -79,6 +81,7 @@ export default function App() {
     <ErrorBoundary>
     <BrowserRouter>
       <ClientProvider>
+       <ToastProvider>
         <Routes>
           {/* Public auth routes */}
           <Route path="/login" element={<LoginPage />} />
@@ -127,7 +130,12 @@ export default function App() {
           <Route path="/admin/parcels/import" element={<AuthGuard><ParcelImportPage /></AuthGuard>} />
           <Route path="/admin/parcels/counties" element={<AuthGuard><CountiesPage /></AuthGuard>} />
           <Route path="/admin/parcels/fallbacks" element={<AuthGuard><FallbacksPage /></AuthGuard>} />
+
+          {/* Design system reference (Phase B). Public for now — no AuthGuard
+              so designers can hit the URL directly during review. */}
+          <Route path="/design-system" element={<DesignSystemPage />} />
         </Routes>
+       </ToastProvider>
       </ClientProvider>
     </BrowserRouter>
     </ErrorBoundary>
