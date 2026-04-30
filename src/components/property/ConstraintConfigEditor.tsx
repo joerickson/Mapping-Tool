@@ -79,20 +79,23 @@ function DayOfWeekForm({
         {DAY_LABELS.map((label, i) => {
           const on = days.has(i)
           return (
-            <button
+            <label
               key={i}
-              type="button"
-              aria-pressed={on}
-              onClick={() => toggle(i)}
               className={cn(
-                'flex-1 rounded-md border-2 px-2 py-2 text-xs font-medium transition-colors',
+                'flex-1 text-center rounded-md border-2 px-2 py-2 text-xs font-medium transition-colors cursor-pointer',
                 on
                   ? 'border-accent bg-accent text-accent-fg'
                   : 'border-border bg-surface text-fg-subtle hover:border-border-strong hover:text-fg'
               )}
             >
+              <input
+                type="checkbox"
+                checked={on}
+                onChange={() => toggle(i)}
+                className="sr-only"
+              />
               {label}
-            </button>
+            </label>
           )
         })}
       </div>

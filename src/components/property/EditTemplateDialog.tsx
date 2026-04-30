@@ -249,18 +249,23 @@ export default function EditTemplateDialog({
                 {(['hard', 'soft'] as const).map((opt) => {
                   const selected = draftEnforcement === opt
                   return (
-                    <button
+                    <label
                       key={opt}
-                      type="button"
-                      aria-pressed={selected}
-                      onClick={() => setDraftEnforcement(opt)}
                       className={cn(
-                        'flex-1 rounded-md border-2 px-3 py-2 text-sm transition-colors',
+                        'flex-1 rounded-md border-2 px-3 py-2 text-sm transition-colors cursor-pointer',
                         selected
                           ? 'border-accent bg-accent text-accent-fg'
                           : 'border-border bg-surface text-fg-muted hover:border-border-strong hover:text-fg'
                       )}
                     >
+                      <input
+                        type="radio"
+                        name="enforcement"
+                        value={opt}
+                        checked={selected}
+                        onChange={() => setDraftEnforcement(opt)}
+                        className="sr-only"
+                      />
                       <span className="font-medium capitalize">{opt}</span>
                       <span
                         className={cn(
@@ -270,7 +275,7 @@ export default function EditTemplateDialog({
                       >
                         {opt === 'hard' ? 'Must satisfy' : 'Preference'}
                       </span>
-                    </button>
+                    </label>
                   )
                 })}
               </div>
