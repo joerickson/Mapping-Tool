@@ -26,6 +26,7 @@ import AccountAnalysisPage from './pages/accounts/AccountAnalysis'
 import ConstraintTemplatesPage from './pages/accounts/ConstraintTemplates'
 import AuditLogPage from './pages/accounts/AuditLog'
 import PropertiesAdminPage from './pages/accounts/PropertiesAdmin'
+import SchedulerPage from './pages/accounts/Scheduler'
 import NewAccountClientPage from './pages/accounts/NewAccountClient'
 import ClientsListPage from './pages/clients/ClientsList'
 import NewClientPage from './pages/clients/NewClient'
@@ -129,6 +130,10 @@ export default function App() {
           <Route
             path="/accounts/:accountId/clients/:clientId/admin/properties"
             element={<AuthGuard><PropertiesAdminPage /></AuthGuard>}
+          />
+          <Route
+            path="/accounts/:accountId/clients/:clientId/scheduler"
+            element={<AuthGuard><SchedulerPage /></AuthGuard>}
           />
           <Route path="/accounts/:id/clients/new" element={<AuthGuard><NewAccountClientPage /></AuthGuard>} />
 
