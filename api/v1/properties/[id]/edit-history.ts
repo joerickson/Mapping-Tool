@@ -1,6 +1,6 @@
-// Returns the edit history for the parent property of this service_location
-// (covers both property-level and SL-level edits). Reads from the Phase 4a
-// PR2 property_edit_history table.
+// GET /api/v1/properties/[id]/edit-history
+// Full edit log for a property — both property-level edits and SL-level
+// edits show up here, ordered newest first.
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createAdminClient } from '../../../_lib/supabase.js'
 import { authenticateRequest } from '../../../_lib/auth.js'
@@ -18,21 +18,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { id } = req.query
   const db = createAdminClient()
 
-  const { data: loc } = await db
-    .from('service_locations')
-    .select('property_id')
-    .eq('id', id)
-    .single()
-
-  if (!loc) return res.status(404).json({ error: 'Not found' })
-
   const { data, error } = await db
     .from('property_edit_history')
     .select('*')
-    .eq('property_id', (loc as { property_id: string }).property_id)
+    .eq('property_id', id)
     .order('changed_at', { ascending: false })
-    .limit(50)
+    .limit(100)
 
   if (error) return res.status(500).json({ error: error.message })
-  return res.status(200).json(data ?? [])
+  return res.status(200).json({ history: data ?? [] })
 }
