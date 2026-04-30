@@ -239,6 +239,7 @@ export async function runAllModules(
       surge_premium_multiplier: c.surge_premium_multiplier,
       fuel_cost_per_mile: c.fuel_cost_per_mile,
       vehicles_per_crew: c.vehicles_per_crew,
+      drive_speed_mph: c.drive_speed_mph,
       utilization_constraint: c.utilization_constraint,
     }
     crewStrategyResult = computeCrewStrategy(

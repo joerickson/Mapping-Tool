@@ -711,7 +711,15 @@ export default function AccountAnalysisPage() {
         />
       )
     if (key === 'drive_time_logistics') return <DriveTimeChart data={row.outputs} />
-    if (key === 'crew_strategy') return <CrewStrategyChart data={row.outputs} />
+    if (key === 'crew_strategy')
+      return (
+        <CrewStrategyChart
+          data={row.outputs}
+          accountId={accountId!}
+          clientId={clientId!}
+          onAllocationsSaved={() => runModule('crew_strategy', 'crew-strategy')}
+        />
+      )
     if (key === 'workforce_sizing') return <WorkforceSizingChart data={row.outputs} />
     if (key === 'seasonality_capacity') return <SeasonalityChart data={row.outputs} />
     if (key === 'bid_pricing_structure') return <BidPricingChart data={row.outputs} />

@@ -14,6 +14,9 @@ export interface AccountProperty {
   longitude: number | null
   geocode_confidence: string | null
   address_validation_verdict: string | null
+  // Phase 3.9a — manual branch assignment override (branch name).
+  // NULL falls back to auto-assigned (nearest branch by haversine).
+  branch_override?: string | null
   service_locations: AccountServiceLocation[]
 }
 
@@ -62,7 +65,7 @@ export async function loadAccountProperties(
   const { data: props, error: propErr } = await db
     .from('properties')
     .select(
-      'id, address_line1, address_line2, city, state, postal_code, latitude, longitude, geocode_confidence, address_validation_verdict, service_locations(id, property_id, client_id, display_name, serviceable_sqft, visits_per_year_override, service_offering_id, status, building_size_class_override, building_size_override_reason)'
+      'id, address_line1, address_line2, city, state, postal_code, latitude, longitude, geocode_confidence, address_validation_verdict, branch_override, service_locations(id, property_id, client_id, display_name, serviceable_sqft, visits_per_year_override, service_offering_id, status, building_size_class_override, building_size_override_reason)'
     )
     .in('id', propIds)
   if (propErr) throw new Error(`properties lookup failed: ${propErr.message}`)
@@ -78,6 +81,7 @@ export async function loadAccountProperties(
     longitude: p.longitude,
     geocode_confidence: p.geocode_confidence,
     address_validation_verdict: p.address_validation_verdict,
+    branch_override: p.branch_override ?? null,
     service_locations: (p.service_locations ?? []).filter((sl: any) =>
       clientIds.includes(sl.client_id)
     ),

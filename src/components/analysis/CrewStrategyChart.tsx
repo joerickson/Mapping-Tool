@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   BarChart,
   Bar,
@@ -9,9 +10,11 @@ import {
   Legend,
   CartesianGrid,
 } from 'recharts'
-import { TriangleAlert } from 'lucide-react'
+import { TriangleAlert, Settings2 } from 'lucide-react'
 import { Badge } from '../ui/Badge'
+import Button from '../ui/Button'
 import { Card } from '../ui/Card'
+import BranchAllocationDialog from './BranchAllocationDialog'
 import {
   Table,
   TableBody,
@@ -30,10 +33,14 @@ interface BranchUtilRow {
   city_state?: string
   population?: number | null
   crew_count: number
+  crew_count_optimistic?: number
   work_hours: number
   available_hours: number
   utilization_pct: number
   property_count: number
+  avg_drive_miles_one_way?: number
+  avg_drive_minutes_one_way?: number
+  override_property_count?: number
   status: UtilStatus
   warning?: string | null
   surge_recommendation?: { surge_crews: number; surge_weeks: number } | null
@@ -97,11 +104,19 @@ interface CrewCountAnalysis {
   cycles_per_year: number
 }
 
+interface CrewStrategyBranch {
+  name: string
+  lat: number
+  lng: number
+  city_state?: string | null
+}
+
 interface CrewStrategyOutputs {
   property_count: number
   k_used: number
   total_project_hours_per_year: number
   crew_count_analysis?: CrewCountAnalysis
+  branches?: CrewStrategyBranch[]
   options: { A: CrewOption; B: CrewOption; C: CrewOption }
   recommended_option: 'A' | 'B' | 'C'
   recommended_rationale: string
@@ -144,8 +159,28 @@ function formatPop(p: number | null | undefined): string {
   return p.toString()
 }
 
-export default function CrewStrategyChart({ data }: { data: CrewStrategyOutputs }) {
+interface CrewStrategyChartProps {
+  data: CrewStrategyOutputs
+  accountId?: string
+  clientId?: string
+  onAllocationsSaved?: () => void
+}
+
+export default function CrewStrategyChart({
+  data,
+  accountId,
+  clientId,
+  onAllocationsSaved,
+}: CrewStrategyChartProps) {
   const theme = useChartTheme()
+  const [allocOpen, setAllocOpen] = useState(false)
+  // Per-branch breakdown comes from Option B but applies to any allocation
+  // discussion; surface it as a dedicated panel above the option cards.
+  const branchBreakdown = data.options.B.utilization_breakdown?.per_branch
+    ?? data.options.B.branch_breakdown
+    ?? []
+  const allowAllocations =
+    accountId != null && clientId != null && (data.branches?.length ?? 0) > 0
   const opts = [
     { key: 'A' as const, ...data.options.A },
     { key: 'B' as const, ...data.options.B },
@@ -227,6 +262,113 @@ export default function CrewStrategyChart({ data }: { data: CrewStrategyOutputs 
             </Stat>
           </dl>
         </Card>
+      )}
+
+      {/* Phase 3.9a — Branch property allocations */}
+      {branchBreakdown.length > 0 && (
+        <Card padding="md">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+                Branch property allocations
+              </p>
+              <p className="mt-1 text-sm text-fg-muted">
+                Each branch's properties drive its dedicated crew count. Reassign properties to rebalance utilization.
+              </p>
+            </div>
+            {allowAllocations && (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => setAllocOpen(true)}
+              >
+                <Settings2 className="h-3.5 w-3.5 mr-1.5" />
+                Manage assignments
+              </Button>
+            )}
+          </div>
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {branchBreakdown.map((b) => (
+              <div
+                key={b.branch_name}
+                className="rounded-md border border-border bg-surface-subtle/40 p-3 text-sm"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-fg truncate">
+                      {b.city_state || b.branch_name}
+                    </p>
+                    {b.population != null && (
+                      <p className="text-[10px] text-fg-subtle">
+                        Pop. {formatPop(b.population)}
+                      </p>
+                    )}
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-[10px] uppercase tracking-wider text-fg-subtle">Crews</p>
+                    <p className="font-tabular font-semibold text-fg">
+                      {b.crew_count}
+                      {b.crew_count_optimistic != null &&
+                        b.crew_count_optimistic !== b.crew_count && (
+                          <span className="text-fg-muted text-xs"> / {b.crew_count_optimistic}</span>
+                        )}
+                    </p>
+                  </div>
+                </div>
+                <dl className="mt-2 grid grid-cols-2 gap-1.5 text-xs">
+                  <Stat label="Properties">
+                    <span className="font-tabular">{b.property_count}</span>
+                    {b.override_property_count != null && b.override_property_count > 0 && (
+                      <span className="text-warning text-[10px]"> ({b.override_property_count} override)</span>
+                    )}
+                  </Stat>
+                  <Stat label="Hours/yr">
+                    <span className="font-tabular">{b.work_hours.toLocaleString()}</span>
+                  </Stat>
+                  <Stat label="Utilization">
+                    <Badge variant={STATUS_VARIANT[b.status]} className="text-[10px]">
+                      {b.utilization_pct}%
+                    </Badge>
+                  </Stat>
+                  <Stat label="Avg drive">
+                    <span className="font-tabular">
+                      {b.avg_drive_miles_one_way != null
+                        ? `${b.avg_drive_miles_one_way}mi`
+                        : '—'}
+                      {b.avg_drive_minutes_one_way != null && b.avg_drive_minutes_one_way > 0 && (
+                        <span className="text-fg-subtle text-[10px]"> · {b.avg_drive_minutes_one_way}m</span>
+                      )}
+                    </span>
+                  </Stat>
+                </dl>
+                {b.warning && (
+                  <p className="mt-2 text-[10px] text-warning leading-snug">
+                    <TriangleAlert className="h-3 w-3 inline mr-0.5" />
+                    {b.warning}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {allowAllocations && (
+        <BranchAllocationDialog
+          open={allocOpen}
+          onClose={() => setAllocOpen(false)}
+          accountId={accountId!}
+          clientId={clientId!}
+          branches={
+            (data.branches ?? []).map((b) => ({
+              name: b.name,
+              lat: b.lat,
+              lng: b.lng,
+              city_state: b.city_state ?? null,
+            }))
+          }
+          onSaved={onAllocationsSaved}
+        />
       )}
 
       {/* Cost comparison bar chart */}

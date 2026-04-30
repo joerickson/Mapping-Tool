@@ -96,6 +96,15 @@ export function determineCascadingEffects(
       continue
     }
 
+    if (entityType === 'property' && c.field === 'branch_override') {
+      addStale(
+        c.field,
+        ['crew_strategy', 'bid_pricing_structure'],
+        'Branch override reshuffles per-branch property allocation and crew counts.'
+      )
+      continue
+    }
+
     if (entityType === 'service_location') {
       if (c.field === 'serviceable_sqft') {
         const oldN = Number(c.old) || 0
