@@ -1,0 +1,91 @@
+/*
+ * PortfolioIQ design tokens — Phase A.
+ *
+ * Light is the implicit default (no [data-theme] attribute needed). Dark
+ * activates via [data-theme="dark"] on <html>. The bootstrap script in
+ * index.html sets that attribute before first paint, so there's no
+ * theme-flash on reload.
+ *
+ * Naming: --color-{role}[-{variant}] where role is one of:
+ *   bg / fg / border / accent / success / warning / danger
+ *
+ * Tailwind reads these via tailwind.config.js (colors keyed to the same names).
+ * If you add a new token, add the matching key in tailwind.config.js so a
+ * `bg-foo` / `text-foo` utility comes along for free.
+ */
+
+:root,
+[data-theme='light'] {
+  /* Surfaces */
+  --color-bg: #ffffff;
+  --color-bg-subtle: #fafafa;
+  --color-bg-muted: #f4f4f5;
+  --color-bg-elevated: #ffffff;
+
+  /* Text */
+  --color-fg: #09090b;
+  --color-fg-muted: #52525b;
+  --color-fg-subtle: #71717a;
+
+  /* Borders */
+  --color-border: #e4e4e7;
+  --color-border-strong: #d4d4d8;
+  --color-border-focus: var(--color-accent);
+
+  /* Accent (indigo). Used sparingly — primary CTAs, links, focus, active nav. */
+  --color-accent: #4f46e5;
+  --color-accent-hover: #4338ca;
+  --color-accent-fg: #ffffff;
+  --color-accent-subtle: #eef2ff;
+
+  /* Semantic — sparingly. */
+  --color-success: #16a34a;
+  --color-success-subtle: #dcfce7;
+  --color-warning: #d97706;
+  --color-warning-subtle: #fef3c7;
+  --color-danger: #dc2626;
+  --color-danger-subtle: #fee2e2;
+
+  /* Focus ring color (used by Tailwind's ring utility via arbitrary values
+     where we want explicit control). */
+  --color-ring: var(--color-accent);
+
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  /* Surfaces — zinc scale, slightly compressed contrast vs light to reduce
+     eye strain on emissive displays. */
+  --color-bg: #09090b;
+  --color-bg-subtle: #18181b;
+  --color-bg-muted: #27272a;
+  --color-bg-elevated: #18181b;
+
+  /* Text */
+  --color-fg: #fafafa;
+  --color-fg-muted: #a1a1aa;
+  --color-fg-subtle: #71717a;
+
+  /* Borders */
+  --color-border: #27272a;
+  --color-border-strong: #3f3f46;
+  --color-border-focus: var(--color-accent);
+
+  /* Accent — slightly brighter on dark to keep perceptual punch. */
+  --color-accent: #6366f1;
+  --color-accent-hover: #818cf8;
+  --color-accent-fg: #ffffff;
+  --color-accent-subtle: #1e1b4b;
+
+  /* Semantic */
+  --color-success: #22c55e;
+  --color-success-subtle: #052e16;
+  --color-warning: #f59e0b;
+  --color-warning-subtle: #451a03;
+  --color-danger: #ef4444;
+  --color-danger-subtle: #450a0a;
+
+  --color-ring: var(--color-accent);
+
+  color-scheme: dark;
+}

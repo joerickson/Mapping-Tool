@@ -5,6 +5,39 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>RBM Geo — Portfolio Intelligence</title>
+
+    <!-- Geist + Geist Mono. Preconnect avoids a chained DNS+TLS handshake
+         on first paint, which matters because the body's font-family falls
+         back to system-ui until Geist arrives. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap"
+    />
+
+    <!-- Theme bootstrap — runs synchronously before React mounts so we set
+         data-theme="dark" (when applicable) on <html> in the same tick the
+         page paints. Without this, a dark-mode user gets a white flash on
+         every reload while React hydrates. -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('portfolioiq-theme')
+          var theme =
+            stored === 'light' || stored === 'dark'
+              ? stored
+              : window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light'
+          document.documentElement.setAttribute('data-theme', theme)
+        } catch (e) {
+          /* localStorage blocked (private mode, embedded contexts) — fall
+             through to default light. */
+          document.documentElement.setAttribute('data-theme', 'light')
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

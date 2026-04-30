@@ -2,6 +2,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { useState, useRef, useEffect } from 'react'
 import { clsx } from 'clsx'
 import { useClient } from '../../context/ClientContext'
+import ThemeToggle from './ThemeToggle'
 
 const links = [
   { to: '/map', label: 'Map' },
@@ -136,6 +137,7 @@ export default function Navbar() {
           >
             Admin
           </Link>
+          <ThemeToggle />
           <Link
             to="/logout"
             className="px-3 py-1.5 rounded-md text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors"
