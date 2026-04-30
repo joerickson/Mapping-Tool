@@ -23,6 +23,7 @@ import {
   requireSelectedBranches,
   NO_SELECTION_ERROR,
 } from '../../../../../_lib/analysis/operational-constraints.js'
+import { resolveCrews } from '../../../../../_lib/analysis/crew-resolution.js'
 
 export const config = { maxDuration: 60 }
 
@@ -132,7 +133,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const properties = applyExclusions(allProperties, constraints.excluded_property_ids)
     const offerings = await loadAccountOfferings(db, accountId, clientId)
     const crewStrategy = await fetchLatestCompletedAnalysis(db, accountId, clientId, 'crew_strategy')
-    const result = computeSeasonality(properties, offerings, crewStrategy?.outputs, inputs)
+    const result = computeSeasonality(properties, offerings, crewStrategy?.outputs, inputs, constraints)
 
     await completeAnalysisRecord(db, analysisId, {
       outputs: result.outputs,
@@ -151,7 +152,11 @@ export function computeSeasonality(
   properties: AccountProperty[],
   offerings: Map<string, { id: string; name: string }>,
   crewStrategyOutputs: any,
-  inputs: SeasonalityInputs
+  inputs: SeasonalityInputs,
+  constraints?: {
+    crew_strategy_selected_option?: 'A' | 'B' | 'C' | null
+    crew_count_per_branch_override?: Record<string, number> | null
+  }
 ) {
   // ── Per-service-location: hours per visit + window classification ─────────
   type SLEntry = {
@@ -214,14 +219,12 @@ export function computeSeasonality(
     'winter_break',
   ]
 
-  // Derive baseline crew capacity from latest Crew Strategy if available
+  // Derive baseline crew capacity from latest Crew Strategy if available.
+  // Phase 4.2 — honor user's selected option + manual per-branch override.
   let baselineCrews = 4
   if (crewStrategyOutputs?.options) {
-    const recKey = crewStrategyOutputs.recommended_option as 'A' | 'B' | 'C'
-    const opt = crewStrategyOutputs.options[recKey]
-    if (opt) {
-      baselineCrews = opt.crew_count ?? 4
-    }
+    const resolved = resolveCrews(crewStrategyOutputs, constraints ?? {})
+    baselineCrews = resolved.crew_count || 4
   }
 
   const windowResults = windowKeys.map((key) => {

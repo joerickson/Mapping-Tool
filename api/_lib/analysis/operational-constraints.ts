@@ -197,6 +197,15 @@ export interface OperationalConstraints {
     scope: 'per_branch' | 'per_region' | 'portfolio'
   }
 
+  // Phase 4.2 — user picks one of A/B/C from Crew Strategy as the
+  // "active" option flowed into Bid Pricing, Workforce Sizing, and
+  // Seasonality. Null = use analysis's recommended_option.
+  crew_strategy_selected_option: 'A' | 'B' | 'C' | null
+  // Phase 4.2 — manual per-branch crew count override. When non-null
+  // with at least one positive value, supersedes A/B/C selection
+  // entirely. Total crew count = sum of values. Keys = branch names.
+  crew_count_per_branch_override: Record<string, number> | null
+
   // Metadata
   updated_at: string | null
   updated_by: string | null
@@ -465,6 +474,18 @@ export async function loadConstraints(
           | 'per_region'
           | 'portfolio') ?? 'per_branch',
     },
+
+    crew_strategy_selected_option:
+      r?.crew_strategy_selected_option === 'A' ||
+      r?.crew_strategy_selected_option === 'B' ||
+      r?.crew_strategy_selected_option === 'C'
+        ? r.crew_strategy_selected_option
+        : null,
+    crew_count_per_branch_override:
+      r?.crew_count_per_branch_override &&
+      typeof r.crew_count_per_branch_override === 'object'
+        ? (r.crew_count_per_branch_override as Record<string, number>)
+        : null,
 
     updated_at: r?.updated_at ?? null,
     updated_by: r?.updated_by ?? null,

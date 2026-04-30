@@ -19,6 +19,7 @@ import {
   NO_SELECTION_ERROR,
 } from '../../../../../_lib/analysis/operational-constraints.js'
 import { loadAccountOfferings, classifyOffering } from '../../../../../_lib/analysis/service-offerings.js'
+import { resolveCrews } from '../../../../../_lib/analysis/crew-resolution.js'
 import { computePropertyVisitHours } from '../../../../../_lib/analysis/property-hours.js'
 import {
   calculateOvernights,
@@ -109,15 +110,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       body.target_gross_margin_pct ?? constraints.target_gross_margin_pct,
     branch_count: body.branch_count ?? null,
     crew_count: body.crew_count ?? null,
-    crew_strategy_selected_option:
-      ((constraints as any).crew_strategy_selected_option as
-        | 'A' | 'B' | 'C' | null
-        | undefined) ?? null,
-    crew_count_per_branch_override:
-      ((constraints as any).crew_count_per_branch_override as
-        | Record<string, number>
-        | null
-        | undefined) ?? null,
+    crew_strategy_selected_option: constraints.crew_strategy_selected_option,
+    crew_count_per_branch_override: constraints.crew_count_per_branch_override,
   }
 
   let analysisId: string
@@ -401,22 +395,13 @@ export function computeBidPricing(
   let resolvedCrewCount = inputs.crew_count
   let recommendedOption: string | null = null
 
-  // Phase 4.2 — manual per-branch crew override. When the user has
-  // entered explicit crew counts per branch, sum them for the total
-  // crew count and treat this as the highest-priority source. Labor
-  // is then recomputed proportionally from the override total using
-  // the original Option B (or A if A is selected) per-crew rate so
-  // working_days_per_year / hours_per_day / hourly_loaded_labor_cost
-  // assumptions remain consistent with the analysis.
-  const perBranchOverride = inputs.crew_count_per_branch_override
-  const overrideTotalCrews =
-    perBranchOverride && typeof perBranchOverride === 'object'
-      ? Object.values(perBranchOverride).reduce(
-          (s, v) => s + (Number.isFinite(Number(v)) ? Math.max(0, Math.floor(Number(v))) : 0),
-          0
-        )
-      : 0
-  const hasOverride = overrideTotalCrews > 0
+  // Phase 4.2 — single source of truth for crew counts.
+  const crewResolution = resolveCrews(crewStrategyOutputs, {
+    crew_strategy_selected_option: inputs.crew_strategy_selected_option ?? null,
+    crew_count_per_branch_override: inputs.crew_count_per_branch_override ?? null,
+  })
+  const hasOverride = crewResolution.source === 'manual_override'
+  const overrideTotalCrews = hasOverride ? crewResolution.crew_count : 0
 
   // Phase 3.8 — track where each number actually came from. Manual
   // overrides win, then scheduler template, then crew_strategy estimate.
