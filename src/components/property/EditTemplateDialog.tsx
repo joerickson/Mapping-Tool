@@ -154,15 +154,15 @@ export default function EditTemplateDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose() }}>
-      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col gap-4 p-0">
-        <DialogHeader className="px-6 pt-6">
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
           <DialogTitle>{template ? 'Edit template' : 'New template'}</DialogTitle>
           <DialogDescription>
             Bundle constraints into a template, then apply it to many service locations in one go.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-5 overflow-y-auto px-6 flex-1 min-h-0">
+        <div className="space-y-5 max-h-[60vh] overflow-y-auto pr-1 -mr-1">
           <FormField label="Name" htmlFor="tpl-name">
             <Input
               id="tpl-name"
@@ -246,24 +246,33 @@ export default function EditTemplateDialog({
 
             <FormField label="Enforcement">
               <div className="flex gap-2">
-                {(['hard', 'soft'] as const).map((opt) => (
-                  <button
-                    key={opt}
-                    type="button"
-                    onClick={() => setDraftEnforcement(opt)}
-                    className={cn(
-                      'flex-1 rounded-md border px-3 py-2 text-sm transition-colors',
-                      draftEnforcement === opt
-                        ? 'border-accent bg-accent/10 text-fg'
-                        : 'border-border bg-surface text-fg-muted hover:text-fg'
-                    )}
-                  >
-                    <span className="font-medium capitalize">{opt}</span>
-                    <span className="block text-[11px] text-fg-subtle mt-0.5">
-                      {opt === 'hard' ? 'Must satisfy' : 'Preference'}
-                    </span>
-                  </button>
-                ))}
+                {(['hard', 'soft'] as const).map((opt) => {
+                  const selected = draftEnforcement === opt
+                  return (
+                    <button
+                      key={opt}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => setDraftEnforcement(opt)}
+                      className={cn(
+                        'flex-1 rounded-md border-2 px-3 py-2 text-sm transition-colors',
+                        selected
+                          ? 'border-accent bg-accent text-accent-fg'
+                          : 'border-border bg-surface text-fg-muted hover:border-border-strong hover:text-fg'
+                      )}
+                    >
+                      <span className="font-medium capitalize">{opt}</span>
+                      <span
+                        className={cn(
+                          'block text-[11px] mt-0.5',
+                          selected ? 'text-accent-fg/80' : 'text-fg-subtle'
+                        )}
+                      >
+                        {opt === 'hard' ? 'Must satisfy' : 'Preference'}
+                      </span>
+                    </button>
+                  )
+                })}
               </div>
             </FormField>
 
@@ -281,9 +290,9 @@ export default function EditTemplateDialog({
 
         </div>
 
-        <DialogFooter className="px-6 pb-6 pt-3 border-t border-border">
+        <DialogFooter>
           {error && (
-            <p className="text-xs text-danger flex-1 sm:text-left text-center">
+            <p className="text-xs text-danger flex-1 sm:text-left text-center self-center">
               {error}
             </p>
           )}
