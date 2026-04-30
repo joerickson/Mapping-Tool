@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
   Building2,
+  CalendarDays,
   FileText,
   History,
   LayoutDashboard,
@@ -1137,6 +1138,15 @@ function AnalysisSidebar({
         <li className="px-2 py-1 text-xs text-fg-subtle">
           Coming in Phase D
         </li>
+      </SidebarSection>
+
+      <SidebarSection title="Scheduler">
+        <SidebarItem
+          icon={CalendarDays}
+          to={`/accounts/${accountId}/clients/${clientId}/scheduler`}
+        >
+          Plan a day
+        </SidebarItem>
       </SidebarSection>
 
       <SidebarSection title="Settings">
