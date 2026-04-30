@@ -6,7 +6,7 @@
 // Each cell represents one (crew, day). Dragging a cell moves all
 // visits scheduled to that day to the target's date and crew. Per-
 // visit drag would need an expanded interaction; ships in 4f-3.
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { stateClass, StateIcon, type CrewDayStateKind } from './CrewUtilizationChip'
 import { cn } from '../../lib/cn'
 
@@ -217,10 +217,30 @@ export default function GanttView({
           <tbody>
             {crews.map((crew, ci) => {
               const summary = crewSummaries[ci]
+              // Build a "trip ribbon" — consecutive same-trip days collapse
+              // into one cell so the user can read the location without
+              // hovering. Cells with no trip get their own narrow td.
+              const ribbon: Array<{ colSpan: number; label: string | null; trip_id: string | null }> = []
+              let k = 0
+              while (k < allDates.length) {
+                const c = crew.cells.get(allDates[k])
+                const tripId = c?.trip_id ?? null
+                if (!tripId) {
+                  ribbon.push({ colSpan: 1, label: null, trip_id: null })
+                  k++
+                  continue
+                }
+                let j = k
+                while (j < allDates.length && (crew.cells.get(allDates[j])?.trip_id ?? null) === tripId) j++
+                ribbon.push({ colSpan: j - k, label: c?.trip_label ?? tripId, trip_id: tripId })
+                k = j
+              }
               return (
-                <tr key={crew.index}>
+                <Fragment key={crew.index}>
+                <tr>
                   <th
-                    className="sticky left-0 z-10 bg-surface border-b border-r border-border px-3 py-2 text-left whitespace-nowrap"
+                    rowSpan={2}
+                    className="sticky left-0 z-10 bg-surface border-b border-r border-border px-3 py-2 text-left whitespace-nowrap align-top"
                     style={{ minWidth: 180 }}
                   >
                     <div className="flex items-center gap-2">
@@ -238,6 +258,22 @@ export default function GanttView({
                       </div>
                     </div>
                   </th>
+                  {ribbon.map((seg, si) => (
+                    <td
+                      key={si}
+                      colSpan={seg.colSpan}
+                      className={cn(
+                        'border-b border-border text-[11px] text-fg-muted px-1 py-0.5 truncate',
+                        seg.label && 'bg-surface-subtle font-medium text-fg'
+                      )}
+                      title={seg.label ?? ''}
+                      style={{ height: 18, minWidth: 28 }}
+                    >
+                      {seg.label ?? ''}
+                    </td>
+                  ))}
+                </tr>
+                <tr>
                   {allDates.map((d) => {
                     const cell = crew.cells.get(d)
                     if (!cell) {
@@ -317,6 +353,7 @@ export default function GanttView({
                     )
                   })}
                 </tr>
+                </Fragment>
               )
             })}
           </tbody>
