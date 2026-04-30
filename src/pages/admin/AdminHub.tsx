@@ -201,6 +201,20 @@ export default function AdminHubPage() {
             </div>
           </div>
 
+          {/* User management */}
+          <div className="bg-white rounded-xl shadow-sm border p-5">
+            <h2 className="font-semibold text-gray-800 mb-2">User Management</h2>
+            <p className="text-xs text-gray-500 mb-2">
+              Invite teammates, manage roles, and deactivate accounts.
+            </p>
+            <Link
+              to="/admin/users"
+              className="inline-block px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+            >
+              Manage users →
+            </Link>
+          </div>
+
           {/* Other admin links */}
           <div className="bg-white rounded-xl shadow-sm border p-5">
             <h2 className="font-semibold text-gray-800 mb-2">Other Admin Tools</h2>
