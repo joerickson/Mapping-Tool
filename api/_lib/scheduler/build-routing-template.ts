@@ -295,7 +295,12 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
     for (const clusterId of crew.cluster_ids) {
       const cluster = clusters.find((c) => c.cluster_id === clusterId)!
       for (let visitIdx = 0; visitIdx < cluster.trips_per_cycle; visitIdx++) {
-        const tripDuration = cluster.days_on_site_per_trip
+        // days_on_site_per_trip is an estimate. The actual day-loop runs
+        // until we run out of properties or hit the cycle boundary —
+        // routeDay's per-day capacity is real-world (drive + buffer eat
+        // into the 10-hour window) so we'd otherwise leave properties
+        // unplaced just because the estimate was conservative.
+        const tripDurationEstimate = cluster.days_on_site_per_trip
         // Remote trips spread across the cycle (target the midpoint of
         // each visit segment); local trips pack sequentially from day 0
         // since they're continuous work, not discrete visits.
@@ -308,6 +313,8 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
         } else {
           tripStart = nextAvailableDay
         }
+        // Hard cap: trip can't run past the cycle window.
+        const maxDaysForTrip = Math.max(1, cycleDays - tripStart)
 
         // Build per-day routes via routeDay(). Visits eligible for THIS
         // visit_index of THIS cluster:
@@ -332,7 +339,22 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
         let dayNumber = 1
         let dayStartLoc = startLoc
 
-        while (remaining.length > 0 && dayNumber <= tripDuration) {
+        while (remaining.length > 0 && dayNumber <= maxDaysForTrip) {
+          // For local clusters, every day returns to branch.
+          // For remote clusters, return to branch only on the final day
+          // of the trip — which we now determine dynamically: it's the
+          // day on which `remaining.length === 1` (about to finish the
+          // last property) OR we've hit the maxDaysForTrip cap.
+          // The simpler heuristic: return on the day that places the last
+          // remaining property. We can't know that prospectively, so we
+          // use a two-pass approach below: route without return, and if
+          // it places everything, mark this day as the last one.
+          const isLikelyLastDay =
+            cluster.cluster_type === 'local' ||
+            dayNumber === maxDaysForTrip ||
+            // Heuristic: if remaining work ≤ one day's worth, this is the last.
+            remaining.reduce((s, v) => s + v.hours_per_visit, 0) <=
+              input.config.max_work_hours_per_crew_day
           const dayResult = routeDay({
             branch: { name: dayStartLoc.name, lat: dayStartLoc.lat, lng: dayStartLoc.lng },
             scheduled_date: '2026-01-01', // placeholder — only constraint date matters; cycle gen rewrites
@@ -353,7 +375,7 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
               work_end_time: input.config.work_end_time,
               buffer_minutes_per_stop: input.config.buffer_minutes_per_stop,
               drive_speed_mph: input.config.drive_speed_mph,
-              return_to_branch: cluster.cluster_type === 'local' || dayNumber === tripDuration,
+              return_to_branch: isLikelyLastDay,
             },
             preferences: {
               objective: 'minimize_drive',
@@ -397,12 +419,11 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
           // starts back at the branch (crew goes home each evening).
           if (
             remaining.length > 0 &&
-            dayNumber < tripDuration &&
             cluster.cluster_type === 'remote'
           ) {
             dayStartLoc = {
               type: 'overnight_anchor',
-              name: `Hotel near ${cluster.cluster_id}`,
+              name: `Hotel near ${cluster.cluster_label}`,
               lat: cluster.centroid_lat,
               lng: cluster.centroid_lng,
             }
@@ -418,7 +439,7 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
             service_location_id: v.service_location_id,
             address: v.address,
             reason: 'time_overflow',
-            detail: `Couldn't fit in ${tripDuration}-day trip for ${cluster.cluster_id} (visit ${visitIdx + 1}/${cluster.trips_per_cycle})`,
+            detail: `Couldn't fit before cycle end (cluster ${cluster.cluster_label}, est ${tripDurationEstimate} days, used ${days.length}/${maxDaysForTrip} available)`,
           })
         }
 
