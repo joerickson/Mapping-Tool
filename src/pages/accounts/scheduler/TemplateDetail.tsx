@@ -1,0 +1,413 @@
+// Phase 4d — Template detail page.
+// Header summary, generate-cycle action, cycle instances list, basic
+// trip/crew tabs. Map + rich Gantt deferred to 4f.
+import { useState, useEffect, useCallback } from 'react'
+import { useParams, useNavigate, Link } from 'react-router-dom'
+import { Plus, Play } from 'lucide-react'
+import { useAuth } from '../../../hooks/useAuth'
+import AppShell from '../../../components/layout/AppShell'
+import Button from '../../../components/ui/Button'
+import { Badge } from '../../../components/ui/Badge'
+import { Card, CardTitle } from '../../../components/ui/Card'
+import { Input, FormField } from '../../../components/ui/Input'
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from '../../../components/ui/Dialog'
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from '../../../components/ui/Table'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../../components/ui/Tabs'
+
+interface Template {
+  id: string
+  name: string
+  description: string | null
+  status: string
+  crew_count: number
+  cycle_length_days: number
+  cycle_length_label: string
+  total_visits_per_cycle: number | null
+  total_visits_required_per_cycle: number | null
+  total_drive_minutes_per_cycle: number | null
+  total_work_minutes_per_cycle: number | null
+  total_overnight_nights_per_cycle: number | null
+  total_drive_miles_per_cycle: number | null
+  total_estimated_cost_per_cycle: number | null
+  total_estimated_cost_per_year: number | null
+  hard_constraint_violations: number | null
+  soft_constraint_violations: number | null
+  optimization_score: number | null
+  optimizer_notes: string | null
+  geographic_clusters: any[]
+  crew_assignments: any[]
+  trips: any[]
+  unplaced_visits: any[]
+}
+
+interface Cycle {
+  id: string
+  cycle_number: number
+  start_date: string
+  end_date: string
+  status: string
+}
+
+export default function TemplateDetailPage() {
+  const { accountId, clientId, templateId } = useParams<{
+    accountId: string; clientId: string; templateId: string
+  }>()
+  const navigate = useNavigate()
+  const { getToken } = useAuth()
+  const [template, setTemplate] = useState<Template | null>(null)
+  const [cycles, setCycles] = useState<Cycle[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [generateOpen, setGenerateOpen] = useState(false)
+  const [genStartDate, setGenStartDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [generating, setGenerating] = useState(false)
+
+  const load = useCallback(async () => {
+    if (!templateId) return
+    setLoading(true)
+    try {
+      const token = await getToken()
+      const [tplRes, cyRes] = await Promise.all([
+        fetch(`/api/scheduler/templates/${templateId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`/api/scheduler/cycles?template_id=${templateId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ])
+      if (!tplRes.ok) throw new Error(`Template load failed (${tplRes.status})`)
+      const tplData = await tplRes.json()
+      setTemplate(tplData.template)
+      if (cyRes.ok) {
+        const cy = await cyRes.json()
+        setCycles(cy.cycles ?? [])
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [templateId, getToken])
+
+  useEffect(() => { load() }, [load])
+
+  async function handleGenerate() {
+    if (!templateId) return
+    setGenerating(true)
+    setError(null)
+    try {
+      const token = await getToken()
+      const res = await fetch(`/api/scheduler/templates/${templateId}/generate-cycle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ start_date: genStartDate }),
+      })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error ?? `Generate failed (${res.status})`)
+      setGenerateOpen(false)
+      await load()
+      navigate(`/accounts/${accountId}/clients/${clientId}/scheduler/cycles/${body.cycle_instance_id}`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  if (loading || !template) {
+    return (
+      <AppShell>
+        <div className="mx-auto max-w-6xl px-6 py-10">
+          <p className="text-sm text-fg-muted">{loading ? 'Loading…' : error ?? 'Template not found.'}</p>
+        </div>
+      </AppShell>
+    )
+  }
+
+  return (
+    <AppShell breadcrumb={[
+      { label: 'Accounts', to: '/accounts' },
+      { label: 'Routing templates', to: `/accounts/${accountId}/clients/${clientId}/scheduler/templates` },
+      { label: template.name },
+    ]}>
+      <div className="mx-auto max-w-6xl px-6 py-10 space-y-6">
+        <header className="flex items-start justify-between gap-4">
+          <div className="space-y-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-2xl font-semibold tracking-tight text-fg">{template.name}</h1>
+              <Badge variant={template.status === 'active' ? 'success' : template.status === 'failed' ? 'danger' : 'outline'}>
+                {template.status}
+              </Badge>
+            </div>
+            <p className="text-sm text-fg-muted">
+              {template.cycle_length_label} cycle · {template.crew_count} crews ·{' '}
+              {template.total_visits_per_cycle ?? 0} visits/cycle ·{' '}
+              ${(template.total_estimated_cost_per_year ?? 0).toLocaleString()} estimated annual cost
+            </p>
+            {template.description && <p className="text-sm text-fg-subtle">{template.description}</p>}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button onClick={() => setGenerateOpen(true)} disabled={template.status !== 'active'}>
+              <Play className="h-3.5 w-3.5" />
+              Generate cycle
+            </Button>
+          </div>
+        </header>
+
+        {error && <p className="text-sm text-danger">{error}</p>}
+
+        {/* Metrics */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Stat
+            label="Drive"
+            value={`${formatMin(template.total_drive_minutes_per_cycle ?? 0)} · ${Math.round(template.total_drive_miles_per_cycle ?? 0)} mi`}
+          />
+          <Stat
+            label="Work"
+            value={formatMin(template.total_work_minutes_per_cycle ?? 0)}
+          />
+          <Stat
+            label="Overnights"
+            value={`${template.total_overnight_nights_per_cycle ?? 0} nights`}
+          />
+          <Stat
+            label="Score"
+            value={`${template.optimization_score ?? 0}/100`}
+            sub={`${template.hard_constraint_violations ?? 0} hard · ${template.soft_constraint_violations ?? 0} soft`}
+          />
+        </div>
+
+        {template.optimizer_notes && (
+          <div className="rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-fg">
+            {template.optimizer_notes}
+          </div>
+        )}
+
+        {/* Cycle instances */}
+        <Card padding="none">
+          <div className="border-b border-border px-4 py-3 flex items-center justify-between">
+            <CardTitle>Cycle instances</CardTitle>
+            <Button size="sm" variant="secondary" onClick={() => setGenerateOpen(true)}>
+              <Plus className="h-3.5 w-3.5" />
+              Generate next cycle
+            </Button>
+          </div>
+          {cycles.length === 0 ? (
+            <p className="px-4 py-6 text-sm text-fg-muted">No cycle instances yet. Generate one above.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Cycle</TableHead>
+                  <TableHead>Start</TableHead>
+                  <TableHead>End</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {cycles.map((c) => (
+                  <TableRow key={c.id}>
+                    <TableCell numeric>{c.cycle_number}</TableCell>
+                    <TableCell className="font-tabular text-xs">{c.start_date}</TableCell>
+                    <TableCell className="font-tabular text-xs">{c.end_date}</TableCell>
+                    <TableCell>
+                      <Badge variant={c.status === 'completed' ? 'success' : c.status === 'in_progress' ? 'accent' : 'outline'}>
+                        {c.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Link
+                        to={`/accounts/${accountId}/clients/${clientId}/scheduler/cycles/${c.id}`}
+                        className="text-xs text-accent hover:underline"
+                      >
+                        View
+                      </Link>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </Card>
+
+        {/* Tabs: Trips / Crews / Clusters / Unplaced */}
+        <Tabs defaultValue="trips">
+          <TabsList>
+            <TabsTrigger value="trips">Trips ({template.trips?.length ?? 0})</TabsTrigger>
+            <TabsTrigger value="crews">Crews</TabsTrigger>
+            <TabsTrigger value="clusters">Clusters</TabsTrigger>
+            <TabsTrigger value="unplaced">
+              Unplaced ({template.unplaced_visits?.length ?? 0})
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="trips">
+            <Card padding="none">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Trip</TableHead>
+                    <TableHead>Crew</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Cluster</TableHead>
+                    <TableHead>Day in cycle</TableHead>
+                    <TableHead>Duration</TableHead>
+                    <TableHead>Stops</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(template.trips ?? []).map((t: any) => (
+                    <TableRow key={t.trip_id}>
+                      <TableCell className="text-xs font-mono">{t.trip_id}</TableCell>
+                      <TableCell numeric>{t.crew_index + 1}</TableCell>
+                      <TableCell>
+                        <Badge variant={t.trip_type === 'overnight' ? 'warning' : 'outline'}>
+                          {t.trip_type}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs">{t.cluster_id}</TableCell>
+                      <TableCell numeric>{t.relative_start_day}</TableCell>
+                      <TableCell numeric>{t.duration_days}d</TableCell>
+                      <TableCell numeric>
+                        {(t.days ?? []).reduce((s: number, d: any) => s + (d.stops?.length ?? 0), 0)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="crews">
+            <Card padding="none">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Crew</TableHead>
+                    <TableHead>Clusters</TableHead>
+                    <TableHead>Work hrs/cycle</TableHead>
+                    <TableHead>Drive hrs/cycle</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(template.crew_assignments ?? []).map((c: any) => (
+                    <TableRow key={c.crew_index}>
+                      <TableCell>{c.crew_label}</TableCell>
+                      <TableCell numeric>{(c.cluster_ids ?? []).length}</TableCell>
+                      <TableCell numeric>{Math.round(c.total_work_hours)}</TableCell>
+                      <TableCell numeric>{Math.round(c.total_drive_hours)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="clusters">
+            <Card padding="none">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Cluster</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Properties</TableHead>
+                    <TableHead>Work hrs</TableHead>
+                    <TableHead>Trips/cycle</TableHead>
+                    <TableHead>Days/trip</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(template.geographic_clusters ?? []).map((c: any) => (
+                    <TableRow key={c.cluster_id}>
+                      <TableCell className="text-xs font-mono">{c.cluster_id}</TableCell>
+                      <TableCell>
+                        <Badge variant={c.cluster_type === 'remote' ? 'warning' : 'outline'}>
+                          {c.cluster_type}
+                        </Badge>
+                      </TableCell>
+                      <TableCell numeric>{c.property_count}</TableCell>
+                      <TableCell numeric>{Math.round(c.total_work_hours)}</TableCell>
+                      <TableCell numeric>{c.trips_per_cycle}</TableCell>
+                      <TableCell numeric>{c.days_on_site_per_trip}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="unplaced">
+            <Card padding="none">
+              {(template.unplaced_visits ?? []).length === 0 ? (
+                <p className="px-4 py-6 text-sm text-fg-muted">No unplaced visits — all required visits scheduled.</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Address</TableHead>
+                      <TableHead>Reason</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(template.unplaced_visits ?? []).map((u: any, i: number) => (
+                      <TableRow key={i}>
+                        <TableCell className="text-sm">{u.address}</TableCell>
+                        <TableCell className="text-xs text-fg-muted">
+                          <Badge variant="outline">{u.reason}</Badge>{' '}
+                          {u.detail}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </Card>
+          </TabsContent>
+        </Tabs>
+      </div>
+
+      <Dialog open={generateOpen} onOpenChange={(o) => { if (!o) setGenerateOpen(false) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Generate cycle instance</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <FormField label="Start date">
+              <Input
+                type="date"
+                value={genStartDate}
+                onChange={(e) => setGenStartDate(e.target.value)}
+              />
+            </FormField>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setGenerateOpen(false)}>Cancel</Button>
+            <Button onClick={handleGenerate} loading={generating}>Generate</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </AppShell>
+  )
+}
+
+function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="rounded-md border border-border bg-surface px-3 py-2">
+      <p className="text-[10px] uppercase tracking-wider text-fg-subtle">{label}</p>
+      <p className="font-mono text-base font-semibold tabular-nums text-fg leading-tight">{value}</p>
+      {sub && <p className="text-[11px] text-fg-muted font-tabular">{sub}</p>}
+    </div>
+  )
+}
+
+function formatMin(min: number): string {
+  if (min < 60) return `${min}m`
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  return m === 0 ? `${h}h` : `${h}h ${m}m`
+}

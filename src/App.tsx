@@ -27,6 +27,11 @@ import ConstraintTemplatesPage from './pages/accounts/ConstraintTemplates'
 import AuditLogPage from './pages/accounts/AuditLog'
 import PropertiesAdminPage from './pages/accounts/PropertiesAdmin'
 import SchedulerPage from './pages/accounts/Scheduler'
+import ServiceOfferingsPage from './pages/accounts/ServiceOfferings'
+import TemplatesListPage from './pages/accounts/scheduler/TemplatesList'
+import NewTemplatePage from './pages/accounts/scheduler/NewTemplate'
+import TemplateDetailPage from './pages/accounts/scheduler/TemplateDetail'
+import CycleDetailPage from './pages/accounts/scheduler/CycleDetail'
 import NewAccountClientPage from './pages/accounts/NewAccountClient'
 import ClientsListPage from './pages/clients/ClientsList'
 import NewClientPage from './pages/clients/NewClient'
@@ -134,6 +139,26 @@ export default function App() {
           <Route
             path="/accounts/:accountId/clients/:clientId/scheduler"
             element={<AuthGuard><SchedulerPage /></AuthGuard>}
+          />
+          <Route
+            path="/accounts/:accountId/clients/:clientId/admin/service-offerings"
+            element={<AuthGuard><ServiceOfferingsPage /></AuthGuard>}
+          />
+          <Route
+            path="/accounts/:accountId/clients/:clientId/scheduler/templates"
+            element={<AuthGuard><TemplatesListPage /></AuthGuard>}
+          />
+          <Route
+            path="/accounts/:accountId/clients/:clientId/scheduler/templates/new"
+            element={<AuthGuard><NewTemplatePage /></AuthGuard>}
+          />
+          <Route
+            path="/accounts/:accountId/clients/:clientId/scheduler/templates/:templateId"
+            element={<AuthGuard><TemplateDetailPage /></AuthGuard>}
+          />
+          <Route
+            path="/accounts/:accountId/clients/:clientId/scheduler/cycles/:cycleId"
+            element={<AuthGuard><CycleDetailPage /></AuthGuard>}
           />
           <Route path="/accounts/:id/clients/new" element={<AuthGuard><NewAccountClientPage /></AuthGuard>} />
 
