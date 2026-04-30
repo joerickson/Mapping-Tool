@@ -265,12 +265,14 @@ export function computeCrewStrategy(
     }
 
     let propAnnualHours = 0
-    const slHoursForProperty: Array<{
-      sl_id: string
-      hours_per_visit: number
-      visits: number
-      override: BuildingSizeClass | null
-    }> = []
+    // Property-level aggregation for the building-count math: a single
+    // physical building (= property) consumes one crew-day per visit
+    // regardless of how many service_locations model it. Combo upholstery
+    // is folded into the project_clean SL's hpv, so we skip it here to
+    // avoid phantom 1-hour visits.
+    let propertyVisitsPerYear = 0
+    let propertyHoursPerVisit = 0
+    let propertyOverride: BuildingSizeClass | null = null
     for (const sl of p.service_locations) {
       const offering = sl.service_offering_id ? offerings.get(sl.service_offering_id) : null
       const cls = offering ? classifyOffering(offering.name) : 'other'
@@ -291,16 +293,20 @@ export function computeCrewStrategy(
         // solo hours; combo is already accounted for above.
         if (!hasProjectClean) hoursPerVisit = inputs.upholstery_solo_hours
       }
-      hoursPerVisit = Math.max(hoursPerVisit, 1)
 
-      propAnnualHours += hoursPerVisit * visits
-      slHoursForProperty.push({
-        sl_id: sl.id,
-        hours_per_visit: hoursPerVisit,
-        visits,
-        override:
-          (sl.building_size_class_override as BuildingSizeClass | null | undefined) ?? null,
-      })
+      // Existing hours-based bookkeeping uses the Math.max bump for safety.
+      const hpvForBookkeeping = Math.max(hoursPerVisit, 1)
+      propAnnualHours += hpvForBookkeeping * visits
+
+      // Building-count math: only fold this SL into the property if it
+      // contributes real work. Skip combo-upholstery phantoms (hpv = 0).
+      if (hoursPerVisit > 0) {
+        propertyHoursPerVisit += hoursPerVisit
+        if (visits > propertyVisitsPerYear) propertyVisitsPerYear = visits
+      }
+      const slOverride =
+        (sl.building_size_class_override as BuildingSizeClass | null | undefined) ?? null
+      if (slOverride && !propertyOverride) propertyOverride = slOverride
     }
 
     // Find nearest branch (re-cluster against the chosen branch set so we can
@@ -320,15 +326,16 @@ export function computeCrewStrategy(
       propertiesMissingCoords += 1
     }
 
-    // Emit one routed_visit per (SL × visits/year) for the building-count
-    // math. branch_idx attribution lets us split into per-branch counts
-    // for Option B.
-    for (const sh of slHoursForProperty) {
-      for (let v = 0; v < sh.visits; v++) {
+    // Emit one routed_visit per (property × visit) — operational reality
+    // is "the crew shows up at the building this many times per year",
+    // not "the crew shows up per SL per visit". branch_idx attribution
+    // lets us split into per-branch counts for Option B.
+    if (propertyHoursPerVisit > 0 && propertyVisitsPerYear > 0) {
+      for (let v = 0; v < propertyVisitsPerYear; v++) {
         routedVisits.push({
-          service_location_id: sh.sl_id,
-          hours_per_visit: sh.hours_per_visit,
-          building_size_class_override: sh.override,
+          service_location_id: p.id,
+          hours_per_visit: propertyHoursPerVisit,
+          building_size_class_override: propertyOverride,
           branch_idx: bestIdx,
         })
       }
