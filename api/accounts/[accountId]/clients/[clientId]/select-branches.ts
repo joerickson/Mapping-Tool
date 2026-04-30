@@ -124,18 +124,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // Round-trip the values to canonicalize.
-  const cleanBranches: SelectedBranch[] = branches.map((b) => ({
-    name: b.name.trim(),
-    address: b.address?.trim() || null,
-    city_state: (b.city_state ?? '').trim(),
-    lat: Number(b.lat),
-    lng: Number(b.lng),
-    source: b.source,
-    cluster_index:
-      typeof b.cluster_index === 'number' && Number.isFinite(b.cluster_index)
-        ? b.cluster_index
-        : null,
-  }))
+  // Phase 3.9 — accept optional branch_type ('main' | 'satellite').
+  // Default for K=1: 'main'. Default for K>1 newcomers: 'satellite'.
+  const cleanBranches: SelectedBranch[] = branches.map((b) => {
+    const t = (b as any).branch_type
+    const branchType: 'main' | 'satellite' =
+      t === 'main' || t === 'satellite' ? t : branches.length <= 1 ? 'main' : 'satellite'
+    return {
+      name: b.name.trim(),
+      address: b.address?.trim() || null,
+      city_state: (b.city_state ?? '').trim(),
+      lat: Number(b.lat),
+      lng: Number(b.lng),
+      source: b.source,
+      cluster_index:
+        typeof b.cluster_index === 'number' && Number.isFinite(b.cluster_index)
+          ? b.cluster_index
+          : null,
+      branch_type: branchType,
+    }
+  })
 
   const sourceAnalysisId =
     typeof body.source_analysis_id === 'string' && body.source_analysis_id.trim()

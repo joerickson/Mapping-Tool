@@ -39,6 +39,8 @@ export interface SelectedBranch {
   lng: number
   source: 'existing' | 'manual'
   cluster_index?: number | null
+  // Phase 3.9 — main vs satellite drives different overhead defaults.
+  branch_type?: 'main' | 'satellite'
 }
 
 export interface ReferenceCentroid {
@@ -89,7 +91,11 @@ export default function BuildSelectionModal({
 }: Props) {
   const initialRows = useMemo<RowDraft[]>(() => {
     const rows: RowDraft[] = []
-    for (const eb of existingBranches.slice(0, k)) {
+    // Phase 3.9 — first existing branch defaults to 'main', subsequent
+    // existing branches and any new manual rows default to 'satellite'.
+    // K=1 forces 'main'.
+    for (let i = 0; i < Math.min(existingBranches.length, k); i++) {
+      const eb = existingBranches[i]
       rows.push({
         kind: 'filled',
         branch: {
@@ -99,10 +105,17 @@ export default function BuildSelectionModal({
           lat: eb.lat,
           lng: eb.lng,
           source: 'existing',
+          branch_type: i === 0 ? 'main' : 'satellite',
         },
       })
     }
     while (rows.length < k) rows.push({ kind: 'empty' })
+    if (k === 1 && rows[0]?.kind === 'filled') {
+      rows[0] = {
+        kind: 'filled',
+        branch: { ...rows[0].branch, branch_type: 'main' },
+      }
+    }
     return rows
   }, [existingBranches, k])
 
@@ -124,9 +137,30 @@ export default function BuildSelectionModal({
 
   const setBranchAt = (idx: number, branch: SelectedBranch) => {
     setRows((cur) =>
-      cur.map((r, i) => (i === idx ? { kind: 'filled', branch } : r))
+      cur.map((r, i) =>
+        i === idx
+          ? {
+              kind: 'filled',
+              branch: {
+                // Default new manual rows to 'satellite' (most additions
+                // to a multi-branch portfolio are satellites). K=1 ⇒ 'main'.
+                branch_type: k === 1 ? 'main' : ('satellite' as const),
+                ...branch,
+              },
+            }
+          : r
+      )
     )
     setActivePicker(null)
+  }
+  const setBranchTypeAt = (idx: number, branch_type: 'main' | 'satellite') => {
+    setRows((cur) =>
+      cur.map((r, i) =>
+        i === idx && r.kind === 'filled'
+          ? { kind: 'filled', branch: { ...r.branch, branch_type } }
+          : r
+      )
+    )
   }
 
   const clearBranchAt = (idx: number) => {
@@ -177,6 +211,7 @@ export default function BuildSelectionModal({
               <TableRow>
                 <TableHead className="w-8">#</TableHead>
                 <TableHead>Source</TableHead>
+                <TableHead>Type</TableHead>
                 <TableHead>Name</TableHead>
                 <TableHead>City / state</TableHead>
                 <TableHead>Lat / lng</TableHead>
@@ -198,6 +233,38 @@ export default function BuildSelectionModal({
                         </Badge>
                       ) : row.kind === 'filled' ? (
                         <Badge>Manual</Badge>
+                      ) : (
+                        <span className="text-xs text-fg-subtle">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {row.kind === 'filled' ? (
+                        <div className="inline-flex rounded-md border border-border overflow-hidden text-[10px]">
+                          <button
+                            type="button"
+                            onClick={() => setBranchTypeAt(idx, 'main')}
+                            className={
+                              'px-2 py-0.5 transition ' +
+                              ((row.branch.branch_type ?? 'main') === 'main'
+                                ? 'bg-accent text-white'
+                                : 'text-fg-muted hover:bg-surface-subtle')
+                            }
+                          >
+                            Main
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setBranchTypeAt(idx, 'satellite')}
+                            className={
+                              'px-2 py-0.5 transition ' +
+                              (row.branch.branch_type === 'satellite'
+                                ? 'bg-accent text-white'
+                                : 'text-fg-muted hover:bg-surface-subtle')
+                            }
+                          >
+                            Satellite
+                          </button>
+                        </div>
                       ) : (
                         <span className="text-xs text-fg-subtle">—</span>
                       )}

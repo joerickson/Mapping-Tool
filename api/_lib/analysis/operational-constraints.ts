@@ -42,6 +42,59 @@ export interface SelectedBranch {
   lng: number
   source: 'existing' | 'manual'
   cluster_index?: number | null
+  // Phase 3.9 — main vs satellite drives different overhead defaults.
+  // Backward-compat: existing rows backfill to 'main' via migration.
+  branch_type?: 'main' | 'satellite'
+}
+
+// Phase 3.9 — branch overhead structured config + per-branch overrides.
+export interface BranchTypeDefaults {
+  rent_monthly: number
+  utilities_monthly: number
+  manager_salary_annual: number
+  manager_burden_pct: number
+  other_operational_monthly: number
+}
+export interface BranchOverheadConfig {
+  main_defaults: BranchTypeDefaults
+  satellite_defaults: BranchTypeDefaults
+}
+export type BranchOverheadOverrides = Record<
+  string,
+  Partial<BranchTypeDefaults> & { branch_type?: 'main' | 'satellite' }
+>
+
+// Phase 3.9 — insurance config.
+export interface InsuranceConfigShape {
+  calculation_method: 'percentage_of_revenue' | 'flat'
+  percentage_of_revenue?: number
+  minimum_annual_premium?: number
+  flat_amount?: number
+}
+
+// Phase 3.9 — vehicle config.
+export interface VehicleConfigShape {
+  default_vehicles_per_crew: number
+  default_ownership_type: 'lease' | 'purchase' | 'personal_vehicle_reimbursement'
+  ownership_defaults: {
+    lease: {
+      monthly_lease: number
+      monthly_maintenance: number
+      annual_registration: number
+      annual_insurance: number
+    }
+    purchase: {
+      monthly_payment: number
+      monthly_maintenance: number
+      annual_registration: number
+      annual_insurance: number
+      annual_depreciation_estimate: number
+    }
+    personal_vehicle_reimbursement: {
+      rate_per_mile: number
+      monthly_stipend: number
+    }
+  }
 }
 
 export interface OperationalConstraints {
@@ -86,6 +139,16 @@ export interface OperationalConstraints {
   vehicle_lease_annual_per_crew: number
   supplies_pct_of_labor: number
   insurance_annual: number
+
+  // Phase 3.9 — structured cost configs replace the flat fields above
+  // when populated. Each has an _override numeric for hard-pin.
+  branch_overhead_config: BranchOverheadConfig
+  branch_overhead_overrides: BranchOverheadOverrides
+  branch_overhead_annual_override: number | null
+  insurance_config: InsuranceConfigShape
+  insurance_annual_override: number | null
+  vehicle_config: VehicleConfigShape
+  vehicle_lease_annual_per_crew_override: number | null
 
   // Margin
   corporate_overhead_pct: number
@@ -177,6 +240,98 @@ function pickNumeric(row: any, key: keyof SystemDefaults): number {
   return typeof v === 'string' ? parseFloat(v) : v
 }
 
+// Phase 3.9 — defaults for the structured cost configs. Mirror the
+// migration's COLUMN DEFAULT so the loader behaves the same whether
+// a row exists with NULL or doesn't exist at all.
+const BRANCH_OVERHEAD_CONFIG_DEFAULTS: BranchOverheadConfig = {
+  main_defaults: {
+    rent_monthly: 5000,
+    utilities_monthly: 800,
+    manager_salary_annual: 75000,
+    manager_burden_pct: 28,
+    other_operational_monthly: 2000,
+  },
+  satellite_defaults: {
+    rent_monthly: 2500,
+    utilities_monthly: 400,
+    manager_salary_annual: 0,
+    manager_burden_pct: 28,
+    other_operational_monthly: 1000,
+  },
+}
+const INSURANCE_CONFIG_DEFAULTS: InsuranceConfigShape = {
+  calculation_method: 'percentage_of_revenue',
+  percentage_of_revenue: 1.5,
+  minimum_annual_premium: 5000,
+}
+const VEHICLE_CONFIG_DEFAULTS: VehicleConfigShape = {
+  default_vehicles_per_crew: 1,
+  default_ownership_type: 'lease',
+  ownership_defaults: {
+    lease: {
+      monthly_lease: 600,
+      monthly_maintenance: 150,
+      annual_registration: 200,
+      annual_insurance: 1800,
+    },
+    purchase: {
+      monthly_payment: 800,
+      monthly_maintenance: 200,
+      annual_registration: 200,
+      annual_insurance: 1600,
+      annual_depreciation_estimate: 4000,
+    },
+    personal_vehicle_reimbursement: {
+      rate_per_mile: 0.67,
+      monthly_stipend: 0,
+    },
+  },
+}
+
+function mergeBranchOverheadConfig(saved: any): BranchOverheadConfig {
+  if (!saved || typeof saved !== 'object') return clone(BRANCH_OVERHEAD_CONFIG_DEFAULTS)
+  return {
+    main_defaults: {
+      ...BRANCH_OVERHEAD_CONFIG_DEFAULTS.main_defaults,
+      ...(saved.main_defaults ?? {}),
+    },
+    satellite_defaults: {
+      ...BRANCH_OVERHEAD_CONFIG_DEFAULTS.satellite_defaults,
+      ...(saved.satellite_defaults ?? {}),
+    },
+  }
+}
+function mergeInsuranceConfig(saved: any): InsuranceConfigShape {
+  if (!saved || typeof saved !== 'object') return clone(INSURANCE_CONFIG_DEFAULTS)
+  return { ...INSURANCE_CONFIG_DEFAULTS, ...saved }
+}
+function mergeVehicleConfig(saved: any): VehicleConfigShape {
+  if (!saved || typeof saved !== 'object') return clone(VEHICLE_CONFIG_DEFAULTS)
+  return {
+    default_vehicles_per_crew:
+      saved.default_vehicles_per_crew ?? VEHICLE_CONFIG_DEFAULTS.default_vehicles_per_crew,
+    default_ownership_type:
+      saved.default_ownership_type ?? VEHICLE_CONFIG_DEFAULTS.default_ownership_type,
+    ownership_defaults: {
+      lease: {
+        ...VEHICLE_CONFIG_DEFAULTS.ownership_defaults.lease,
+        ...(saved.ownership_defaults?.lease ?? {}),
+      },
+      purchase: {
+        ...VEHICLE_CONFIG_DEFAULTS.ownership_defaults.purchase,
+        ...(saved.ownership_defaults?.purchase ?? {}),
+      },
+      personal_vehicle_reimbursement: {
+        ...VEHICLE_CONFIG_DEFAULTS.ownership_defaults.personal_vehicle_reimbursement,
+        ...(saved.ownership_defaults?.personal_vehicle_reimbursement ?? {}),
+      },
+    },
+  }
+}
+function clone<T>(o: T): T {
+  return JSON.parse(JSON.stringify(o)) as T
+}
+
 function mergeHotelConfig(saved: any): HotelCostConfig {
   if (!saved || typeof saved !== 'object') return { ...HOTEL_COST_CONFIG_DEFAULTS }
   return {
@@ -251,6 +406,31 @@ export async function loadConstraints(
     vehicle_lease_annual_per_crew: pickNumeric(r, 'vehicle_lease_annual_per_crew'),
     supplies_pct_of_labor: pickNumeric(r, 'supplies_pct_of_labor'),
     insurance_annual: pickNumeric(r, 'insurance_annual'),
+
+    // Phase 3.9 — structured cost configs (with defaults if NULL).
+    branch_overhead_config: mergeBranchOverheadConfig(r?.branch_overhead_config),
+    branch_overhead_overrides: (r?.branch_overhead_overrides ?? {}) as BranchOverheadOverrides,
+    branch_overhead_annual_override:
+      r?.branch_overhead_annual_override == null
+        ? null
+        : typeof r.branch_overhead_annual_override === 'string'
+          ? parseFloat(r.branch_overhead_annual_override)
+          : r.branch_overhead_annual_override,
+    insurance_config: mergeInsuranceConfig(r?.insurance_config),
+    insurance_annual_override:
+      r?.insurance_annual_override == null
+        ? null
+        : typeof r.insurance_annual_override === 'string'
+          ? parseFloat(r.insurance_annual_override)
+          : r.insurance_annual_override,
+    vehicle_config: mergeVehicleConfig(r?.vehicle_config),
+    vehicle_lease_annual_per_crew_override:
+      r?.vehicle_lease_annual_per_crew_override == null
+        ? null
+        : typeof r.vehicle_lease_annual_per_crew_override === 'string'
+          ? parseFloat(r.vehicle_lease_annual_per_crew_override)
+          : r.vehicle_lease_annual_per_crew_override,
+
     corporate_overhead_pct: pickNumeric(r, 'corporate_overhead_pct'),
     target_gross_margin_pct: pickNumeric(r, 'target_gross_margin_pct'),
     drive_speed_mph: pickNumeric(r, 'drive_speed_mph'),

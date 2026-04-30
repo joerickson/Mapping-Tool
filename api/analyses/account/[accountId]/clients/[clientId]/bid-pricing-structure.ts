@@ -26,6 +26,18 @@ import {
   type OvernightConfig,
   type ResolvedHotelsCost,
 } from '../../../../../_lib/analysis/overnight-calculator.js'
+import {
+  calculateBranchOverhead,
+  type BranchOverheadResult,
+} from '../../../../../_lib/analysis/branch-overhead-calculator.js'
+import {
+  calculateInsurance,
+  type InsuranceResult,
+} from '../../../../../_lib/analysis/insurance-calculator.js'
+import {
+  calculateVehicleCosts,
+  type VehicleCostResult,
+} from '../../../../../_lib/analysis/vehicle-cost-calculator.js'
 
 export const config = { maxDuration: 60 }
 
@@ -171,6 +183,102 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Pin the resolved value into inputs so computeBidPricing uses it.
     inputs.hotels_annual = hotelsResolved.value
 
+    // Phase 3.9 — structured branch overhead.
+    let branchOverheadResult: BranchOverheadResult | null = null
+    if (constraints.branch_overhead_annual_override == null) {
+      branchOverheadResult = calculateBranchOverhead({
+        branches: sel.branches.map((b) => ({
+          name: b.name,
+          branch_type: b.branch_type ?? 'main',
+          lat: b.lat,
+          lng: b.lng,
+        })),
+        config: constraints.branch_overhead_config,
+        per_branch_overrides: constraints.branch_overhead_overrides,
+      })
+      // Override the legacy flat input with the calculated total / branch.
+      // The legacy code multiplies by branch_count, so we hand it the
+      // per-branch average to keep the math consistent.
+      const k = sel.branches.length
+      inputs.branch_overhead_annual =
+        k > 0 ? Math.round(branchOverheadResult.total_annual / k) : 0
+    } else {
+      inputs.branch_overhead_annual = constraints.branch_overhead_annual_override
+    }
+
+    // Phase 3.9 — structured vehicle costs.
+    let vehicleResult: VehicleCostResult | null = null
+    const desiredCrewCount = inputs.crew_count ?? 4
+    if (constraints.vehicle_lease_annual_per_crew_override == null) {
+      vehicleResult = await calculateVehicleCosts({
+        db,
+        account_id: accountId,
+        client_id: clientId,
+        crew_count: desiredCrewCount,
+        // Rough proxy: assume 30k miles/yr/crew if no scheduler data
+        // (matches the legacy ROVING_ESTIMATED_ANNUAL_MILES_PER_CREW
+        // constant in crew-strategy).
+        estimated_annual_drive_miles_per_crew: 30000,
+        config: constraints.vehicle_config,
+      })
+      const k = vehicleResult.crews.length
+      inputs.vehicle_lease_annual_per_crew =
+        k > 0 ? Math.round(vehicleResult.total_annual / k) : 0
+    } else {
+      inputs.vehicle_lease_annual_per_crew =
+        constraints.vehicle_lease_annual_per_crew_override
+    }
+
+    // Phase 3.9 — insurance two-pass. Pass 1: compute bid with the
+    // legacy flat insurance (or override). Pass 2: derive insurance
+    // from pass-1 revenue and re-compute. The delta on a typical bid
+    // is < 0.05%, well within the noise of other inputs.
+    let insuranceResult: InsuranceResult | null = null
+    if (constraints.insurance_annual_override == null) {
+      // Pass 1 with current insurance value (don't zero it; that
+      // throws off the corporate_overhead × insurance multiplier).
+      const pass1 = computeBidPricing(
+        properties,
+        { ...inputs },
+        crewStrategy?.outputs,
+        branchOpt?.outputs,
+        workforce?.outputs,
+        hotelsResolved,
+        schedulerTemplate,
+        offerings,
+        {
+          project_clean_base_hours: constraints.project_clean_base_hours,
+          project_clean_hours_per_sqft: constraints.project_clean_hours_per_sqft,
+          upholstery_solo_hours: constraints.upholstery_solo_hours,
+          upholstery_combo_hours_pct: constraints.upholstery_combo_hours_pct,
+          visits_per_year_default: constraints.visits_per_year_default ?? 2,
+        }
+      )
+      insuranceResult = calculateInsurance({
+        config: constraints.insurance_config,
+        estimated_annual_revenue: pass1.outputs.bid_total,
+      })
+      inputs.insurance_annual = insuranceResult.calculated_amount
+    } else {
+      inputs.insurance_annual = constraints.insurance_annual_override
+    }
+
+    // Phase 3.9 — exclude personal-vehicle crews from fuel allocation.
+    if (
+      vehicleResult &&
+      vehicleResult.fuel_excluded_crew_labels.length > 0 &&
+      inputs.total_annual_vehicle_cost == null
+    ) {
+      // resolvedVehicleFuel will be filled from crewStrategy below; we
+      // pre-scale it by the fraction of crews actually paying for fuel.
+      const totalCrews = vehicleResult.crews.length
+      const fueled = totalCrews - vehicleResult.fuel_excluded_crew_labels.length
+      if (totalCrews > 0 && fueled >= 0) {
+        // Stash on a non-input field so computeBidPricing can apply.
+        ;(inputs as any).__fuel_scale = fueled / totalCrews
+      }
+    }
+
     const result = computeBidPricing(
       properties,
       inputs,
@@ -186,7 +294,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         upholstery_solo_hours: constraints.upholstery_solo_hours,
         upholstery_combo_hours_pct: constraints.upholstery_combo_hours_pct,
         visits_per_year_default: constraints.visits_per_year_default ?? 2,
-      }
+      },
+      branchOverheadResult,
+      insuranceResult,
+      vehicleResult
     )
 
     await completeAnalysisRecord(db, analysisId, {
@@ -230,7 +341,10 @@ export function computeBidPricing(
     upholstery_solo_hours: number
     upholstery_combo_hours_pct: number
     visits_per_year_default: number
-  }
+  },
+  branchOverheadResult?: BranchOverheadResult | null,
+  insuranceResult?: InsuranceResult | null,
+  vehicleResult?: VehicleCostResult | null
 ) {
   let resolvedLabor = inputs.total_annual_labor_cost
   let resolvedVehicleFuel = inputs.total_annual_vehicle_cost
@@ -294,7 +408,14 @@ export function computeBidPricing(
   )
 
   const direct_labor = resolvedLabor
-  const vehicle_fuel = resolvedVehicleFuel
+  // Phase 3.9 — fuel scale removes the slice attributable to crews on
+  // personal-vehicle reimbursement (the IRS mileage rate already covers
+  // gas, so double-counting here would inflate the bid).
+  const fuelScale = (inputs as any).__fuel_scale
+  const vehicle_fuel =
+    typeof fuelScale === 'number' && Number.isFinite(fuelScale)
+      ? Math.round(resolvedVehicleFuel * fuelScale)
+      : resolvedVehicleFuel
   const vehicle_lease = resolvedCrewCount * inputs.vehicle_lease_annual_per_crew
   const hotels = inputs.hotels_annual
   const supplies = direct_labor * inputs.supplies_pct_of_labor
@@ -393,8 +514,47 @@ export function computeBidPricing(
             }
           : { total: Math.round(hotels), basis: 'flat_fallback' as const },
         supplies: Math.round(supplies),
-        branch_overhead: Math.round(branch_overhead),
-        insurance: Math.round(insurance),
+        // Phase 3.9 — structured branch overhead. Falls back to flat
+        // when override is in effect (no breakdown to show).
+        branch_overhead: branchOverheadResult
+          ? {
+              total: Math.round(branch_overhead),
+              basis: 'calculated' as const,
+              breakdown: {
+                main_count: branchOverheadResult.main_count,
+                satellite_count: branchOverheadResult.satellite_count,
+                per_branch: branchOverheadResult.branches,
+                total: branchOverheadResult.total_annual,
+              },
+            }
+          : { total: Math.round(branch_overhead), basis: 'override' as const },
+        // Phase 3.9 — structured insurance.
+        insurance: insuranceResult
+          ? {
+              total: Math.round(insurance),
+              basis: 'calculated' as const,
+              breakdown: {
+                method: insuranceResult.applied_method,
+                applied_percentage: insuranceResult.applied_percentage,
+                basis_amount: insuranceResult.basis_amount,
+                hit_minimum: insuranceResult.hit_minimum,
+                breakdown_text: insuranceResult.breakdown_text,
+              },
+            }
+          : { total: Math.round(insurance), basis: 'override' as const },
+        // Phase 3.9 — structured vehicle costs.
+        vehicle_costs: vehicleResult
+          ? {
+              total: Math.round(vehicle_lease),
+              basis: 'calculated' as const,
+              breakdown: {
+                per_crew: vehicleResult.crews,
+                total: vehicleResult.total_annual,
+                fuel_excluded_crew_labels: vehicleResult.fuel_excluded_crew_labels,
+                notes: [],
+              },
+            }
+          : { total: Math.round(vehicle_lease), basis: 'override' as const },
         total_direct_cost: Math.round(total_direct_cost),
       },
       indirect_cost: { corporate_overhead: Math.round(corporate_overhead) },

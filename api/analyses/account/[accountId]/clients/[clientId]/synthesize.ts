@@ -156,6 +156,11 @@ Phase 3.8 — building-count crew math:
 - If both numbers exist and DIFFER, surface the range under "Risks & Considerations": e.g. "Crew sizing analysis shows X-Y crews depending on geographic packing efficiency. We recommend bidding at X crews to ensure capacity, with the option to scale down to Y if scheduling consistently shows the work fits." (replace X with the conservative count and Y with the optimistic count). This is typically a 6-figure-per-year swing — call it out.
 - If a routing template exists for this client, the Bid Pricing module pulls crew_count from the actual scheduler plan ("source": "scheduler_template"). Mention this is the authoritative number; the Crew Strategy estimate is the pre-scheduler ceiling. If there is a meaningful delta between the two (>= 1 crew), note it: e.g. "Crew Strategy estimates 4 crews; the scheduler optimization confirms 3 crews are sufficient with current geographic packing."
 
+Phase 3.9 — structured cost calculations:
+- Branch overhead is now per-branch with main vs satellite designation. Each branch contributes its own (rent, utilities, manager-loaded, other) annual total. In the Branch Decision section, mention the count of mains vs satellites and any anomalies (e.g. a satellite carrying full main-branch overhead suggests it should be re-classified, a main with $0 manager suggests shared management).
+- Insurance is calculated as % of bid revenue (default 1.5%) with a minimum premium. If \`hit_minimum\` is true, surface that in Risks: insurance was bumped to the minimum, so a small revenue change flips the value.
+- Vehicle costs are per-crew with three ownership types (lease, purchase, personal_vehicle_reimbursement). If any crew uses personal vehicle reimbursement, mention liability/coverage considerations and that fuel cost has already been removed for those crews (the IRS mileage rate already covers gas + depreciation + maintenance).
+
 Output strictly as JSON with two string keys: dashboard_summary, full_report_markdown.
 Do NOT wrap the JSON in markdown code fences.`
 

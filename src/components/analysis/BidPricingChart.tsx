@@ -56,8 +56,52 @@ interface BidOutputs {
           }
         }
     supplies: number
-    branch_overhead: number
-    insurance: number
+    // Phase 3.9 — branch_overhead, insurance, vehicle_costs are now
+    // structured (calculated breakdown vs flat override). Old outputs
+    // remain bare numbers; the chart accepts either.
+    branch_overhead:
+      | number
+      | {
+          total: number
+          basis?: 'calculated' | 'override'
+          breakdown?: {
+            main_count: number
+            satellite_count: number
+            per_branch?: Array<{
+              branch_name: string
+              branch_type: 'main' | 'satellite'
+              total_annual: number
+            }>
+            total: number
+          }
+        }
+    insurance:
+      | number
+      | {
+          total: number
+          basis?: 'calculated' | 'override'
+          breakdown?: {
+            method: string
+            applied_percentage: number
+            basis_amount: number
+            hit_minimum: boolean
+            breakdown_text: string
+          }
+        }
+    vehicle_costs?:
+      | {
+          total: number
+          basis?: 'calculated' | 'override'
+          breakdown?: {
+            per_crew?: Array<{
+              crew_label: string
+              total_annual: number
+              vehicles: Array<{ ownership_type: string; annual_cost: number }>
+            }>
+            total: number
+            fuel_excluded_crew_labels?: string[]
+          }
+        }
     total_direct_cost: number
   }
   indirect_cost: { corporate_overhead: number }
@@ -130,14 +174,34 @@ export default function BidPricingChart({
       : (data.cost_buildup.hotels?.total ?? 0)
   const hotelsObj =
     typeof data.cost_buildup.hotels === 'object' ? data.cost_buildup.hotels : null
+  // Phase 3.9 — branch_overhead / insurance / vehicle_costs may be
+  // structured objects. Extract totals + keep refs for diagnostic
+  // strings.
+  const branchOverheadValue =
+    typeof data.cost_buildup.branch_overhead === 'number'
+      ? data.cost_buildup.branch_overhead
+      : (data.cost_buildup.branch_overhead?.total ?? 0)
+  const branchOverheadObj =
+    typeof data.cost_buildup.branch_overhead === 'object'
+      ? data.cost_buildup.branch_overhead
+      : null
+  const insuranceValue =
+    typeof data.cost_buildup.insurance === 'number'
+      ? data.cost_buildup.insurance
+      : (data.cost_buildup.insurance?.total ?? 0)
+  const insuranceObj =
+    typeof data.cost_buildup.insurance === 'object'
+      ? data.cost_buildup.insurance
+      : null
+  const vehicleCostsObj = data.cost_buildup.vehicle_costs ?? null
   const buildupRows = [
     { key: 'direct_labor', value: data.cost_buildup.direct_labor },
     { key: 'vehicle_fuel', value: data.cost_buildup.vehicle_fuel },
     { key: 'vehicle_lease', value: data.cost_buildup.vehicle_lease },
     { key: 'hotels', value: hotelsValue },
     { key: 'supplies', value: data.cost_buildup.supplies },
-    { key: 'branch_overhead', value: data.cost_buildup.branch_overhead },
-    { key: 'insurance', value: data.cost_buildup.insurance },
+    { key: 'branch_overhead', value: branchOverheadValue },
+    { key: 'insurance', value: insuranceValue },
     { key: 'corporate_overhead', value: data.indirect_cost.corporate_overhead },
     { key: 'margin', value: data.margin.margin_amount },
     // Always keep hotels in the table even at $0 so the diagnostic ("0
@@ -322,6 +386,26 @@ export default function BidPricingChart({
                       ? ` · ${hotelsObj.breakdown.total_nights} nights · ${hotelsObj.breakdown.cluster_count} cluster${hotelsObj.breakdown.cluster_count === 1 ? '' : 's'} · ${hotelsObj.breakdown.properties_requiring_overnight} prop${hotelsObj.breakdown.properties_requiring_overnight === 1 ? '' : 's'} @ $${hotelsObj.breakdown.cost_per_night}/night`
                       : ` · 0 overnight trips found — verify branches + overnight_trigger_one_way_hours`}
                     )
+                  </span>
+                )}
+                {r.key === 'branch_overhead' && branchOverheadObj?.breakdown && (
+                  <span className="ml-2 text-xs text-fg-subtle">
+                    ({branchOverheadObj.basis ?? 'calculated'} · {branchOverheadObj.breakdown.main_count} main · {branchOverheadObj.breakdown.satellite_count} satellite)
+                  </span>
+                )}
+                {r.key === 'insurance' && insuranceObj?.breakdown && (
+                  <span className="ml-2 text-xs text-fg-subtle">
+                    ({insuranceObj.breakdown.method === 'percentage_of_revenue'
+                      ? `${insuranceObj.breakdown.applied_percentage}% × $${insuranceObj.breakdown.basis_amount.toLocaleString()}${insuranceObj.breakdown.hit_minimum ? ' · hit minimum' : ''}`
+                      : 'flat amount'})
+                  </span>
+                )}
+                {r.key === 'vehicle_lease' && vehicleCostsObj?.breakdown && (
+                  <span className="ml-2 text-xs text-fg-subtle">
+                    ({vehicleCostsObj.basis ?? 'calculated'} · {vehicleCostsObj.breakdown.per_crew?.length ?? 0} crews
+                    {vehicleCostsObj.breakdown.fuel_excluded_crew_labels && vehicleCostsObj.breakdown.fuel_excluded_crew_labels.length > 0 && (
+                      <> · {vehicleCostsObj.breakdown.fuel_excluded_crew_labels.length} on personal vehicle</>
+                    )})
                   </span>
                 )}
                 {r.key === 'hotels' && accountId && clientId && (
