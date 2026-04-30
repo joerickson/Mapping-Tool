@@ -31,7 +31,7 @@ import {
 } from '../../../_lib/scheduler/cohort-assigner.js'
 import type { StoredConstraint } from '../../../_lib/scheduler/constraint-evaluator.js'
 
-export const config = { maxDuration: 120 }
+export const config = { maxDuration: 300 }
 
 interface Body {
   crew_count?: number

@@ -273,13 +273,20 @@ export function routeDay(input: DayRoutingInput): DayRoutingResult {
   }
 
   // ── Step 3: 2-opt local search ────────────────────────────────────────
+  // Build a Map for O(1) candidate lookups inside the inner loops —
+  // the previous .find() was O(candidate_count) per call which made
+  // 2-opt O(n³ · candidates) and tanked the template builder on
+  // big portfolios.
+  const candidateMap = new Map<string, PropertyForRouting>()
+  for (const c of input.candidate_properties) candidateMap.set(c.id, c)
+
   if (route.length >= 4) {
-    twoOptImprove(route, input)
+    twoOptImprove(route, input, candidateMap)
   }
 
   // ── Step 4: re-walk the (possibly reordered) route to fix timestamps,
   // recompute drive legs, and re-check constraint violations ────────────
-  finalizeTimestamps(route, input)
+  finalizeTimestamps(route, input, candidateMap)
 
   // ── Step 5: summary metrics + score ───────────────────────────────────
   const totalDrive = route.reduce((s, r) => s + r.drive_minutes_from_previous, 0)
@@ -349,38 +356,49 @@ export function routeDay(input: DayRoutingInput): DayRoutingResult {
 
 // ── 2-opt: try every pairwise segment reversal; accept any that
 // shortens total drive time without introducing a hard constraint
-// violation. Stops after a full pass with no improvement.
-function twoOptImprove(route: RouteStop[], input: DayRoutingInput): void {
+// violation. Stops after a full pass with no improvement OR after 10
+// iterations (most of the gain happens in the first 2-3 passes; the
+// hard cap keeps the template builder fast on big portfolios).
+function twoOptImprove(
+  route: RouteStop[],
+  input: DayRoutingInput,
+  candidateMap: Map<string, PropertyForRouting>
+): void {
   let improved = true
   let iterations = 0
-  while (improved && iterations < 100) {
+  while (improved && iterations < 10) {
     improved = false
     iterations++
+    let before = totalDriveMiles(route, input, candidateMap)
     for (let i = 0; i < route.length - 1; i++) {
       for (let j = i + 1; j < route.length; j++) {
-        const before = totalDriveMiles(route, input)
         // Reverse segment [i..j]
         const reversed = route.slice(i, j + 1).reverse()
         const trial = [...route.slice(0, i), ...reversed, ...route.slice(j + 1)]
-        // Re-sequence numbers don't matter for distance computation
-        const after = totalDriveMiles(trial, input)
+        const after = totalDriveMiles(trial, input, candidateMap)
         if (after < before - 0.01) {
           route.splice(0, route.length, ...trial)
           improved = true
+          // Update `before` so subsequent swaps in this pass compare
+          // against the new (shorter) total instead of recomputing the
+          // whole route on every i,j.
+          before = after
         }
       }
     }
   }
 }
 
-function totalDriveMiles(route: RouteStop[], input: DayRoutingInput): number {
-  // Recompute the inter-stop drive miles from scratch — the existing
-  // drive_distance_miles_from_previous is stale after a reversal until
-  // finalizeTimestamps runs.
+function totalDriveMiles(
+  route: RouteStop[],
+  input: DayRoutingInput,
+  candidateMap: Map<string, PropertyForRouting>
+): number {
   let prev: LatLng = { lat: input.branch.lat, lng: input.branch.lng }
   let total = 0
   for (const stop of route) {
-    const p = input.candidate_properties.find((c) => c.id === stop.service_location_id)!
+    const p = candidateMap.get(stop.service_location_id)
+    if (!p) continue
     total += haversineMiles(prev, { lat: p.lat, lng: p.lng })
     prev = { lat: p.lat, lng: p.lng }
   }
@@ -392,14 +410,18 @@ function totalDriveMiles(route: RouteStop[], input: DayRoutingInput): number {
 
 // Re-walk the route after 2-opt, producing fresh timestamps + drive legs +
 // constraint violation lists. Mutates the route in place.
-function finalizeTimestamps(route: RouteStop[], input: DayRoutingInput): void {
+function finalizeTimestamps(
+  route: RouteStop[],
+  input: DayRoutingInput,
+  candidateMap: Map<string, PropertyForRouting>
+): void {
   const speed = input.config.drive_speed_mph
   const buffer = input.config.buffer_minutes_per_stop
   let currentLoc: LatLng = { lat: input.branch.lat, lng: input.branch.lng }
   let currentMin = toMinutes(input.config.work_start_time)
   let seq = 1
   for (const stop of route) {
-    const p = input.candidate_properties.find((c) => c.id === stop.service_location_id)!
+    const p = candidateMap.get(stop.service_location_id)!
     const distMi = haversineMiles(currentLoc, { lat: p.lat, lng: p.lng })
     const driveMin = driveTimeMinutes(distMi, speed)
     const arrivalMin = currentMin + driveMin
