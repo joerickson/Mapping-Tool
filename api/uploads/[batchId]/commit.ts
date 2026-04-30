@@ -27,7 +27,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (fetchErr || !batch) return res.status(404).json({ error: 'Batch not found' })
 
-  if (batch.status !== 'completed') {
+  // Idempotent retry: 'completed' = staged but never committed; 'committed'
+  // = a prior run finished (possibly with failures or after a timeout).
+  // Either way, re-running this endpoint is safe — staged rows that
+  // already have service_location_id set are skipped below, and the
+  // dedupe_hash/unique-constraint paths recover cleanly if we hit a
+  // half-inserted row.
+  if (batch.status !== 'completed' && batch.status !== 'committed') {
     return res.status(400).json({ error: `Cannot commit a batch with status "${batch.status}"` })
   }
 
@@ -43,6 +49,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!stagedRows?.length) {
     return res.status(400).json({ error: 'No committable rows found' })
   }
+
+  // Skip rows that were committed in a prior run (have service_location_id
+  // already populated). For partial-failure recovery the user just clicks
+  // "Retry commit" and we pick up where we left off.
+  let alreadyCommittedSkipped = 0
+  const rowsToProcess = stagedRows.filter((r: any) => {
+    if (r.service_location_id) {
+      alreadyCommittedSkipped += 1
+      return false
+    }
+    return true
+  })
 
   // Pre-fetch service offering names for display_name fallback
   const uniqueOfferingIds = [...new Set(
@@ -67,7 +85,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const dedupeCache = new Map<string, string>()
 
-  for (const row of stagedRows) {
+  for (const row of rowsToProcess) {
     const pd = row.property_data as Record<string, unknown>
     const sld = row.service_location_data as Record<string, unknown>
 
@@ -229,19 +247,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 
+  // For idempotent retries, ADD this run's counters to whatever the
+  // prior run(s) recorded. Failures are replaced (only the rows that
+  // failed on THIS attempt are still pending).
+  const prior = (batch.summary_stats as Record<string, any>) ?? {}
+  const sum = (k: string, v: number) => (Number(prior[k]) || 0) + v
   await db
     .from('upload_batches')
     .update({
       status: 'committed',
       committed_at: new Date().toISOString(),
       summary_stats: {
-        ...((batch.summary_stats as Record<string, unknown>) ?? {}),
-        committed_new_properties: newProperties,
-        committed_existing_properties: existingProperties,
-        committed_new_service_locations: newServiceLocations,
-        committed_updated_service_locations: updatedServiceLocations,
+        ...prior,
+        committed_new_properties: sum('committed_new_properties', newProperties),
+        committed_existing_properties: sum('committed_existing_properties', existingProperties),
+        committed_new_service_locations: sum('committed_new_service_locations', newServiceLocations),
+        committed_updated_service_locations: sum(
+          'committed_updated_service_locations',
+          updatedServiceLocations
+        ),
         commit_failure_count: failedRows.length,
         commit_failures: failedRows.slice(0, 50),
+        commit_already_committed_skipped: alreadyCommittedSkipped,
       },
     })
     .eq('upload_batch_id', batchId)

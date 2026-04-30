@@ -128,6 +128,9 @@ export interface UploadSummaryStats {
   committed_existing_properties?: number
   committed_new_service_locations?: number
   committed_updated_service_locations?: number
+  commit_failure_count?: number
+  commit_failures?: Array<{ staged_row_id: string; reason: string }>
+  commit_already_committed_skipped?: number
 }
 
 export type ColumnMappingTarget =

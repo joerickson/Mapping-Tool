@@ -19,6 +19,8 @@ export default function UploadSummaryPage() {
   const [data, setData] = useState<SummaryData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [retrying, setRetrying] = useState(false)
+  const [retryMsg, setRetryMsg] = useState<string | null>(null)
 
   useEffect(() => {
     if (!batchId) return
@@ -55,6 +57,37 @@ export default function UploadSummaryPage() {
     load()
     return () => { mounted = false }
   }, [batchId, getToken])
+
+  async function handleRetry() {
+    if (!batchId) return
+    setRetrying(true)
+    setRetryMsg(null)
+    setError(null)
+    try {
+      const token = await getToken()
+      const res = await fetch(`/api/uploads/${batchId}/commit`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error ?? `Retry failed: ${res.status}`)
+      setRetryMsg(
+        `Retry committed ${j.new_properties ?? 0} new properties + ${j.new_service_locations ?? 0} new service locations.`
+      )
+      // Reload status so the cards reflect the merged totals.
+      const statusRes = await fetch(`/api/uploads/${batchId}/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (statusRes.ok) {
+        const statusData = await statusRes.json()
+        setData((prev) => (prev ? { ...prev, summary_stats: statusData.summary_stats ?? prev.summary_stats } : prev))
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Retry failed')
+    } finally {
+      setRetrying(false)
+    }
+  }
 
   return (
     <AppShell breadcrumb={[{ label: 'Upload', to: '/upload' }, { label: 'Summary' }]}>
@@ -161,6 +194,56 @@ export default function UploadSummaryPage() {
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Commit failures / retry — surfaces when a prior commit
+                  errored out partway (Vercel timeout, transient DB error).
+                  The commit endpoint is now idempotent so re-running it
+                  picks up only the rows that didn't make it. */}
+              {((data.summary_stats?.commit_failure_count ?? 0) > 0 ||
+                data.status === 'completed') && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-amber-900">
+                        {data.status === 'completed'
+                          ? 'Commit did not finish'
+                          : `${data.summary_stats?.commit_failure_count ?? 0} rows failed to commit`}
+                      </p>
+                      <p className="text-xs text-amber-800">
+                        Re-running the commit picks up only the rows that didn't get
+                        in last time. Already-committed rows are skipped automatically
+                        — you won't get duplicates.
+                      </p>
+                      {data.summary_stats?.commit_failures &&
+                        data.summary_stats.commit_failures.length > 0 && (
+                          <details className="mt-2 text-xs text-amber-900">
+                            <summary className="cursor-pointer">
+                              Show recent failure reasons
+                            </summary>
+                            <ul className="mt-1 list-disc pl-5 space-y-0.5">
+                              {data.summary_stats.commit_failures.slice(0, 10).map((f, i) => (
+                                <li key={i} className="font-mono break-all">
+                                  {f.reason}
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        )}
+                      {retryMsg && (
+                        <p className="text-xs text-green-700 font-medium mt-1">{retryMsg}</p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleRetry}
+                      disabled={retrying}
+                      className="shrink-0 px-3 py-1.5 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-50"
+                    >
+                      {retrying ? 'Retrying…' : 'Retry commit'}
+                    </button>
+                  </div>
                 </div>
               )}
 
