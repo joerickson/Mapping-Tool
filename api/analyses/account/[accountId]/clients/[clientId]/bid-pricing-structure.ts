@@ -61,6 +61,10 @@ export interface BidInputs {
   target_gross_margin_pct: number
   branch_count: number | null
   crew_count: number | null
+  // Phase 4.2 — user-picked crew strategy option (overrides the
+  // analysis's recommended_option). Falls back to recommended when
+  // null.
+  crew_strategy_selected_option?: 'A' | 'B' | 'C' | null
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -101,6 +105,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       body.target_gross_margin_pct ?? constraints.target_gross_margin_pct,
     branch_count: body.branch_count ?? null,
     crew_count: body.crew_count ?? null,
+    crew_strategy_selected_option:
+      ((constraints as any).crew_strategy_selected_option as
+        | 'A' | 'B' | 'C' | null
+        | undefined) ?? null,
   }
 
   let analysisId: string
@@ -401,7 +409,14 @@ export function computeBidPricing(
   }
 
   if (crewStrategyOutputs) {
-    recommendedOption = crewStrategyOutputs.recommended_option
+    // Phase 4.2 — user can override the analysis's recommended_option
+    // by clicking a card in CrewStrategyChart. Selection arrives via
+    // inputs.crew_strategy_selected_option (passed through from
+    // account_operational_constraints).
+    const userSelected = inputs.crew_strategy_selected_option
+    recommendedOption = (userSelected && ['A', 'B', 'C'].includes(userSelected))
+      ? userSelected
+      : crewStrategyOutputs.recommended_option
     const opt = crewStrategyOutputs.options?.[recommendedOption ?? '']
     if (opt) {
       if (resolvedLabor == null) resolvedLabor = opt.annual_labor_cost

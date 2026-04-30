@@ -129,14 +129,31 @@ export default function BranchAllocationDialog({
       setError(null)
       try {
         const token = await getToken()
-        const res = await fetch(
-          `/api/v1/properties?client_id=${clientId}&pageSize=2000`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        )
-        if (!res.ok) throw new Error(`Load failed: ${res.status}`)
-        const data = (await res.json()) as { items?: PropertyRow[] }
+        // Endpoint returns { properties, total_count, has_more } and the
+        // page-size param is `limit` (capped at 2000 server-side). Loop
+        // pages so clients with thousands of properties all show up.
+        const PAGE = 2000
+        let offset = 0
+        const all: PropertyRow[] = []
+        while (true) {
+          const res = await fetch(
+            `/api/v1/properties?client_id=${clientId}&limit=${PAGE}&offset=${offset}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          )
+          if (!res.ok) throw new Error(`Load failed: ${res.status}`)
+          const data = (await res.json()) as {
+            properties?: PropertyRow[]
+            has_more?: boolean
+          }
+          const batch = data.properties ?? []
+          all.push(...batch)
+          if (!data.has_more || batch.length === 0) break
+          offset += batch.length
+          // Safety stop in case has_more never flips false.
+          if (offset > 50_000) break
+        }
         if (!cancelled) {
-          setProperties(data.items ?? [])
+          setProperties(all)
           setPending(new Map())
           setSelected(new Set())
         }
@@ -413,6 +430,14 @@ export default function BranchAllocationDialog({
             <div className="flex items-center justify-center p-12 text-fg-muted">
               <Loader2 className="h-4 w-4 animate-spin mr-2" />
               Loading properties…
+            </div>
+          ) : resolved.length === 0 ? (
+            <div className="flex items-center justify-center p-12 text-fg-muted text-sm">
+              No properties found for this client.
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="flex items-center justify-center p-12 text-fg-muted text-sm">
+              No properties match the current filter.
             </div>
           ) : (
             <Table>

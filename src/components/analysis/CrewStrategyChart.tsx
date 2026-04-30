@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   BarChart,
   Bar,
@@ -10,10 +10,11 @@ import {
   Legend,
   CartesianGrid,
 } from 'recharts'
-import { TriangleAlert, Settings2 } from 'lucide-react'
+import { Check, TriangleAlert, Settings2 } from 'lucide-react'
 import { Badge } from '../ui/Badge'
 import Button from '../ui/Button'
 import { Card } from '../ui/Card'
+import { useAuth } from '../../hooks/useAuth'
 import BranchAllocationDialog from './BranchAllocationDialog'
 import {
   Table,
@@ -173,7 +174,64 @@ export default function CrewStrategyChart({
   onAllocationsSaved,
 }: CrewStrategyChartProps) {
   const theme = useChartTheme()
+  const { getToken } = useAuth()
   const [allocOpen, setAllocOpen] = useState(false)
+  // Phase 4.2 — user-selected option (overrides recommended_option in
+  // Bid Pricing). null while loading; falls back to recommended_option
+  // if the user hasn't picked one.
+  const [selectedOption, setSelectedOption] = useState<'A' | 'B' | 'C' | null>(null)
+  const [savingSelection, setSavingSelection] = useState<'A' | 'B' | 'C' | null>(null)
+
+  useEffect(() => {
+    if (!accountId || !clientId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const token = await getToken()
+        const res = await fetch(
+          `/api/accounts/${accountId}/clients/${clientId}/operational-constraints`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        )
+        if (!res.ok) return
+        const j = await res.json()
+        if (!cancelled) {
+          const v = j?.crew_strategy_selected_option
+          setSelectedOption(v === 'A' || v === 'B' || v === 'C' ? v : null)
+        }
+      } catch {
+        // non-fatal — fall back to recommended_option
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [accountId, clientId, getToken])
+
+  const saveSelection = async (opt: 'A' | 'B' | 'C') => {
+    if (!accountId || !clientId) return
+    setSavingSelection(opt)
+    // Optimistic update
+    setSelectedOption(opt)
+    try {
+      const token = await getToken()
+      await fetch(
+        `/api/accounts/${accountId}/clients/${clientId}/operational-constraints`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ crew_strategy_selected_option: opt }),
+        }
+      )
+      onAllocationsSaved?.()
+    } finally {
+      setSavingSelection(null)
+    }
+  }
+
+  const activeOption: 'A' | 'B' | 'C' = selectedOption ?? data.recommended_option
   // Per-branch breakdown comes from Option B but applies to any allocation
   // discussion; surface it as a dedicated panel above the option cards.
   const branchBreakdown = data.options.B.utilization_breakdown?.per_branch
@@ -197,15 +255,21 @@ export default function CrewStrategyChart({
 
   return (
     <div className="space-y-6">
-      {/* Recommendation banner — quiet accent-subtle, no gradient. */}
+      {/* Recommendation + active selection banner. */}
       <div className="rounded-md border border-accent/20 bg-accent-subtle px-4 py-3">
         <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
-          Recommended
+          {selectedOption && selectedOption !== data.recommended_option
+            ? 'Active (your selection)'
+            : 'Recommended'}
         </p>
         <p className="mt-0.5 text-base font-semibold text-fg">
-          Option {data.recommended_option}: {data.options[data.recommended_option].label}
+          Option {activeOption}: {data.options[activeOption].label}
         </p>
-        <p className="mt-1 text-sm text-fg-muted">{data.recommended_rationale}</p>
+        <p className="mt-1 text-sm text-fg-muted">
+          {selectedOption && selectedOption !== data.recommended_option
+            ? `You picked Option ${selectedOption}. The analysis recommended Option ${data.recommended_option}: ${data.options[data.recommended_option].label}.`
+            : data.recommended_rationale}
+        </p>
       </div>
 
       {/* Phase 3.8 — Building-count math summary */}
@@ -409,15 +473,28 @@ export default function CrewStrategyChart({
         </div>
       </section>
 
-      {/* 3-card option comparison */}
+      {/* 3-card option comparison — click to choose which option flows
+          into Bid Pricing. */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-        {opts.map((o) => (
-          <Card
+        {opts.map((o) => {
+          const isActive = o.key === activeOption
+          const isRecommended = o.key === data.recommended_option
+          const isSaving = savingSelection === o.key
+          return (
+          <button
             key={o.key}
-            padding="md"
-            className={
-              o.key === data.recommended_option ? 'ring-1 ring-accent' : undefined
-            }
+            type="button"
+            onClick={() => saveSelection(o.key)}
+            disabled={isSaving}
+            aria-pressed={isActive}
+            className={cn(
+              'text-left rounded-lg border bg-surface p-4 transition-all',
+              'hover:border-accent/60 hover:shadow-sm',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1',
+              isActive
+                ? 'border-accent ring-2 ring-accent shadow-sm'
+                : 'border-border'
+            )}
           >
             <div className="flex items-start justify-between gap-2">
               <div>
@@ -426,9 +503,17 @@ export default function CrewStrategyChart({
                 </p>
                 <p className="mt-0.5 font-semibold text-fg">{o.label}</p>
               </div>
-              {o.key === data.recommended_option && (
-                <Badge variant="success">Recommended</Badge>
-              )}
+              <div className="flex flex-col items-end gap-1">
+                {isActive && (
+                  <Badge variant="accent" className="inline-flex items-center gap-1">
+                    <Check className="h-3 w-3" />
+                    {selectedOption === o.key ? 'Selected' : 'Active'}
+                  </Badge>
+                )}
+                {isRecommended && !isActive && (
+                  <Badge variant="success">Recommended</Badge>
+                )}
+              </div>
             </div>
 
             <dl className="my-3 grid grid-cols-2 gap-3 border-y border-border py-3 text-sm">
@@ -469,8 +554,14 @@ export default function CrewStrategyChart({
             <p className="mt-3 border-t border-border pt-2 text-xs italic text-fg-subtle">
               Best for: {o.recommended_use_case}
             </p>
-          </Card>
-        ))}
+            <p className="mt-2 text-[10px] text-fg-subtle">
+              {isActive
+                ? 'Used by Bid Pricing.'
+                : 'Click to use this option in Bid Pricing.'}
+            </p>
+          </button>
+          )
+        })}
       </div>
 
       {/* Utilization breakdown for Option B (driven by user-selected scope) */}
