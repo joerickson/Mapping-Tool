@@ -37,6 +37,7 @@ import {
   SidebarSection,
 } from '../../components/layout/Sidebar'
 import { cn } from '../../lib/cn'
+import { useCountUp } from '../../hooks/useCountUp'
 import type { Account, Client } from '../../types'
 
 // Phase 3.6 — Account Overview shape returned by /api/accounts/[id]/overview
@@ -468,9 +469,14 @@ function StatCard({
   label: string
   value: number | string | null | undefined
 }) {
+  // Numeric values count up from 0 → final on first hydrate (and tween
+  // between any subsequent updates). Non-numeric stays static — strings
+  // can't be interpolated.
+  const numeric = typeof value === 'number' ? value : null
+  const animated = useCountUp(numeric)
   const display =
-    typeof value === 'number'
-      ? value.toLocaleString()
+    numeric != null
+      ? Math.round(animated).toLocaleString()
       : value && String(value).length > 0
         ? value
         : '—'

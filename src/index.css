@@ -13,6 +13,18 @@
     height: 100%;
   }
 
+  /* Smooth-scroll for #module-… and other in-page anchors. Honors the
+     user's reduced-motion preference automatically (browsers disable
+     this rule when prefers-reduced-motion is on). */
+  html {
+    scroll-behavior: smooth;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+
   /* Default to the design system surface + font. Individual components can
      opt out by overriding `font-mono` or `bg-surface-subtle` etc. */
   body {

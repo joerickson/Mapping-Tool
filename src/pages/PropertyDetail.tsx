@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { ChevronDown, ExternalLink } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
+import { useCountUp } from '../hooks/useCountUp'
 import Button from '../components/ui/Button'
 import { Badge, type BadgeProps } from '../components/ui/Badge'
 import { Card, CardHeader, CardTitle, CardDescription } from '../components/ui/Card'
@@ -82,6 +83,10 @@ export default function PropertyDetailPage() {
   const [enriching, setEnriching] = useState(false)
   const [enrichMsg, setEnrichMsg] = useState<string | null>(null)
   const [reassessing, setReassessing] = useState(false)
+
+  // Phase E — risk score tweens 300ms on each re-assessment so the user
+  // sees the number move rather than snap.
+  const animatedRiskScore = useCountUp(property?.risk_score ?? null)
 
   useEffect(() => {
     async function load() {
@@ -513,7 +518,7 @@ export default function PropertyDetailPage() {
                           Risk score
                         </p>
                         <p className="font-mono text-3xl font-semibold tabular-nums text-fg leading-none mt-1">
-                          {property.risk_score ?? 0}
+                          {Math.round(animatedRiskScore)}
                         </p>
                       </div>
                       <Badge variant={riskVariant(property.risk_score ?? 0)}>

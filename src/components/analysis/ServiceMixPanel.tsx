@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 import { Badge } from '../ui/Badge'
 import { Card, CardHeader, CardTitle } from '../ui/Card'
+import { ErrorState } from '../ui/ErrorState'
 import { Skeleton } from '../ui/Skeleton'
 
 interface Recommendation {
@@ -35,6 +36,9 @@ export default function ServiceMixPanel({ propertyId }: { propertyId: string }) 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const [retryNonce, setRetryNonce] = useState(0)
+  const retry = useCallback(() => setRetryNonce((n) => n + 1), [])
+
   useEffect(() => {
     let cancelled = false
     async function load() {
@@ -61,7 +65,7 @@ export default function ServiceMixPanel({ propertyId }: { propertyId: string }) 
     return () => {
       cancelled = true
     }
-  }, [propertyId, getToken])
+  }, [propertyId, getToken, retryNonce])
 
   return (
     <Card>
@@ -78,12 +82,11 @@ export default function ServiceMixPanel({ propertyId }: { propertyId: string }) 
           </div>
         )}
         {error && (
-          <p
-            role="alert"
-            className="rounded-md border border-danger/20 bg-danger-subtle px-3 py-2 text-sm text-danger"
-          >
-            Could not load service mix: {error}
-          </p>
+          <ErrorState
+            title="Couldn't load service mix"
+            description={error}
+            onRetry={retry}
+          />
         )}
 
         {!loading && !error && data && (
