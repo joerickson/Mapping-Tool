@@ -15,6 +15,10 @@ export interface AuditScope {
 
 export interface AuditOptions {
   changedBy?: string | null
+  reason?: string | null
+  // Same cascading_effects object on every row of a single save — the
+  // audit log can then group by (entity, edited_at) to read the effects.
+  cascadingEffects?: object | null
 }
 
 // Returns the list of field names that actually changed (after deep equality
@@ -46,6 +50,8 @@ export async function recordEdits(
       old_value: oldVal === undefined ? null : oldVal,
       new_value: newVal === undefined ? null : newVal,
       changed_by: opts.changedBy ?? null,
+      reason: opts.reason ?? null,
+      cascading_effects: opts.cascadingEffects ?? null,
     })
   }
 

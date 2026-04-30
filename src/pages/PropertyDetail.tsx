@@ -23,6 +23,7 @@ import ConstraintsPanel from '../components/property/ConstraintsPanel'
 import EditableField from '../components/property/EditableField'
 import AddressEditDialog from '../components/property/AddressEditDialog'
 import ServiceLocationEditDialog from '../components/property/ServiceLocationEditDialog'
+import CascadeBanner, { type CascadeInfo } from '../components/property/CascadeBanner'
 import EditHistoryPanel from '../components/property/EditHistoryPanel'
 import { PROPERTY_FIELDS } from '../lib/editable-fields'
 import { CATEGORY_COLORS, STATUS_LABELS } from '../lib/constants'
@@ -34,6 +35,8 @@ const PROPERTY_FIELD_BY_KEY = Object.fromEntries(PROPERTY_FIELDS.map((f) => [f.k
 // Extends Property with DB fields that aren't in the base type + joined tables
 interface PropertyDetail {
   property_id: string
+  account_id?: string | null
+  client_id?: string | null
   address_line1: string
   address_line2?: string | null
   city: string
@@ -95,6 +98,7 @@ export default function PropertyDetailPage() {
   const [reassessing, setReassessing] = useState(false)
   const [addressDialogOpen, setAddressDialogOpen] = useState(false)
   const [editingSL, setEditingSL] = useState<ServiceLocation | null>(null)
+  const [cascade, setCascade] = useState<CascadeInfo | null>(null)
 
   // Phase E — risk score tweens 300ms on each re-assessment so the user
   // sees the number move rather than snap.
@@ -298,6 +302,15 @@ export default function PropertyDetailPage() {
       ]}
     >
       <div className="mx-auto max-w-6xl px-6 py-10 space-y-10">
+        {cascade && property.account_id && property.client_id && (
+          <CascadeBanner
+            cascade={cascade}
+            accountId={property.account_id}
+            clientId={property.client_id}
+            onDismiss={() => setCascade(null)}
+          />
+        )}
+
         {/* Hero */}
         <header className="space-y-3">
           <button
@@ -833,8 +846,10 @@ export default function PropertyDetailPage() {
         open={editingSL !== null}
         onClose={() => setEditingSL(null)}
         serviceLocation={editingSL}
-        onSaved={() => {
+        clientId={property.client_id ?? ''}
+        onSaved={(cascadeInfo) => {
           setEditingSL(null)
+          setCascade(cascadeInfo)
           reload()
         }}
       />

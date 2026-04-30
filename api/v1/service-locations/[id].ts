@@ -2,13 +2,16 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createAdminClient } from '../../_lib/supabase.js'
 import { authenticateRequest } from '../../_lib/auth.js'
 import { fireWebhook } from '../../_lib/webhooks.js'
-import { recordEdits, markCrewStrategyStale } from '../../_lib/property-audit.js'
+import { recordEdits } from '../../_lib/property-audit.js'
 import {
   SERVICE_LOCATION_FIELDS,
   isEditableServiceLocationField,
 } from '../../../src/lib/editable-fields.js'
-
-const SQFT_STALE_THRESHOLD = 0.1 // 10%
+import {
+  determineCascadingEffects,
+  applyCascadingEffects,
+  type FieldChange,
+} from '../../_lib/analysis/edit-cascade.js'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end()
@@ -43,10 +46,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (req.method === 'PATCH') {
     const body = (req.body ?? {}) as Record<string, unknown>
+    const editReason =
+      typeof body.edit_reason === 'string' && body.edit_reason.trim().length > 0
+        ? body.edit_reason.trim()
+        : null
 
     const updates: Record<string, unknown> = {}
     const rejected: string[] = []
     for (const [k, v] of Object.entries(body)) {
+      if (k === 'edit_reason') continue
       if (isEditableServiceLocationField(k)) updates[k] = v
       else rejected.push(k)
     }
@@ -78,6 +86,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const cur = current as any
     const upd = updated as any
+
+    // Phase 4b — centralized cascade: figure out which downstream modules
+    // should flip stale and whether to kick synthesis. Computed from the
+    // diff so we can record the same effects payload on each audit row.
+    const fieldChanges: FieldChange[] = Object.keys(updates)
+      .filter((k) => !deepEqual(cur[k], upd[k]))
+      .map((k) => ({ field: k, old: cur[k], new: upd[k] }))
+    const effects = determineCascadingEffects('service_location', fieldChanges)
+
     const changed = await recordEdits(
       db,
       {
@@ -89,10 +106,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       cur,
       upd,
       Object.keys(updates),
-      { changedBy: ctx.email ?? ctx.userId ?? null }
+      {
+        changedBy: ctx.email ?? ctx.userId ?? null,
+        reason: editReason,
+        cascadingEffects: fieldChanges.length > 0 ? effects : null,
+      }
     )
 
-    // Side effect 1: status change webhook (existing behavior)
+    let cascadeApplied: { staled: string[]; synthesis_triggered: boolean } = {
+      staled: [],
+      synthesis_triggered: false,
+    }
+    if (cur.account_id && cur.client_id && effects.analyses_to_stale.length > 0) {
+      cascadeApplied = await applyCascadingEffects(db, effects, {
+        account_id: cur.account_id,
+        client_id: cur.client_id,
+        property_id: cur.property_id,
+      })
+    }
+
+    if (effects.comparables_invalidate && cur.property_id) {
+      // Phase 4b — clear the property's comparables cache so the next view
+      // recomputes against the new offering.
+      await db
+        .from('property_comparables')
+        .delete()
+        .eq('property_id', cur.property_id)
+        .then(null, (err: { message: string }) =>
+          console.error('[edit-cascade] comparables clear failed:', err.message)
+        )
+    }
+
+    // Existing webhook (preserved from prior implementation).
     if (changed.includes('status')) {
       await fireWebhook('service_location.status_changed', {
         service_location_id: slId,
@@ -101,30 +146,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       })
     }
 
-    // Side effect 2: serviceable_sqft change >10% → mark Crew Strategy
-    // stale so the dashboard prompts a re-run. Skip if there's no prior
-    // sqft to compare against (first-time set is fine).
-    let crewStrategyMarkedStale = false
-    if (changed.includes('serviceable_sqft') && cur.account_id && cur.client_id) {
-      const oldSqft = Number(cur.serviceable_sqft) || 0
-      const newSqft = Number(upd.serviceable_sqft) || 0
-      if (oldSqft > 0) {
-        const delta = Math.abs(newSqft - oldSqft) / oldSqft
-        if (delta >= SQFT_STALE_THRESHOLD) {
-          await markCrewStrategyStale(db, cur.account_id, cur.client_id)
-          crewStrategyMarkedStale = true
-        }
-      }
-    }
-
     const aliasedSl = { ...upd, service_location_id: upd.id }
     return res.status(200).json({
       service_location: aliasedSl,
       changed_fields: changed,
       rejected_fields: rejected,
-      crew_strategy_marked_stale: crewStrategyMarkedStale,
+      cascading_effects: {
+        analyses_marked_stale: cascadeApplied.staled,
+        synthesis_refresh_triggered: cascadeApplied.synthesis_triggered,
+        comparables_invalidated: effects.comparables_invalidate,
+        reasons: effects.reasons,
+      },
+      edits_recorded: changed.length,
     })
   }
 
   return res.status(405).json({ error: 'Method not allowed' })
+}
+
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (a == null || b == null) return a == null && b == null
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i++) if (!deepEqual(a[i], b[i])) return false
+    return true
+  }
+  if (typeof a === 'object' && typeof b === 'object') {
+    const ak = Object.keys(a as object)
+    const bk = Object.keys(b as object)
+    if (ak.length !== bk.length) return false
+    for (const k of ak) {
+      if (!deepEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])) return false
+    }
+    return true
+  }
+  return false
 }

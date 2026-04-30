@@ -12,6 +12,7 @@ export type FieldKind =
   | 'number'
   | 'select'
   | 'tags' // text[] rendered as a chip list
+  | 'custom_fields' // arbitrary key/value jsonb editor
 
 export interface FieldSpec {
   key: string
@@ -52,6 +53,11 @@ export const PROPERTY_FIELDS: FieldSpec[] = [
 ]
 
 // service_location-level editable fields.
+//
+// Phase 4b expanded from 5 → 12 fields. service_schedule (jsonb) stays
+// read-only — its rich editor is deferred to Phase 4f when the scheduler
+// UI lands. monthly_direct_cost / crew_size / site_contact_* / access_notes
+// would need new schema columns; deferred.
 export const SERVICE_LOCATION_FIELDS: FieldSpec[] = [
   { key: 'display_name',    label: 'Display name',     kind: 'text' },
   { key: 'location_code',   label: 'Location code',    kind: 'text' },
@@ -61,7 +67,55 @@ export const SERVICE_LOCATION_FIELDS: FieldSpec[] = [
     label: 'Serviceable sqft',
     kind: 'number',
     group: 'sqft',
-    helper: 'Changes >10% will mark Crew Strategy stale',
+    helper: 'Changes ≥10% mark Crew Strategy, Workforce Sizing, and Bid Pricing stale.',
+  },
+  {
+    key: 'service_frequency',
+    label: 'Service frequency',
+    kind: 'text',
+    helper: 'Free-form (e.g. "monthly", "quarterly", "Tu/Th").',
+  },
+  {
+    key: 'visits_per_year_override',
+    label: 'Visits per year (override)',
+    kind: 'number',
+    helper: 'Stales Crew Strategy + Bid Pricing.',
+  },
+  {
+    key: 'hours_per_visit_override',
+    label: 'Hours per visit (override)',
+    kind: 'number',
+    helper: 'Stales Crew Strategy + Bid Pricing.',
+  },
+  {
+    key: 'crew_size_override',
+    label: 'Crew size (override)',
+    kind: 'number',
+    helper: 'Stales Crew Strategy.',
+  },
+  {
+    key: 'monthly_contract_value',
+    label: 'Monthly contract value',
+    kind: 'number',
+    helper: 'Stales Bid Pricing.',
+  },
+  {
+    key: 'frequency_notes',
+    label: 'Frequency notes',
+    kind: 'textarea',
+  },
+  {
+    key: 'custom_fields',
+    label: 'Custom fields',
+    kind: 'custom_fields',
+    helper: 'Arbitrary key/value pairs stored on this service location.',
+  },
+  {
+    key: 'service_offering_id',
+    label: 'Service offering',
+    kind: 'select',
+    helper: 'Changing the offering reclassifies the work — all tier-2 modules will re-run.',
+    options: [], // populated dynamically by the dialog from /api/v1/service-offerings
   },
   {
     key: 'status',
