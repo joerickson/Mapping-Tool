@@ -9,6 +9,7 @@ import { useParams, Link } from 'react-router-dom'
 import { Search, Tag, Trash2, FileText } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import AppShell from '../../components/layout/AppShell'
+import EnrichmentBanner from '../../components/property/EnrichmentBanner'
 import Button from '../../components/ui/Button'
 import { Badge } from '../../components/ui/Badge'
 import { Card, CardTitle } from '../../components/ui/Card'
@@ -174,6 +175,12 @@ export default function PropertiesAdminPage() {
             />
           </div>
         </header>
+
+        {/* Enrichment status — shows pending count + run button, or
+            "all enriched" when complete. Reloads property list on success. */}
+        {clientId && (
+          <EnrichmentBanner clientId={clientId} onEnriched={load} />
+        )}
 
         {/* Action bar */}
         {selected.size > 0 && (

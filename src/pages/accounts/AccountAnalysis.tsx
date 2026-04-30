@@ -13,6 +13,7 @@ import {
 import { useAuth } from '../../hooks/useAuth'
 import Button from '../../components/ui/Button'
 import AppShell from '../../components/layout/AppShell'
+import EnrichmentBanner from '../../components/property/EnrichmentBanner'
 import {
   Sidebar,
   SidebarItem,
@@ -749,6 +750,11 @@ export default function AccountAnalysisPage() {
       }
     >
       <div className="mx-auto max-w-6xl px-6 py-10 space-y-10">
+        {/* Enrichment status — surfaces pending/failed counts and lets
+            the user kick off a scoped run. Hides itself when everything's
+            already enriched. */}
+        {clientId && <EnrichmentBanner clientId={clientId} />}
+
         {/* Header — title + metadata row + run-all CTA. Breadcrumb is in
             the TopBar so we don't repeat it inline. */}
         <header className="flex items-start justify-between gap-6">
