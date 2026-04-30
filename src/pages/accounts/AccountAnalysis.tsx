@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import {
   Building2,
   FileText,
+  History,
   LayoutDashboard,
   ListChecks,
   Map as MapIcon,
@@ -1140,10 +1141,22 @@ function AnalysisSidebar({
 
       <SidebarSection title="Settings">
         <SidebarItem
+          icon={Building2}
+          to={`/accounts/${accountId}/clients/${clientId}/admin/properties`}
+        >
+          Properties admin
+        </SidebarItem>
+        <SidebarItem
           icon={ListChecks}
           to={`/accounts/${accountId}/clients/${clientId}/admin/constraint-templates`}
         >
           Constraint templates
+        </SidebarItem>
+        <SidebarItem
+          icon={History}
+          to={`/accounts/${accountId}/clients/${clientId}/admin/audit-log`}
+        >
+          Edit history
         </SidebarItem>
       </SidebarSection>
     </Sidebar>

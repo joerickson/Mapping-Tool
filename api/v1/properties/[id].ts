@@ -9,6 +9,11 @@ import {
   ADDRESS_FIELD_KEYS,
   isEditablePropertyField,
 } from '../../../src/lib/editable-fields.js'
+import {
+  determineCascadingEffects,
+  applyCascadingEffects,
+  type FieldChange,
+} from '../../_lib/analysis/edit-cascade.js'
 
 export const config = { maxDuration: 30 }
 
@@ -50,6 +55,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (req.method === 'PATCH') {
     const body = (req.body ?? {}) as Record<string, unknown>
+    const editReason =
+      typeof body.edit_reason === 'string' && body.edit_reason.trim().length > 0
+        ? body.edit_reason.trim()
+        : null
 
     // Whitelist — silently drop anything not in PROPERTY_FIELDS so callers
     // can't update system-managed columns (lat/lng, address_hash,
@@ -57,6 +66,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const updates: Record<string, unknown> = {}
     const rejected: string[] = []
     for (const [k, v] of Object.entries(body)) {
+      if (k === 'edit_reason') continue
       if (isEditablePropertyField(k)) updates[k] = v
       else rejected.push(k)
     }
@@ -91,14 +101,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const accountId = (current as any).account_id ?? null
     const clientId = (current as any).client_id ?? null
+
+    // Phase 4b — centralized cascade. Diff old vs new, ask edit-cascade
+    // which downstream modules to stale, persist effects on the audit row.
+    const fieldChanges: FieldChange[] = Object.keys(updates)
+      .filter((k) => !deepEqual((current as any)[k], (updated as any)[k]))
+      .map((k) => ({ field: k, old: (current as any)[k], new: (updated as any)[k] }))
+    const effects = determineCascadingEffects('property', fieldChanges)
+
     const changed = await recordEdits(
       db,
       { propertyId, accountId, clientId },
       current as Record<string, unknown>,
       updated as Record<string, unknown>,
       Object.keys(updates),
-      { changedBy: ctx.email ?? ctx.userId ?? null }
+      {
+        changedBy: ctx.email ?? ctx.userId ?? null,
+        reason: editReason,
+        cascadingEffects: fieldChanges.length > 0 ? effects : null,
+      }
     )
+
+    let cascadeApplied: { staled: string[]; synthesis_triggered: boolean } = {
+      staled: [],
+      synthesis_triggered: false,
+    }
+    if (accountId && clientId && effects.analyses_to_stale.length > 0) {
+      cascadeApplied = await applyCascadingEffects(db, effects, {
+        account_id: accountId,
+        client_id: clientId,
+        property_id: propertyId,
+      })
+    }
 
     // Side effect: address change → re-validate + re-geocode + persist
     // lat/lng. Done synchronously so the user sees the corrected map pin
@@ -168,8 +202,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       changed_fields: changed,
       rejected_fields: rejected,
       geocode: geocodeResult,
+      cascading_effects: {
+        analyses_marked_stale: cascadeApplied.staled,
+        synthesis_refresh_triggered: cascadeApplied.synthesis_triggered,
+        comparables_invalidated: effects.comparables_invalidate,
+        reasons: effects.reasons,
+      },
+      edits_recorded: changed.length,
     })
   }
 
   return res.status(405).json({ error: 'Method not allowed' })
+}
+
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (a == null || b == null) return a == null && b == null
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i++) if (!deepEqual(a[i], b[i])) return false
+    return true
+  }
+  if (typeof a === 'object' && typeof b === 'object') {
+    const ak = Object.keys(a as object)
+    const bk = Object.keys(b as object)
+    if (ak.length !== bk.length) return false
+    for (const k of ak) {
+      if (!deepEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])) return false
+    }
+    return true
+  }
+  return false
 }
