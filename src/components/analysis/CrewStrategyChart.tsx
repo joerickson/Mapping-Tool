@@ -278,16 +278,32 @@ export default function CrewStrategyChart({
     }
   }
 
-  const overrideTotal = Object.values(crewOverride).reduce(
-    (s, v) => s + (Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0),
-    0
-  )
   const activeOption: 'A' | 'B' | 'C' = selectedOption ?? data.recommended_option
   // Per-branch breakdown comes from Option B but applies to any allocation
   // discussion; surface it as a dedicated panel above the option cards.
   const branchBreakdown = data.options.B.utilization_breakdown?.per_branch
     ?? data.options.B.branch_breakdown
     ?? []
+
+  // Build the per-branch override map "as the user sees it" — for each
+  // branch, take the user's typed value if present, otherwise fall
+  // back to that branch's recommended count from Option B's breakdown.
+  // The total is then a sum of EVERY branch's visible value, not just
+  // the ones the user explicitly typed into. This matches the inputs
+  // they see on screen.
+  const visibleOverride: Record<string, number> = {}
+  for (const b of data.branches ?? []) {
+    if (crewOverride[b.name] != null) {
+      visibleOverride[b.name] = crewOverride[b.name]
+    } else {
+      const rec = branchBreakdown.find((bb) => bb.branch_name === b.name)?.crew_count ?? 0
+      visibleOverride[b.name] = rec
+    }
+  }
+  const overrideTotal = Object.values(visibleOverride).reduce(
+    (s, v) => s + (Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0),
+    0
+  )
   const allowAllocations =
     accountId != null && clientId != null && (data.branches?.length ?? 0) > 0
   const opts = [
@@ -702,15 +718,30 @@ export default function CrewStrategyChart({
                           if (!overrideEnabled) setOverrideEnabled(true)
                         }}
                         onBlur={() => {
-                          // Snapshot current state at blur time and
-                          // save. Empty / all-zero override clears.
-                          const snapshot = { ...crewOverride }
-                          const total = Object.values(snapshot).reduce(
+                          // Save the FULL per-branch map the user sees
+                          // on screen (override values + recommended
+                          // fallbacks for branches they left untouched),
+                          // so the bid pricing / workforce / seasonality
+                          // modules see crew counts for every branch,
+                          // not just the ones the user typed into.
+                          const fullMap: Record<string, number> = {}
+                          for (const branch of data.branches ?? []) {
+                            const u = crewOverride[branch.name]
+                            if (u != null) {
+                              fullMap[branch.name] = u
+                            } else {
+                              const rec = branchBreakdown.find(
+                                (bb) => bb.branch_name === branch.name
+                              )?.crew_count ?? 0
+                              fullMap[branch.name] = rec
+                            }
+                          }
+                          const total = Object.values(fullMap).reduce(
                             (s, v) =>
                               s + (Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0),
                             0
                           )
-                          void saveOverride(snapshot, total > 0)
+                          void saveOverride(fullMap, total > 0)
                         }}
                         className="w-20 h-8 rounded-md border border-border bg-surface px-2 text-sm font-mono text-fg focus-visible:outline-none focus-visible:border-border-focus focus-visible:ring-2 focus-visible:ring-accent"
                       />
