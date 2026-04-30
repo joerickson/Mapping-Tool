@@ -76,6 +76,7 @@ export interface CrewStrategyInputs {
   surge_premium_multiplier: number
   fuel_cost_per_mile: number
   vehicles_per_crew: number
+  drive_speed_mph: number
   utilization_constraint: {
     enabled: boolean
     hard_floor_pct: number
@@ -133,6 +134,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       body.surge_premium_multiplier ?? constraints.surge_premium_multiplier,
     fuel_cost_per_mile: body.fuel_cost_per_mile ?? constraints.fuel_cost_per_mile,
     vehicles_per_crew: body.vehicles_per_crew ?? constraints.vehicles_per_crew,
+    drive_speed_mph: body.drive_speed_mph ?? constraints.drive_speed_mph,
     utilization_constraint:
       (body as any).utilization_constraint ?? constraints.utilization_constraint,
   }
@@ -238,6 +240,8 @@ export function computeCrewStrategy(
     property: AccountProperty
     annual_hours: number
     branch_idx: number // index into branches[]
+    drive_miles_one_way: number
+    is_branch_override: boolean
   }
 
   const perProperty: PropertyHours[] = []
@@ -309,21 +313,42 @@ export function computeCrewStrategy(
       if (slOverride && !propertyOverride) propertyOverride = slOverride
     }
 
-    // Find nearest branch (re-cluster against the chosen branch set so we can
-    // attribute work hours to a specific branch — needed for Option B util).
+    // Phase 3.9a — manual branch_override on the property wins over the
+    // nearest-branch heuristic. Falls back to nearest if the override
+    // doesn't match a currently-selected branch.
     let bestIdx = 0
-    if (p.latitude != null && p.longitude != null) {
-      const me: LatLng = { lat: p.latitude, lng: p.longitude }
-      let bestDist = Infinity
-      for (let i = 0; i < branches.length; i++) {
-        const d = haversineMiles(me, { lat: branches[i].lat, lng: branches[i].lng })
-        if (d < bestDist) {
-          bestDist = d
-          bestIdx = i
+    let bestDistMi = 0
+    let usedOverride = false
+    if (p.branch_override) {
+      const idx = branches.findIndex(
+        (b) => b.name.toLowerCase() === (p.branch_override as string).toLowerCase()
+      )
+      if (idx >= 0) {
+        bestIdx = idx
+        usedOverride = true
+        if (p.latitude != null && p.longitude != null) {
+          bestDistMi = haversineMiles(
+            { lat: p.latitude, lng: p.longitude },
+            { lat: branches[idx].lat, lng: branches[idx].lng }
+          )
         }
       }
-    } else {
-      propertiesMissingCoords += 1
+    }
+    if (!usedOverride) {
+      if (p.latitude != null && p.longitude != null) {
+        const me: LatLng = { lat: p.latitude, lng: p.longitude }
+        let bestDist = Infinity
+        for (let i = 0; i < branches.length; i++) {
+          const d = haversineMiles(me, { lat: branches[i].lat, lng: branches[i].lng })
+          if (d < bestDist) {
+            bestDist = d
+            bestIdx = i
+          }
+        }
+        bestDistMi = bestDist
+      } else {
+        propertiesMissingCoords += 1
+      }
     }
 
     // Emit one routed_visit per (property × visit) — operational reality
@@ -341,7 +366,13 @@ export function computeCrewStrategy(
       }
     }
 
-    perProperty.push({ property: p, annual_hours: propAnnualHours, branch_idx: bestIdx })
+    perProperty.push({
+      property: p,
+      annual_hours: propAnnualHours,
+      branch_idx: bestIdx,
+      drive_miles_one_way: bestDistMi,
+      is_branch_override: usedOverride,
+    })
     totalAnnualHours += propAnnualHours
     totalProjectHours += propAnnualHours
   }
@@ -349,9 +380,17 @@ export function computeCrewStrategy(
   // ── Per-branch aggregation (for Option B) ─────────────────────────────────
   const branchHours = new Array(branches.length).fill(0)
   const branchPropCount = new Array(branches.length).fill(0)
+  const branchDriveSum = new Array(branches.length).fill(0)
+  const branchDriveCount = new Array(branches.length).fill(0)
+  const branchOverrideCount = new Array(branches.length).fill(0)
   for (const ph of perProperty) {
     branchHours[ph.branch_idx] += ph.annual_hours
     branchPropCount[ph.branch_idx] += 1
+    if (ph.drive_miles_one_way > 0) {
+      branchDriveSum[ph.branch_idx] += ph.drive_miles_one_way
+      branchDriveCount[ph.branch_idx] += 1
+    }
+    if (ph.is_branch_override) branchOverrideCount[ph.branch_idx] += 1
   }
 
   // ── Phase 3.8 — Building-count crew math (replaces hours-based) ──────────
@@ -449,6 +488,9 @@ export function computeCrewStrategy(
     available_hours: number
     utilization_pct: number
     property_count: number
+    avg_drive_miles_one_way: number
+    avg_drive_minutes_one_way: number
+    override_property_count: number
     status: UtilStatus
     warning?: string | null
     surge_recommendation?: { surge_crews: number; surge_weeks: number } | null
@@ -473,6 +515,12 @@ export function computeCrewStrategy(
       warning = `${utilPct}% utilization (under ${band.hard_floor_pct}% floor). Consider consolidating with an adjacent branch or adding properties.`
     }
 
+    const avgDriveMiles =
+      branchDriveCount[i] > 0 ? branchDriveSum[i] / branchDriveCount[i] : 0
+    const avgDriveMinutes =
+      avgDriveMiles > 0
+        ? Math.round((avgDriveMiles / Math.max(1, inputs.drive_speed_mph)) * 60)
+        : 0
     optionB_branch_breakdown.push({
       branch_name: branches[i].name,
       city_state: branchMeta[i].city_state,
@@ -483,6 +531,9 @@ export function computeCrewStrategy(
       available_hours: Math.round(available),
       utilization_pct: utilPct,
       property_count: branchPropCount[i],
+      avg_drive_miles_one_way: Math.round(avgDriveMiles * 10) / 10,
+      avg_drive_minutes_one_way: avgDriveMinutes,
+      override_property_count: branchOverrideCount[i],
       status,
       warning,
       surge_recommendation,
