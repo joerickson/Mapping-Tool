@@ -1,7 +1,33 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 import Button from '../ui/Button'
-import Modal from '../ui/Modal'
+import { Badge } from '../ui/Badge'
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../ui/Dialog'
+import { FormField, Input } from '../ui/Input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../ui/Select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/Tabs'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../ui/Table'
+import { cn } from '../../lib/cn'
 
 export interface ExistingBranch {
   name: string
@@ -130,7 +156,12 @@ const FIELD_LABELS: Record<string, string> = {
   max_one_way_drive_minutes: 'Max one-way drive (min)',
 }
 
-export default function OperationalConstraintsPanel({ accountId, clientId, onSaved, onUpdatedAtChange }: Props) {
+export default function OperationalConstraintsPanel({
+  accountId,
+  clientId,
+  onSaved,
+  onUpdatedAtChange,
+}: Props) {
   const { getToken } = useAuth()
   const [data, setData] = useState<OperationalConstraints | null>(null)
   const [loading, setLoading] = useState(true)
@@ -162,40 +193,50 @@ export default function OperationalConstraintsPanel({ accountId, clientId, onSav
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId, clientId])
 
-  const overriddenCount = data
-    ? countOverriddenFields(data)
-    : 0
+  const overriddenCount = data ? countOverriddenFields(data) : 0
   const branchCount = data?.existing_branches.length ?? 0
   const excludedCount = data?.excluded_property_ids.length ?? 0
 
   return (
     <>
-      <div className="bg-white rounded-xl border shadow-sm">
-        <div className="px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
-          <div className="min-w-0 flex-1">
-            <h3 className="font-semibold text-gray-900">Operational Constraints</h3>
-            <p className="text-sm text-gray-500 mt-0.5">
+      <div className="rounded-lg border border-border bg-surface">
+        <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
+          <div className="min-w-0 flex-1 space-y-1">
+            <h3 className="text-base font-semibold tracking-tight text-fg">
+              Operational constraints
+            </h3>
+            <div className="text-sm text-fg-muted">
               {loading ? (
                 'Loading…'
               ) : error ? (
-                <span className="text-red-600">Failed to load: {error}</span>
+                <span className="text-danger">Failed to load: {error}</span>
               ) : (
-                <>
-                  {branchCount} existing branch{branchCount === 1 ? '' : 'es'} configured ·{' '}
-                  {excludedCount} propert{excludedCount === 1 ? 'y' : 'ies'} excluded ·{' '}
-                  {overriddenCount} constraint{overriddenCount === 1 ? '' : 's'} overridden from defaults
+                <span>
+                  <span className="font-tabular">{branchCount}</span> existing
+                  branch{branchCount === 1 ? '' : 'es'} ·{' '}
+                  <span className="font-tabular">{excludedCount}</span>{' '}
+                  propert{excludedCount === 1 ? 'y' : 'ies'} excluded ·{' '}
+                  <span className="font-tabular">{overriddenCount}</span>{' '}
+                  override{overriddenCount === 1 ? '' : 's'}
                   {data?.updated_at && (
-                    <span className="text-gray-400">
+                    <span className="text-fg-subtle">
                       {' · saved '}
-                      {new Date(data.updated_at).toLocaleString()}
+                      <span className="font-tabular">
+                        {new Date(data.updated_at).toLocaleString()}
+                      </span>
                     </span>
                   )}
-                </>
+                </span>
               )}
-            </p>
+            </div>
           </div>
-          <Button variant="secondary" size="sm" onClick={() => setEditorOpen(true)} disabled={loading}>
-            Edit Constraints
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setEditorOpen(true)}
+            disabled={loading}
+          >
+            Edit constraints
           </Button>
         </div>
       </div>
@@ -205,7 +246,7 @@ export default function OperationalConstraintsPanel({ accountId, clientId, onSav
           accountId={accountId}
           clientId={clientId}
           open={editorOpen}
-          onClose={() => setEditorOpen(false)}
+          onOpenChange={setEditorOpen}
           constraints={data}
           onSaved={(saved) => {
             setData(saved)
@@ -230,21 +271,28 @@ function countOverriddenFields(c: OperationalConstraints): number {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Editor modal — three tabs
+// Editor dialog — three tabs
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface EditorProps {
   accountId: string
   clientId: string
   open: boolean
-  onClose: () => void
+  onOpenChange: (open: boolean) => void
   constraints: OperationalConstraints
   onSaved: (saved: OperationalConstraints) => void
 }
 
 type TabKey = 'infrastructure' | 'crew_economics' | 'cost_margin'
 
-function ConstraintsEditor({ accountId, clientId, open, onClose, constraints, onSaved }: EditorProps) {
+function ConstraintsEditor({
+  accountId,
+  clientId,
+  open,
+  onOpenChange,
+  constraints,
+  onSaved,
+}: EditorProps) {
   const { getToken } = useAuth()
   const [activeTab, setActiveTab] = useState<TabKey>('infrastructure')
   const [draft, setDraft] = useState<OperationalConstraints>(constraints)
@@ -253,7 +301,6 @@ function ConstraintsEditor({ accountId, clientId, open, onClose, constraints, on
   const [saveError, setSaveError] = useState<string | null>(null)
   const [propertyOptions, setPropertyOptions] = useState<PropertyOption[]>([])
 
-  // Reset draft whenever the modal opens with fresh data.
   useEffect(() => {
     if (open) {
       setDraft(constraints)
@@ -262,8 +309,7 @@ function ConstraintsEditor({ accountId, clientId, open, onClose, constraints, on
     }
   }, [open, constraints])
 
-  // Lazy-load the account's properties (for the excluded-properties picker)
-  // when the modal opens.
+  // Lazy-load the account's properties (for the excluded-properties picker).
   useEffect(() => {
     if (!open) return
     let cancelled = false
@@ -321,8 +367,7 @@ function ConstraintsEditor({ accountId, clientId, open, onClose, constraints, on
         population_constraint: draft.population_constraint,
         utilization_constraint: draft.utilization_constraint,
       }
-      // Only send numeric fields that differ from system default; let the
-      // backend NULL the rest so they fall back to defaults.
+      // Send numeric fields that differ from system default; null the rest.
       for (const k of Object.keys(constraints.system_defaults ?? {})) {
         const cur = (draft as any)[k]
         const def = (constraints.system_defaults as any)[k]
@@ -333,14 +378,17 @@ function ConstraintsEditor({ accountId, clientId, open, onClose, constraints, on
         }
       }
 
-      const res = await fetch(`/api/accounts/${accountId}/clients/${clientId}/operational-constraints`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-      })
+      const res = await fetch(
+        `/api/accounts/${accountId}/clients/${clientId}/operational-constraints`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
+        }
+      )
       const json = await res.json()
       if (!res.ok) {
         setSaveError(json.error ?? `HTTP ${res.status}`)
@@ -348,10 +396,7 @@ function ConstraintsEditor({ accountId, clientId, open, onClose, constraints, on
       }
       setSaveMessage('Constraints saved. Re-run analyses to apply.')
       onSaved(json)
-      // Auto-close after a moment so the user sees the toast.
-      setTimeout(() => {
-        onClose()
-      }, 900)
+      setTimeout(() => onOpenChange(false), 900)
     } catch (err: any) {
       setSaveError(err?.message ?? String(err))
     } finally {
@@ -369,76 +414,74 @@ function ConstraintsEditor({ accountId, clientId, open, onClose, constraints, on
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Operational Constraints" size="xl">
-      {/* Tabs */}
-      <div className="flex gap-1 border-b mb-4">
-        {(
-          [
-            ['infrastructure', 'Infrastructure'],
-            ['crew_economics', 'Crew Economics'],
-            ['cost_margin', 'Cost & Margin'],
-          ] as Array<[TabKey, string]>
-        ).map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => setActiveTab(key)}
-            className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${
-              activeTab === key
-                ? 'border-blue-600 text-blue-700'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Operational constraints</DialogTitle>
+        </DialogHeader>
 
-      {/* Tab content */}
-      {activeTab === 'infrastructure' && (
-        <InfrastructureTab
-          draft={draft}
-          setDraft={setDraft}
-          propertyOptions={propertyOptions}
-        />
-      )}
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)}>
+          <TabsList>
+            <TabsTrigger value="infrastructure">Infrastructure</TabsTrigger>
+            <TabsTrigger value="crew_economics">Crew economics</TabsTrigger>
+            <TabsTrigger value="cost_margin">Cost &amp; margin</TabsTrigger>
+          </TabsList>
 
-      {activeTab === 'crew_economics' && (
-        <div className="space-y-6">
-          <FieldGrid
-            draft={draft}
-            defaults={constraints.system_defaults}
-            fields={NUMERIC_FIELD_GROUPS.crew_economics as unknown as string[]}
-            onChange={updateNumeric}
-          />
-          <UtilizationBandSubsection draft={draft} setDraft={setDraft} />
-        </div>
-      )}
+          <TabsContent value="infrastructure" className="mt-6">
+            <InfrastructureTab
+              draft={draft}
+              setDraft={setDraft}
+              propertyOptions={propertyOptions}
+            />
+          </TabsContent>
 
-      {activeTab === 'cost_margin' && (
-        <FieldGrid
-          draft={draft}
-          defaults={constraints.system_defaults}
-          fields={NUMERIC_FIELD_GROUPS.cost_margin as unknown as string[]}
-          onChange={updateNumeric}
-        />
-      )}
+          <TabsContent value="crew_economics" className="mt-6 space-y-8">
+            <FieldGrid
+              draft={draft}
+              defaults={constraints.system_defaults}
+              fields={NUMERIC_FIELD_GROUPS.crew_economics as unknown as string[]}
+              onChange={updateNumeric}
+            />
+            <UtilizationBandSubsection draft={draft} setDraft={setDraft} />
+          </TabsContent>
 
-      {/* Footer */}
-      <div className="border-t mt-5 pt-4 flex items-center justify-between gap-3 flex-wrap">
-        <div className="text-sm">
-          {saveError && <span className="text-red-600">Error: {saveError}</span>}
-          {saveMessage && <span className="text-green-700">{saveMessage}</span>}
-        </div>
-        <div className="flex gap-2">
-          <Button variant="secondary" size="sm" onClick={onClose} disabled={saving}>
-            Cancel
-          </Button>
+          <TabsContent value="cost_margin" className="mt-6">
+            <FieldGrid
+              draft={draft}
+              defaults={constraints.system_defaults}
+              fields={NUMERIC_FIELD_GROUPS.cost_margin as unknown as string[]}
+              onChange={updateNumeric}
+            />
+          </TabsContent>
+        </Tabs>
+
+        {(saveError || saveMessage) && (
+          <div className="text-sm">
+            {saveError && (
+              <p className="rounded-md border border-danger/20 bg-danger-subtle px-3 py-2 text-danger">
+                {saveError}
+              </p>
+            )}
+            {saveMessage && (
+              <p className="rounded-md border border-success/20 bg-success-subtle px-3 py-2 text-success">
+                {saveMessage}
+              </p>
+            )}
+          </div>
+        )}
+
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button variant="ghost" size="sm" disabled={saving}>
+              Cancel
+            </Button>
+          </DialogClose>
           <Button size="sm" onClick={handleSave} loading={saving} disabled={saving}>
             Save constraints
           </Button>
-        </div>
-      </div>
-    </Modal>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -457,7 +500,6 @@ function InfrastructureTab({
 }) {
   const [newBranchName, setNewBranchName] = useState('')
   const [newBranchAddress, setNewBranchAddress] = useState('')
-  const [propertyPickerValue, setPropertyPickerValue] = useState('')
 
   const addBranch = () => {
     if (!newBranchName.trim() || !newBranchAddress.trim()) return
@@ -500,7 +542,6 @@ function InfrastructureTab({
       ...d,
       excluded_property_ids: [...d.excluded_property_ids, id],
     }))
-    setPropertyPickerValue('')
   }
 
   const removeExclusion = (id: string) => {
@@ -516,152 +557,160 @@ function InfrastructureTab({
   )
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* Existing Branches */}
-      <section>
-        <h3 className="font-semibold text-gray-900 mb-2">Existing Branches</h3>
-        <p className="text-xs text-gray-500 mb-3">
-          Branches that are already operational. They get locked as cluster centroids
-          in Branch Optimization — k-means picks <em>additional</em> branches around
-          them but never moves them.
-        </p>
+      <section className="space-y-3">
+        <div>
+          <h4 className="text-sm font-semibold text-fg">Existing branches</h4>
+          <p className="mt-1 text-xs text-fg-muted">
+            Branches that are already operational. They get locked as cluster
+            centroids in Branch Optimization — k-means picks{' '}
+            <em>additional</em> branches around them but never moves them.
+          </p>
+        </div>
 
         {draft.existing_branches.length > 0 && (
-          <div className="border rounded-lg overflow-hidden mb-3">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
-                <tr>
-                  <th className="text-left px-3 py-2">Name</th>
-                  <th className="text-left px-3 py-2">Address</th>
-                  <th className="text-left px-3 py-2">Lat / Lng</th>
-                  <th className="text-center px-3 py-2">Locked</th>
-                  <th className="text-right px-3 py-2"></th>
-                </tr>
-              </thead>
-              <tbody>
+          <div className="rounded-md border border-border bg-surface overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Address</TableHead>
+                  <TableHead>Lat / Lng</TableHead>
+                  <TableHead>Locked</TableHead>
+                  <TableHead className="text-right" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {draft.existing_branches.map((b, i) => (
-                  <tr key={i} className="border-t">
-                    <td className="px-3 py-2 font-medium text-gray-900">{b.name}</td>
-                    <td className="px-3 py-2 text-gray-600">{b.address ?? '—'}</td>
-                    <td className="px-3 py-2 font-mono text-xs text-gray-500">
-                      {b.lat && b.lng ? `${b.lat.toFixed(4)}, ${b.lng.toFixed(4)}` : 'pending geocode'}
-                    </td>
-                    <td className="px-3 py-2 text-center">
+                  <TableRow key={i}>
+                    <TableCell className="font-medium text-fg">{b.name}</TableCell>
+                    <TableCell className="text-fg-muted">{b.address ?? '—'}</TableCell>
+                    <TableCell className="font-mono text-xs text-fg-subtle">
+                      {b.lat && b.lng
+                        ? `${b.lat.toFixed(4)}, ${b.lng.toFixed(4)}`
+                        : 'pending geocode'}
+                    </TableCell>
+                    <TableCell>
                       <input
                         type="checkbox"
                         checked={b.locked !== false}
                         onChange={() => toggleLocked(i)}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        className="accent-accent"
                       />
-                    </td>
-                    <td className="px-3 py-2 text-right">
+                    </TableCell>
+                    <TableCell className="text-right">
                       <button
                         type="button"
                         onClick={() => removeBranch(i)}
-                        className="text-red-600 hover:underline text-xs"
+                        className="rounded-sm text-xs text-danger hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                       >
                         Remove
                       </button>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-[1fr_2fr_auto] gap-2">
-          <input
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_2fr_auto]">
+          <Input
             type="text"
             placeholder="Branch name (e.g. Frisco TX)"
             value={newBranchName}
             onChange={(e) => setNewBranchName(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
-          <input
+          <Input
             type="text"
             placeholder="Address (e.g. 123 Main St, Frisco, TX 75034)"
             value={newBranchAddress}
             onChange={(e) => setNewBranchAddress(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
-          <Button size="sm" onClick={addBranch} disabled={!newBranchName.trim() || !newBranchAddress.trim()}>
-            + Add Branch
+          <Button
+            size="sm"
+            onClick={addBranch}
+            disabled={!newBranchName.trim() || !newBranchAddress.trim()}
+          >
+            + Add branch
           </Button>
         </div>
-        <p className="text-xs text-gray-400 mt-1">
+        <p className="text-xs text-fg-subtle">
           Coordinates are looked up via Google Geocoding when you save.
         </p>
       </section>
 
       {/* Excluded Properties */}
-      <section className="border-t pt-5">
-        <h3 className="font-semibold text-gray-900 mb-2">Excluded Properties</h3>
-        <p className="text-xs text-gray-500 mb-3">
-          Properties that are already covered by other crews and should be filtered out
-          of every analysis. They still exist in the portfolio but won't appear in branch
-          optimization, crew strategy, drive time, etc.
-        </p>
+      <section className="space-y-3 border-t border-border pt-6">
+        <div>
+          <h4 className="text-sm font-semibold text-fg">Excluded properties</h4>
+          <p className="mt-1 text-xs text-fg-muted">
+            Properties that are already covered by other crews and should be
+            filtered out of every analysis. They still exist in the portfolio
+            but won't appear in branch optimization, crew strategy, drive time,
+            etc.
+          </p>
+        </div>
 
         {draft.excluded_property_ids.length > 0 && (
-          <div className="space-y-1.5 mb-3">
+          <ul className="space-y-1.5">
             {draft.excluded_property_ids.map((id) => {
               const p = propertyById.get(id)
               return (
-                <div
+                <li
                   key={id}
-                  className="flex items-center justify-between border rounded-lg px-3 py-2 text-sm"
+                  className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface px-3 py-2 text-sm"
                 >
                   <div className="min-w-0 flex-1">
                     {p ? (
                       <>
-                        <div className="font-medium text-gray-900 truncate">{p.address_line1}</div>
-                        <div className="text-xs text-gray-500">
-                          {p.city}, {p.state} · <span className="font-mono">{id.slice(0, 8)}</span>
-                        </div>
+                        <p className="truncate font-medium text-fg">
+                          {p.address_line1}
+                        </p>
+                        <p className="text-xs text-fg-muted">
+                          {p.city}, {p.state} ·{' '}
+                          <span className="font-mono">{id.slice(0, 8)}</span>
+                        </p>
                       </>
                     ) : (
-                      <div className="font-mono text-xs text-gray-500">{id}</div>
+                      <p className="font-mono text-xs text-fg-muted">{id}</p>
                     )}
                   </div>
                   <button
                     type="button"
                     onClick={() => removeExclusion(id)}
-                    className="text-red-600 hover:underline text-xs ml-3"
+                    className="rounded-sm text-xs text-danger hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                   >
                     Remove
                   </button>
-                </div>
+                </li>
               )
             })}
-          </div>
+          </ul>
         )}
 
         <div className="space-y-2">
-          <select
-            value={propertyPickerValue}
-            onChange={(e) => {
-              setPropertyPickerValue(e.target.value)
-              if (e.target.value) addExclusion(e.target.value)
-            }}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">+ Add property to exclude…</option>
-            {availableForExclusion.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.address_line1}, {p.city}, {p.state}
-              </option>
-            ))}
-          </select>
+          <Select onValueChange={(v) => v && addExclusion(v)} value="">
+            <SelectTrigger>
+              <SelectValue placeholder="+ Add property to exclude…" />
+            </SelectTrigger>
+            <SelectContent>
+              {availableForExclusion.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.address_line1}, {p.city}, {p.state}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
-          <input
+          <Input
             type="text"
             placeholder="Reason for exclusion (e.g. Already served by UT/AZ/NV crews)"
             value={draft.excluded_property_reason ?? ''}
             onChange={(e) =>
               setDraft((d) => ({ ...d, excluded_property_reason: e.target.value }))
             }
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
       </section>
@@ -684,50 +733,54 @@ function PopulationConstraintSubsection({
 }) {
   const pc = draft.population_constraint
   const update = (patch: Partial<OperationalConstraints['population_constraint']>) =>
-    setDraft((d) => ({ ...d, population_constraint: { ...d.population_constraint, ...patch } }))
+    setDraft((d) => ({
+      ...d,
+      population_constraint: { ...d.population_constraint, ...patch },
+    }))
 
   return (
-    <section className="border-t pt-5">
-      <h3 className="font-semibold text-gray-900 mb-2">Population Constraint for Branch Siting</h3>
-      <label className="flex items-center gap-2 cursor-pointer mb-2">
+    <section className="space-y-3 border-t border-border pt-6">
+      <div>
+        <h4 className="text-sm font-semibold text-fg">
+          Population constraint for branch siting
+        </h4>
+        <p className="mt-1 text-xs text-fg-muted">
+          Branch optimization will only suggest locations in cities meeting these
+          criteria. Smaller cities may produce lower drive cost but make hiring
+          difficult.
+        </p>
+      </div>
+
+      <label className="flex cursor-pointer items-center gap-2">
         <input
           type="checkbox"
           checked={pc.enabled}
           onChange={(e) => update({ enabled: e.target.checked })}
-          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          className="accent-accent"
         />
-        <span className="text-sm font-medium text-gray-800">
+        <span className="text-sm font-medium text-fg">
           Restrict branch suggestions to cities above population threshold
         </span>
       </label>
-      <p className="text-xs text-gray-500 mb-3">
-        Branch optimization will only suggest locations in cities meeting these criteria.
-        This ensures you can recruit the labor force needed to staff the branch. Smaller
-        cities may produce lower drive cost but make hiring difficult.
-      </p>
 
       {pc.enabled && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs font-semibold text-gray-700 mb-1">
-              Minimum population
-            </label>
-            <input
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <FormField label="Minimum population" htmlFor="min-pop" helper="Default 50,000">
+            <Input
+              id="min-pop"
               type="number"
               min={1000}
               max={5_000_000}
               step={5000}
               value={pc.min_population}
-              onChange={(e) => update({ min_population: Number(e.target.value) || 50000 })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              onChange={(e) =>
+                update({ min_population: Number(e.target.value) || 50000 })
+              }
             />
-            <p className="text-xs text-gray-400 mt-0.5">Default 50,000.</p>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-gray-700 mb-1">
-              Maximum population (optional)
-            </label>
-            <input
+          </FormField>
+          <FormField label="Maximum population" htmlFor="max-pop" helper="Optional">
+            <Input
+              id="max-pop"
               type="number"
               min={1000}
               step={50000}
@@ -738,17 +791,19 @@ function PopulationConstraintSubsection({
                   max_population: e.target.value === '' ? null : Number(e.target.value),
                 })
               }
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
             />
-          </div>
-          <div className="sm:col-span-2">
-            <label className="block text-xs font-semibold text-gray-700 mb-1">
-              Restrict to states (optional, 2-letter codes)
-            </label>
-            <input
+          </FormField>
+          <FormField
+            label="Restrict to states"
+            htmlFor="state-filter"
+            helper="Optional, comma-separated 2-letter codes"
+            className="sm:col-span-2"
+          >
+            <Input
+              id="state-filter"
               type="text"
-              placeholder="e.g. TX,NM,OK,AZ"
-              value={(pc.state_filter ?? []).join(',')}
+              placeholder="e.g. TX, NM, OK, AZ"
+              value={(pc.state_filter ?? []).join(', ')}
               onChange={(e) =>
                 update({
                   state_filter:
@@ -760,9 +815,8 @@ function PopulationConstraintSubsection({
                           .filter((s) => /^[A-Z]{2}$/.test(s)),
                 })
               }
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
             />
-          </div>
+          </FormField>
         </div>
       )}
     </section>
@@ -793,75 +847,75 @@ function UtilizationBandSubsection({
     u.ideal_max_pct < u.soft_ceiling_pct
 
   return (
-    <section className="border-t pt-5">
-      <h3 className="font-semibold text-gray-900 mb-2">Utilization Band</h3>
-      <label className="flex items-center gap-2 cursor-pointer mb-2">
+    <section className="space-y-3 border-t border-border pt-6">
+      <h4 className="text-sm font-semibold text-fg">Utilization band</h4>
+
+      <label className="flex cursor-pointer items-center gap-2">
         <input
           type="checkbox"
           checked={u.enabled}
           onChange={(e) => update({ enabled: e.target.checked })}
-          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          className="accent-accent"
         />
-        <span className="text-sm font-medium text-gray-800">
+        <span className="text-sm font-medium text-fg">
           Enforce utilization band on crew sizing
         </span>
       </label>
 
       {u.enabled && (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 my-3">
-            <NumberField
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <PercentField
               label="Hard floor"
               value={u.hard_floor_pct}
               onChange={(v) => update({ hard_floor_pct: v })}
-              suffix="%"
             />
-            <NumberField
+            <PercentField
               label="Ideal min"
               value={u.ideal_min_pct}
               onChange={(v) => update({ ideal_min_pct: v })}
-              suffix="%"
             />
-            <NumberField
+            <PercentField
               label="Ideal max"
               value={u.ideal_max_pct}
               onChange={(v) => update({ ideal_max_pct: v })}
-              suffix="%"
             />
-            <NumberField
+            <PercentField
               label="Soft ceiling"
               value={u.soft_ceiling_pct}
               onChange={(v) => update({ soft_ceiling_pct: v })}
-              suffix="%"
             />
           </div>
 
-          {/* Color-coded band visualization 0..130% */}
           <UtilizationBandViz band={u} />
           {!valid && (
-            <p className="text-xs text-red-600 mt-2">
-              Invalid band: must be hard_floor &lt; ideal_min &lt; ideal_max &lt; soft_ceiling.
+            <p className="text-xs text-danger">
+              Invalid band: must be hard_floor &lt; ideal_min &lt; ideal_max &lt;
+              soft_ceiling.
             </p>
           )}
 
-          <div className="mt-4">
-            <div className="text-xs font-semibold text-gray-700 mb-1">Constraint scope</div>
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+              Constraint scope
+            </p>
             <div className="flex flex-wrap gap-3 text-sm">
               {(['per_branch', 'per_region', 'portfolio'] as const).map((s) => (
-                <label key={s} className="flex items-center gap-1.5 cursor-pointer">
+                <label key={s} className="flex cursor-pointer items-center gap-1.5">
                   <input
                     type="radio"
                     checked={u.scope === s}
                     onChange={() => update({ scope: s })}
+                    className="accent-accent"
                   />
-                  <span className="capitalize">{s.replace('_', '-')}</span>
+                  <span className="capitalize text-fg">{s.replace('_', '-')}</span>
                 </label>
               ))}
             </div>
-            <p className="text-xs text-gray-500 mt-1">
-              Per-branch is most conservative — surfaces if any individual branch is over- or under-utilized.
-              Portfolio is most permissive — only flags if the whole portfolio is unbalanced. Per-region is in
-              between. Solutions outside the band are still shown but flagged.
+            <p className="text-xs text-fg-muted">
+              Per-branch is most conservative — surfaces if any individual branch
+              is over- or under-utilized. Portfolio is most permissive. Solutions
+              outside the band are still shown but flagged.
             </p>
           </div>
         </>
@@ -870,46 +924,49 @@ function UtilizationBandSubsection({
   )
 }
 
-function NumberField({
+function PercentField({
   label,
   value,
   onChange,
-  suffix,
 }: {
   label: string
   value: number
   onChange: (v: number) => void
-  suffix?: string
 }) {
   return (
-    <div>
-      <label className="block text-xs font-semibold text-gray-700 mb-1">{label}</label>
+    <FormField label={label}>
       <div className="relative">
-        <input
+        <Input
           type="number"
           value={value}
           onChange={(e) => {
             const n = Number(e.target.value)
             if (Number.isFinite(n)) onChange(n)
           }}
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm pr-7"
+          className="pr-7"
         />
-        {suffix && (
-          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">
-            {suffix}
-          </span>
-        )}
+        <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-fg-subtle">
+          %
+        </span>
       </div>
-    </div>
+    </FormField>
   )
 }
 
 function UtilizationBandViz({
   band,
 }: {
-  band: { hard_floor_pct: number; soft_ceiling_pct: number; ideal_min_pct: number; ideal_max_pct: number }
+  band: {
+    hard_floor_pct: number
+    soft_ceiling_pct: number
+    ideal_min_pct: number
+    ideal_max_pct: number
+  }
 }) {
   const max = 130
+  // Use semantic-subtle backgrounds via inline styles so the bands stay
+  // legible regardless of theme. (Token-driven equivalents would require
+  // an extra render trip on theme change for the same hand-picked palette.)
   const seg = (from: number, to: number, color: string, key: string) => {
     const left = (Math.max(0, from) / max) * 100
     const width = (Math.max(0, to - from) / max) * 100
@@ -922,20 +979,20 @@ function UtilizationBandViz({
     )
   }
   return (
-    <div className="mt-2">
-      <div className="relative h-4 rounded bg-gray-100 overflow-hidden">
-        {seg(0, band.hard_floor_pct, '#fecaca', 'low')}
-        {seg(band.hard_floor_pct, band.ideal_min_pct, '#fde68a', 'lowmid')}
-        {seg(band.ideal_min_pct, band.ideal_max_pct, '#bbf7d0', 'ideal')}
-        {seg(band.ideal_max_pct, band.soft_ceiling_pct, '#fde68a', 'highmid')}
-        {seg(band.soft_ceiling_pct, max, '#fecaca', 'high')}
+    <div>
+      <div className="relative h-4 overflow-hidden rounded bg-surface-muted">
+        {seg(0, band.hard_floor_pct, 'rgb(254 202 202)', 'low')}
+        {seg(band.hard_floor_pct, band.ideal_min_pct, 'rgb(253 230 138)', 'lowmid')}
+        {seg(band.ideal_min_pct, band.ideal_max_pct, 'rgb(187 247 208)', 'ideal')}
+        {seg(band.ideal_max_pct, band.soft_ceiling_pct, 'rgb(253 230 138)', 'highmid')}
+        {seg(band.soft_ceiling_pct, max, 'rgb(254 202 202)', 'high')}
       </div>
-      <div className="flex justify-between text-[10px] font-mono text-gray-500 mt-0.5">
+      <div className="mt-0.5 flex justify-between font-mono text-[10px] text-fg-subtle">
         <span>0%</span>
-        <span>{band.hard_floor_pct}%</span>
-        <span>{band.ideal_min_pct}%</span>
-        <span>{band.ideal_max_pct}%</span>
-        <span>{band.soft_ceiling_pct}%</span>
+        <span className="font-tabular">{band.hard_floor_pct}%</span>
+        <span className="font-tabular">{band.ideal_min_pct}%</span>
+        <span className="font-tabular">{band.ideal_max_pct}%</span>
+        <span className="font-tabular">{band.soft_ceiling_pct}%</span>
         <span>{max}%</span>
       </div>
     </div>
@@ -943,7 +1000,7 @@ function UtilizationBandViz({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tab: numeric field grid (used for both Crew Economics + Cost & Margin)
+// Numeric field grid (Crew Economics + Cost & Margin tabs)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function FieldGrid({
@@ -958,31 +1015,33 @@ function FieldGrid({
   onChange: (key: string, value: string) => void
 }) {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       {fields.map((k) => {
         const cur = (draft as any)[k] as number
         const def = defaults?.[k]
         const isOverridden = def != null && cur != null && Math.abs(def - cur) > 1e-9
         return (
-          <div key={k}>
-            <label className="block text-xs font-semibold text-gray-700 mb-1">
-              {FIELD_LABELS[k] ?? k}
-              {isOverridden && (
-                <span className="ml-1.5 text-blue-600 font-normal">(overridden)</span>
-              )}
-            </label>
-            <input
+          <FormField
+            key={k}
+            label={
+              <span className="inline-flex items-center gap-1.5">
+                {FIELD_LABELS[k] ?? k}
+                {isOverridden && <Badge variant="accent">overridden</Badge>}
+              </span>
+            }
+            htmlFor={`oc-${k}`}
+            helper={def != null ? <>System default: <span className="font-tabular">{def}</span></> : undefined}
+          >
+            <Input
+              id={`oc-${k}`}
               type="number"
               step="any"
               value={cur ?? ''}
               placeholder={def?.toString() ?? ''}
               onChange={(e) => onChange(k, e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className={cn(isOverridden && 'border-accent/40')}
             />
-            {def != null && (
-              <p className="text-xs text-gray-400 mt-0.5">System default: {def}</p>
-            )}
-          </div>
+          </FormField>
         )
       })}
     </div>
