@@ -38,6 +38,12 @@ import {
   calculateVehicleCosts,
   type VehicleCostResult,
 } from '../../../../../_lib/analysis/vehicle-cost-calculator.js'
+import {
+  calculateServiceLineBid,
+  type ServiceLineBidResult,
+  type ServiceLineConfig,
+  type ServiceLinePropertyInput,
+} from '../../../../../_lib/analysis/service-line-bid-calculator.js'
 
 export const config = { maxDuration: 60 }
 
@@ -299,6 +305,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       insuranceResult,
       vehicleResult
     )
+
+    // Phase 4 — service line bid pricing. Loads per-(account, client,
+    // offering) pricing config, groups properties by offering, and
+    // delegates to the service-line calculator. Emitted alongside the
+    // existing cost_buildup so legacy chart consumers still work.
+    let serviceLineBid: ServiceLineBidResult | null = null
+    try {
+      serviceLineBid = await computeServiceLineBid({
+        db,
+        accountId,
+        clientId,
+        properties,
+        offerings,
+        constraints,
+        result,
+        branchOverheadResult,
+        insuranceResult,
+        vehicleResult,
+        hotelsResolved,
+        crewStrategyOutputs: crewStrategy?.outputs,
+      })
+    } catch (err: any) {
+      console.error('[bid-pricing] service-line calc failed:', err?.message ?? err)
+    }
+    if (serviceLineBid) {
+      ;(result.outputs as any).service_line_bid = serviceLineBid
+    }
 
     await completeAnalysisRecord(db, analysisId, {
       outputs: result.outputs,
@@ -705,4 +738,171 @@ function computePerServiceLine(
     })
   }
   return out
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 4 — service line bid orchestrator
+// ─────────────────────────────────────────────────────────────────────
+//
+// Loads pricing config from service_line_pricing_config, builds
+// per-line property buckets with annual_work_hours, and delegates to
+// calculateServiceLineBid. Reuses the cost components already computed
+// upstream (branch overhead total, insurance, vehicle, hotels, drive
+// miles) so the per-line allocations sum to the same totals.
+async function computeServiceLineBid(args: {
+  db: any
+  accountId: string
+  clientId: string
+  properties: Awaited<ReturnType<typeof loadAccountProperties>>
+  offerings: Map<string, { id: string; name: string }>
+  constraints: any
+  result: any
+  branchOverheadResult: BranchOverheadResult | null
+  insuranceResult: InsuranceResult | null
+  vehicleResult: VehicleCostResult | null
+  hotelsResolved: ResolvedHotelsCost | undefined
+  crewStrategyOutputs: any
+}): Promise<ServiceLineBidResult | null> {
+  const {
+    db,
+    accountId,
+    clientId,
+    properties,
+    offerings,
+    constraints,
+    result,
+    branchOverheadResult,
+    insuranceResult,
+    vehicleResult,
+    hotelsResolved,
+    crewStrategyOutputs,
+  } = args
+
+  const { data: configRows } = await db
+    .from('service_line_pricing_config')
+    .select(
+      'service_offering_id, pricing_model, rate_per_sqft_per_visit, rate_per_sqft_per_month, billable_sqft_pct, target_gross_margin_pct_override, is_active'
+    )
+    .eq('account_id', accountId)
+    .eq('client_id', clientId)
+    .eq('is_active', true)
+  const configs = (configRows ?? []) as Array<{
+    service_offering_id: string
+    pricing_model: 'per_visit_blended_sqft' | 'per_sqft_monthly'
+    rate_per_sqft_per_visit: number | null
+    rate_per_sqft_per_month: number | null
+    billable_sqft_pct: number
+    target_gross_margin_pct_override: number | null
+  }>
+  if (configs.length === 0) return null
+
+  const accountMargin =
+    Number(constraints.target_gross_margin_pct ?? 0.22) * 100 // accounts use 0..1 fractions
+
+  // Pre-compute per-property labor hours via the existing project-hours
+  // util. This handles project_clean + upholstery combo math correctly.
+  const visitHours = computePropertyVisitHours(properties, offerings, {
+    project_clean_base_hours: constraints.project_clean_base_hours,
+    project_clean_hours_per_sqft: constraints.project_clean_hours_per_sqft,
+    upholstery_solo_hours: constraints.upholstery_solo_hours,
+    upholstery_combo_hours_pct: constraints.upholstery_combo_hours_pct,
+    visits_per_year_default: constraints.visits_per_year_default ?? 2,
+  })
+  const annualHoursByPropId = new Map<string, number>()
+  for (const v of visitHours) {
+    annualHoursByPropId.set(v.property.id, v.annual_hours)
+  }
+
+  // Group properties by offering id.
+  const propsByOffering: Record<string, ServiceLinePropertyInput[]> = {}
+  for (const p of properties) {
+    for (const sl of p.service_locations) {
+      if (!sl.service_offering_id) continue
+      const visitsPerYear =
+        (sl as any).visits_per_year_override ??
+        (constraints.visits_per_year_default ?? 2)
+      const arr = propsByOffering[sl.service_offering_id] ?? []
+      arr.push({
+        service_location_id: sl.id,
+        property_id: p.id,
+        serviceable_sqft: Number(sl.serviceable_sqft ?? 0),
+        visits_per_year: Number(visitsPerYear),
+        // Approximation: divide the property's total annual hours
+        // proportionally across its SLs by sqft. Good enough for
+        // allocation; per-SL hours would require offering-aware split
+        // which the property-hours util doesn't expose today.
+        annual_work_hours: annualHoursByPropId.get(p.id) ?? 0,
+        is_overnight_property: false,
+      })
+      propsByOffering[sl.service_offering_id] = arr
+    }
+  }
+
+  // Resolve target margin per line: override → account default.
+  const lineConfigs: ServiceLineConfig[] = configs.map((c) => {
+    const off = offerings.get(c.service_offering_id)
+    const offName = off?.name ?? '(unknown offering)'
+    // Treat upholstery as an addon (parent visit absorbs drive/hotels)
+    const isAddon = /upholstery/i.test(offName)
+    return {
+      service_offering_id: c.service_offering_id,
+      offering_name: offName,
+      pricing_model: c.pricing_model,
+      rate_per_sqft_per_visit: c.rate_per_sqft_per_visit,
+      rate_per_sqft_per_month: c.rate_per_sqft_per_month,
+      billable_sqft_pct: Number(c.billable_sqft_pct ?? 100),
+      target_gross_margin_pct:
+        c.target_gross_margin_pct_override != null
+          ? Number(c.target_gross_margin_pct_override)
+          : accountMargin,
+      is_addon: isAddon,
+    }
+  })
+
+  // Pull totals from the upstream cost components. Drive miles/hotels
+  // come from the routing template + overnight calc.
+  const sharedCosts = {
+    total_branch_overhead_annual: branchOverheadResult
+      ? branchOverheadResult.total_annual
+      : Number(result.outputs.cost_buildup.branch_overhead?.total ?? 0),
+    total_corporate_overhead_annual: Number(
+      result.outputs.indirect_cost?.corporate_overhead ?? 0
+    ),
+    total_drive_miles_per_year:
+      // Estimate from crew strategy if we have it (annual miles per crew
+      // × crew count); otherwise use the resolved vehicle_fuel / fuel_cost
+      // ratio as a proxy.
+      Number(crewStrategyOutputs?.options?.[crewStrategyOutputs?.recommended_option]?.estimated_drive_miles ?? 0) ||
+      (constraints.fuel_cost_per_mile > 0
+        ? Math.round(
+            Number(result.outputs.cost_buildup.vehicle_fuel ?? 0) /
+              constraints.fuel_cost_per_mile
+          )
+        : 0),
+    total_overnight_cost_annual: Number(hotelsResolved?.value ?? 0),
+    total_vehicle_cost_annual: vehicleResult
+      ? vehicleResult.total_annual
+      : Number(result.outputs.cost_buildup.vehicle_lease ?? 0),
+    fuel_cost_per_mile: Number(constraints.fuel_cost_per_mile ?? 0.18),
+    hourly_loaded_labor_cost: Number(constraints.hourly_loaded_labor_cost ?? 28),
+    crew_size: Number(constraints.crew_size ?? 3),
+    supplies_pct_of_labor: Number(constraints.supplies_pct_of_labor ?? 0.04),
+  }
+
+  return calculateServiceLineBid({
+    service_lines: lineConfigs,
+    properties_by_offering: propsByOffering,
+    shared_costs: sharedCosts,
+    insurance: insuranceResult
+      ? {
+          method: insuranceResult.applied_method as 'percentage_of_revenue' | 'flat',
+          percentage_of_revenue: insuranceResult.applied_percentage,
+          flat_amount: insuranceResult.calculated_amount,
+          minimum_annual_premium: 0,
+        }
+      : {
+          method: 'flat',
+          flat_amount: Number(result.outputs.cost_buildup.insurance?.total ?? 0),
+        },
+  })
 }

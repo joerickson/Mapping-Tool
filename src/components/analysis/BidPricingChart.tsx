@@ -135,6 +135,39 @@ interface BidOutputs {
     margin: number
     other: number
   }
+  // Phase 4 — service line bid pricing structure. Per-line revenue/cost/
+  // margin computed from configured rates × billable sqft, with shared
+  // overhead allocated by revenue share.
+  service_line_bid?: {
+    service_lines: Array<{
+      offering_id: string
+      offering_name: string
+      pricing_model: 'per_visit_blended_sqft' | 'per_sqft_monthly'
+      rate: number
+      rate_label: string
+      billable_sqft_pct: number
+      property_count: number
+      total_sqft_raw: number
+      total_sqft_billable: number
+      total_visits_per_year: number
+      annual_revenue: number
+      monthly_revenue: number
+      total_cost: number
+      target_gross_margin_pct: number
+      actual_gross_margin_dollars: number
+      actual_gross_margin_pct: number
+      margin_below_target: boolean
+      warnings: string[]
+    }>
+    summary: {
+      total_annual_revenue: number
+      total_annual_cost: number
+      total_gross_profit: number
+      weighted_average_margin_pct: number
+      service_line_count: number
+      properties_total: number
+    }
+  }
 }
 
 const ROW_LABELS: Record<string, string> = {
@@ -322,6 +355,90 @@ export default function BidPricingChart({
           </div>
         )}
       </Card>
+
+      {/* Phase 4 — Per-service-line bid summary */}
+      {data.service_line_bid && data.service_line_bid.service_lines.length > 0 && (
+        <section className="space-y-2">
+          <div className="flex items-baseline justify-between flex-wrap gap-2">
+            <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+              Service line bid breakdown
+            </h4>
+            <p className="text-xs text-fg-muted">
+              Total revenue:{' '}
+              <span className="font-mono tabular-nums text-fg">
+                ${data.service_line_bid.summary.total_annual_revenue.toLocaleString()}
+              </span>
+              {' · '}
+              Weighted margin:{' '}
+              <span className="font-mono tabular-nums text-fg">
+                {data.service_line_bid.summary.weighted_average_margin_pct.toFixed(1)}%
+              </span>
+            </p>
+          </div>
+          <ul className="divide-y divide-border rounded-md border border-border bg-surface">
+            {data.service_line_bid.service_lines.map((line) => (
+              <li key={line.offering_id} className="px-4 py-3 text-sm space-y-1">
+                <div className="flex items-baseline justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <p className="font-medium text-fg">{line.offering_name}</p>
+                    <p className="text-xs text-fg-muted mt-0.5">
+                      {line.rate_label}
+                      {' · '}
+                      <span className="font-tabular">{line.property_count}</span> SLs
+                      {' · '}
+                      <span className="font-tabular">
+                        {line.total_sqft_billable.toLocaleString()}
+                      </span>{' '}
+                      billable sqft
+                      {line.billable_sqft_pct < 100 && (
+                        <span className="text-fg-subtle">
+                          {' '}
+                          ({line.billable_sqft_pct}% of {line.total_sqft_raw.toLocaleString()})
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-mono text-base font-semibold tabular-nums text-fg">
+                      ${line.annual_revenue.toLocaleString()}
+                      <span className="text-xs text-fg-muted ml-1">/yr</span>
+                    </p>
+                    <p
+                      className={
+                        'text-xs font-tabular ' +
+                        (line.margin_below_target ? 'text-warning' : 'text-fg-muted')
+                      }
+                    >
+                      {line.actual_gross_margin_pct.toFixed(1)}% margin
+                      {line.margin_below_target && ' ⚠ below target'}
+                    </p>
+                  </div>
+                </div>
+                <p className="text-[11px] text-fg-subtle font-tabular">
+                  Cost ${line.total_cost.toLocaleString()} · Profit $
+                  {line.actual_gross_margin_dollars.toLocaleString()} · Target{' '}
+                  {line.target_gross_margin_pct}%
+                </p>
+                {line.warnings.length > 0 && (
+                  <p className="text-[11px] text-warning italic">
+                    {line.warnings.join(' · ')}
+                  </p>
+                )}
+              </li>
+            ))}
+            <li className="flex items-center justify-between border-t-2 border-border-strong px-4 py-2.5 text-sm bg-surface-subtle/40">
+              <span className="font-semibold text-fg">Total</span>
+              <span className="font-mono text-base font-semibold tabular-nums text-fg">
+                ${data.service_line_bid.summary.total_annual_revenue.toLocaleString()}
+                <span className="text-xs text-fg-muted ml-2">
+                  ({data.service_line_bid.summary.weighted_average_margin_pct.toFixed(1)}%
+                  margin)
+                </span>
+              </span>
+            </li>
+          </ul>
+        </section>
+      )}
 
       {/* Cost buildup bars */}
       <section className="space-y-2">
