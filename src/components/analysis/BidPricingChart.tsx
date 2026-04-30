@@ -31,7 +31,27 @@ interface BidOutputs {
     direct_labor: number
     vehicle_fuel: number
     vehicle_lease: number
-    hotels: number
+    // Phase 3.7 — hotels is emitted as a structured object so the UI can
+    // surface the basis (calculated / override / flat_fallback) and the
+    // night/cluster breakdown. Older outputs (or the flat_fallback path)
+    // may be a bare { total, basis }.
+    hotels:
+      | number
+      | {
+          total: number
+          basis?: 'calculated' | 'override' | 'flat_fallback'
+          calculated_value?: number
+          hotel_room_cost?: number
+          per_diem_cost?: number
+          breakdown?: {
+            total_nights: number
+            cost_per_night: number
+            crew_size: number
+            per_diem_per_night: number
+            cluster_count: number
+            properties_requiring_overnight: number
+          }
+        }
     supplies: number
     branch_overhead: number
     insurance: number
@@ -67,17 +87,27 @@ const ROW_LABELS: Record<string, string> = {
 
 export default function BidPricingChart({ data }: { data: BidOutputs }) {
   const theme = useChartTheme()
+  // Phase 3.7 — hotels is a structured object now; pull the dollar total
+  // out of it (older bare-number outputs still work).
+  const hotelsValue =
+    typeof data.cost_buildup.hotels === 'number'
+      ? data.cost_buildup.hotels
+      : (data.cost_buildup.hotels?.total ?? 0)
+  const hotelsObj =
+    typeof data.cost_buildup.hotels === 'object' ? data.cost_buildup.hotels : null
   const buildupRows = [
     { key: 'direct_labor', value: data.cost_buildup.direct_labor },
     { key: 'vehicle_fuel', value: data.cost_buildup.vehicle_fuel },
     { key: 'vehicle_lease', value: data.cost_buildup.vehicle_lease },
-    { key: 'hotels', value: data.cost_buildup.hotels },
+    { key: 'hotels', value: hotelsValue },
     { key: 'supplies', value: data.cost_buildup.supplies },
     { key: 'branch_overhead', value: data.cost_buildup.branch_overhead },
     { key: 'insurance', value: data.cost_buildup.insurance },
     { key: 'corporate_overhead', value: data.indirect_cost.corporate_overhead },
     { key: 'margin', value: data.margin.margin_amount },
-  ].filter((r) => r.value > 0)
+    // Always keep hotels in the table even at $0 so the diagnostic ("0
+    // overnight trips found") is visible — that's usually the bug.
+  ].filter((r) => r.value > 0 || r.key === 'hotels')
 
   // Phase 3.8 — source-of-truth indicator for the headline bid number.
   const source = data.sourced_from.source ?? null
@@ -200,8 +230,22 @@ export default function BidPricingChart({ data }: { data: BidOutputs }) {
         </h4>
         <ul className="divide-y divide-border rounded-md border border-border bg-surface">
           {buildupRows.map((r) => (
-            <li key={r.key} className="flex items-center justify-between px-4 py-2 text-sm">
-              <span className="text-fg-muted">{ROW_LABELS[r.key]}</span>
+            <li
+              key={r.key}
+              className="flex items-center justify-between px-4 py-2 text-sm"
+            >
+              <span className="text-fg-muted">
+                {ROW_LABELS[r.key]}
+                {r.key === 'hotels' && hotelsObj?.breakdown && (
+                  <span className="ml-2 text-xs text-fg-subtle">
+                    ({hotelsObj.basis ?? 'calculated'}
+                    {hotelsObj.breakdown.total_nights > 0
+                      ? ` · ${hotelsObj.breakdown.total_nights} nights · ${hotelsObj.breakdown.cluster_count} cluster${hotelsObj.breakdown.cluster_count === 1 ? '' : 's'} · ${hotelsObj.breakdown.properties_requiring_overnight} prop${hotelsObj.breakdown.properties_requiring_overnight === 1 ? '' : 's'} @ $${hotelsObj.breakdown.cost_per_night}/night`
+                      : ` · 0 overnight trips found — verify branches + overnight_trigger_one_way_hours`}
+                    )
+                  </span>
+                )}
+              </span>
               <span className="font-mono tabular-nums text-fg">
                 ${r.value.toLocaleString()}
               </span>
