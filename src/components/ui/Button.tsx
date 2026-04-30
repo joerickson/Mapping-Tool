@@ -68,9 +68,30 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     },
     ref
   ) => {
-    const Comp = asChild ? Slot : 'button'
+    // asChild renders through Radix's Slot, which calls React.Children.only
+    // on its rendered children. The pre-fix Button passed both
+    // `{loading && <Loader2/>}` and `{children}` — when loading is falsy,
+    // React.Children sees an array of [false, child] (length 2) and Slot
+    // throws "expected to receive a single React element child", which
+    // crashes any page that renders <Button asChild> unconditionally on
+    // first paint (e.g. AccountsList's "+ New account" button).
+    //
+    // asChild callers almost always wrap a Link or other non-spinning
+    // navigation element, so the spinner is meaningless on that path.
+    // Skip it entirely.
+    if (asChild) {
+      return (
+        <Slot
+          ref={ref}
+          className={cn(buttonVariants({ variant, size }), className)}
+          {...props}
+        >
+          {children}
+        </Slot>
+      )
+    }
     return (
-      <Comp
+      <button
         ref={ref}
         className={cn(buttonVariants({ variant, size }), className)}
         disabled={disabled || loading}
@@ -79,7 +100,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       >
         {loading && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
         {children}
-      </Comp>
+      </button>
     )
   }
 )
