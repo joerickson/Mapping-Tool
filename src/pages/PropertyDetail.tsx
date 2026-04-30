@@ -1,12 +1,26 @@
 import { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
+import { ChevronDown, ExternalLink } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
-import Navbar from '../components/ui/Navbar'
 import Button from '../components/ui/Button'
-import type { ServiceLocation } from '../types'
-import { CATEGORY_COLORS, STATUS_LABELS, STATUS_COLORS } from '../lib/constants'
+import { Badge, type BadgeProps } from '../components/ui/Badge'
+import { Card, CardHeader, CardTitle, CardDescription } from '../components/ui/Card'
+import { EmptyState } from '../components/ui/EmptyState'
+import { Skeleton } from '../components/ui/Skeleton'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../components/ui/Table'
+import AppShell from '../components/layout/AppShell'
 import ComparablesPanel from '../components/analysis/ComparablesPanel'
 import ServiceMixPanel from '../components/analysis/ServiceMixPanel'
+import { CATEGORY_COLORS, STATUS_LABELS } from '../lib/constants'
+import { cn } from '../lib/cn'
+import type { ServiceLocation } from '../types'
 
 // Extends Property with DB fields that aren't in the base type + joined tables
 interface PropertyDetail {
@@ -41,18 +55,19 @@ interface PropertyDetail {
   last_enriched_at?: string | null
   created_at: string
   updated_at: string
-  // Validation fields stored in DB (not in base Property type)
   validated_address_line1?: string | null
   validated_city?: string | null
   validated_state?: string | null
   validated_postal_code?: string | null
   address_validation_verdict?: string | null
   address_validated_at?: string | null
-  // Risk assessment
-  risk_flags?: Array<{ type: string; severity: 'low' | 'medium' | 'high'; description: string }> | null
+  risk_flags?: Array<{
+    type: string
+    severity: 'low' | 'medium' | 'high'
+    description: string
+  }> | null
   risk_score?: number | null
   risk_assessed_at?: string | null
-  // Joined tables
   service_locations: ServiceLocation[]
 }
 
@@ -138,11 +153,17 @@ export default function PropertyDetailPage() {
     setReassessing(true)
     try {
       const token = await getToken()
-      const res = await fetch(`/api/analyses/properties/${property.property_id}/risk-flags`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({}),
-      })
+      const res = await fetch(
+        `/api/analyses/properties/${property.property_id}/risk-flags`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({}),
+        }
+      )
       if (res.ok) {
         const result = await res.json()
         setProperty((prev) =>
@@ -163,23 +184,39 @@ export default function PropertyDetailPage() {
 
   if (loading) {
     return (
-      <div className="flex flex-col h-screen">
-        <Navbar />
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-gray-500">Loading...</div>
+      <AppShell>
+        <div className="mx-auto max-w-6xl px-6 py-10 space-y-6">
+          <Skeleton className="h-9 w-2/3" />
+          <Skeleton className="h-5 w-1/3" />
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
+            <div className="space-y-6 lg:col-span-3">
+              <Skeleton className="h-64" />
+              <Skeleton className="h-32" />
+            </div>
+            <div className="space-y-6 lg:col-span-2">
+              <Skeleton className="h-64" />
+            </div>
+          </div>
         </div>
-      </div>
+      </AppShell>
     )
   }
 
   if (!property) {
     return (
-      <div className="flex flex-col h-screen">
-        <Navbar />
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-gray-500">Property not found.</div>
+      <AppShell>
+        <div className="mx-auto max-w-6xl px-6 py-10">
+          <EmptyState
+            title="Property not found"
+            description="It may have been removed or you may not have access. Return to the map to keep exploring."
+            action={
+              <Button variant="secondary" asChild>
+                <Link to="/map">← Back to map</Link>
+              </Button>
+            }
+          />
         </div>
-      </div>
+      </AppShell>
     )
   }
 
@@ -235,449 +272,575 @@ export default function PropertyDetailPage() {
   const hasCoords = !!(property.latitude && property.longitude)
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50">
-      <Navbar />
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-6 py-8 space-y-6">
+    <AppShell
+      breadcrumb={[
+        { label: 'Map', to: '/map' },
+        { label: property.address_line1 },
+      ]}
+    >
+      <div className="mx-auto max-w-6xl px-6 py-10 space-y-10">
+        {/* Hero */}
+        <header className="space-y-3">
+          <button
+            onClick={() => navigate('/map')}
+            className="inline-flex items-center gap-1 text-sm text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-sm"
+          >
+            ← Back to map
+          </button>
 
-          {/* Header */}
-          <div>
-            <button
-              onClick={() => navigate('/map')}
-              className="text-sm text-blue-600 hover:underline mb-2 flex items-center gap-1"
-            >
-              ← Back to Map
-            </button>
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">{property.address_line1}</h1>
-                {property.address_line2 && (
-                  <p className="text-gray-600">{property.address_line2}</p>
-                )}
-                <p className="text-gray-600">
-                  {property.city}, {property.state} {property.postal_code}
-                </p>
-                {hasValidatedAddress && (
-                  <p className="text-sm text-gray-400 mt-1">
-                    Validated: {property.validated_address_line1}, {property.validated_city},{' '}
-                    {property.validated_state} {property.validated_postal_code}
-                    {property.address_validation_verdict && (
-                      <span className="ml-1 text-gray-300">({property.address_validation_verdict})</span>
-                    )}
-                  </p>
-                )}
-              </div>
-              <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-                {property.rbm_category && categoryColor && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-3 h-3 rounded-full" style={{ backgroundColor: categoryColor }} />
-                    <span className="text-sm text-gray-700 capitalize">
-                      {property.rbm_category.replace(/_/g, ' ')}
-                    </span>
-                  </div>
-                )}
-                <span
-                  className={`px-2 py-1 rounded text-xs font-medium ${
-                    property.enrichment_status === 'enriched'
-                      ? 'bg-green-100 text-green-700'
-                      : property.enrichment_status === 'failed'
-                      ? 'bg-red-100 text-red-700'
-                      : 'bg-yellow-100 text-yellow-700'
-                  }`}
-                >
-                  {property.enrichment_status}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Street View */}
-          <div className="bg-white rounded-xl shadow-sm border p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-3">Street View</h2>
-            {streetViewAvailable === null && (
-              <div className="text-sm text-gray-400">Checking street view availability...</div>
-            )}
-            {streetViewAvailable === false && (
-              <div className="text-sm text-gray-500">
-                {hasCoords
-                  ? 'Street view not available for this location.'
-                  : 'Street View unavailable — no coordinates.'}
-              </div>
-            )}
-            {streetViewAvailable && streetViewUrl && (
-              <div className="rounded-lg overflow-hidden border border-gray-200">
-                <img
-                  src={streetViewUrl}
-                  alt={`Street view of ${property.address_line1}`}
-                  className="w-full h-auto"
-                />
-              </div>
-            )}
-            {hasCoords && (
-              <div className="flex gap-4 mt-3">
-                {googleMapsStreetViewUrl && (
-                  <a
-                    href={googleMapsStreetViewUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-blue-600 hover:underline"
-                  >
-                    Open in Street View ↗
-                  </a>
-                )}
-                {googleMapsRegularUrl && (
-                  <a
-                    href={googleMapsRegularUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-blue-600 hover:underline"
-                  >
-                    View on Google Maps ↗
-                  </a>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Mini Map */}
-          {miniMapUrl && (
-            <div className="bg-white rounded-xl shadow-sm border p-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-3">Location</h2>
-              <div className="rounded-lg overflow-hidden border border-gray-200">
-                <img src={miniMapUrl} alt="Property location map" className="w-full h-auto" />
-              </div>
-              <p className="text-xs text-gray-400 mt-1">
-                {property.latitude?.toFixed(6)}, {property.longitude?.toFixed(6)}
-                {property.geocode_confidence && ` · confidence: ${property.geocode_confidence}`}
+          <div className="flex items-start justify-between gap-6 flex-wrap">
+            <div className="space-y-1 min-w-0">
+              <h1 className="text-2xl font-semibold tracking-tight text-fg">
+                {property.address_line1}
+              </h1>
+              {property.address_line2 && (
+                <p className="text-sm text-fg-muted">{property.address_line2}</p>
+              )}
+              <p className="text-sm text-fg-muted">
+                {property.city}, {property.state}{' '}
+                <span className="font-tabular">{property.postal_code}</span>
               </p>
+              {hasValidatedAddress && (
+                <p className="text-xs text-fg-subtle">
+                  Validated:{' '}
+                  <span className="text-fg-muted">
+                    {property.validated_address_line1}, {property.validated_city},{' '}
+                    {property.validated_state}{' '}
+                    <span className="font-tabular">
+                      {property.validated_postal_code}
+                    </span>
+                  </span>
+                  {property.address_validation_verdict && (
+                    <span className="ml-1">
+                      ({property.address_validation_verdict})
+                    </span>
+                  )}
+                </p>
+              )}
             </div>
-          )}
 
-          {/* Service Locations */}
-          <div className="bg-white rounded-xl shadow-sm border p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              Service Locations ({property.service_locations.length})
-            </h2>
-            {property.service_locations.length === 0 ? (
-              <p className="text-sm text-gray-500">No service locations linked to this property.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b">
-                      <th className="text-left py-2 pr-4 text-xs font-medium text-gray-500 uppercase tracking-wide">Name</th>
-                      <th className="text-left py-2 pr-4 text-xs font-medium text-gray-500 uppercase tracking-wide">Suite / Floor</th>
-                      <th className="text-left py-2 pr-4 text-xs font-medium text-gray-500 uppercase tracking-wide">Sqft</th>
-                      <th className="text-left py-2 text-xs font-medium text-gray-500 uppercase tracking-wide">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+              {property.rbm_category && categoryColor && (
+                <span className="inline-flex items-center gap-1.5 text-xs text-fg-muted">
+                  <span
+                    className="h-2 w-2 rounded-full ring-1 ring-border"
+                    style={{ backgroundColor: categoryColor }}
+                  />
+                  <span className="capitalize">
+                    {property.rbm_category.replace(/_/g, ' ')}
+                  </span>
+                </span>
+              )}
+              <Badge variant={enrichmentVariant(property.enrichment_status)}>
+                {property.enrichment_status}
+              </Badge>
+              {property.risk_assessed_at && (
+                <Badge variant={riskVariant(property.risk_score ?? 0)}>
+                  Risk:{' '}
+                  <span className="font-tabular">{property.risk_score ?? 0}</span>
+                </Badge>
+              )}
+            </div>
+          </div>
+        </header>
+
+        {/* Two-column on desktop. 5-col grid → 3/2 split = 60/40. */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
+          {/* Main column (60%) */}
+          <div className="space-y-6 lg:col-span-3">
+            {/* Map + Street View — side by side on md+ since each is a tall
+                visual block; stacked on mobile. */}
+            {(miniMapUrl || streetViewUrl || streetViewAvailable === false) && (
+              <Card padding="md">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {/* Mini map */}
+                  {miniMapUrl ? (
+                    <div className="space-y-2">
+                      <SectionLabel>Location</SectionLabel>
+                      <div className="overflow-hidden rounded-md border border-border">
+                        <img
+                          src={miniMapUrl}
+                          alt="Property location map"
+                          className="h-auto w-full"
+                        />
+                      </div>
+                      {hasCoords && (
+                        <p className="text-xs text-fg-subtle font-mono">
+                          {property.latitude?.toFixed(6)},{' '}
+                          {property.longitude?.toFixed(6)}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-fg-subtle">
+                      Map preview unavailable.
+                    </div>
+                  )}
+
+                  {/* Street View */}
+                  <div className="space-y-2">
+                    <SectionLabel>Street view</SectionLabel>
+                    {streetViewAvailable === null && (
+                      <Skeleton className="h-44" />
+                    )}
+                    {streetViewAvailable === false && (
+                      <p className="text-sm text-fg-subtle">
+                        {hasCoords
+                          ? 'Street view not available for this location.'
+                          : 'Street view unavailable — no coordinates.'}
+                      </p>
+                    )}
+                    {streetViewAvailable && streetViewUrl && (
+                      <div className="overflow-hidden rounded-md border border-border">
+                        <img
+                          src={streetViewUrl}
+                          alt={`Street view of ${property.address_line1}`}
+                          className="h-auto w-full"
+                        />
+                      </div>
+                    )}
+                    {hasCoords && (
+                      <div className="flex flex-wrap gap-3 pt-1 text-xs">
+                        {googleMapsStreetViewUrl && (
+                          <ExternalAnchor href={googleMapsStreetViewUrl}>
+                            Open in Street View
+                          </ExternalAnchor>
+                        )}
+                        {googleMapsRegularUrl && (
+                          <ExternalAnchor href={googleMapsRegularUrl}>
+                            View on Google Maps
+                          </ExternalAnchor>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            )}
+
+            {/* Service Locations */}
+            <Card padding="none">
+              <div className="border-b border-border px-6 py-4">
+                <CardTitle>
+                  Service locations
+                  <span className="ml-2 font-mono font-normal tabular-nums text-fg-subtle">
+                    ({property.service_locations.length})
+                  </span>
+                </CardTitle>
+              </div>
+              {property.service_locations.length === 0 ? (
+                <p className="px-6 py-6 text-sm text-fg-muted">
+                  No service locations linked to this property.
+                </p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Suite / floor</TableHead>
+                      <TableHead className="text-right">Sqft</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {property.service_locations.map((loc) => (
-                      <tr
+                      <TableRow
                         key={loc.service_location_id}
-                        className="border-b last:border-0 hover:bg-gray-50 cursor-pointer"
+                        className="cursor-pointer"
                         onClick={() => navigate(`/locations/${loc.service_location_id}`)}
                       >
-                        <td className="py-2.5 pr-4 font-medium text-gray-900">
-                          {loc.display_name ?? loc.location_code ?? loc.service_location_id.slice(0, 8)}
-                        </td>
-                        <td className="py-2.5 pr-4 text-gray-500">{loc.suite_or_floor ?? '—'}</td>
-                        <td className="py-2.5 pr-4 text-gray-600">
-                          {loc.serviceable_sqft ? loc.serviceable_sqft.toLocaleString() : '—'}
-                        </td>
-                        <td className="py-2.5">
-                          <span
-                            className="px-2 py-0.5 rounded-full text-white text-xs font-medium"
-                            style={{ backgroundColor: STATUS_COLORS[loc.status] }}
-                          >
+                        <TableCell className="font-medium text-fg">
+                          {loc.display_name ??
+                            loc.location_code ??
+                            loc.service_location_id.slice(0, 8)}
+                        </TableCell>
+                        <TableCell className="text-fg-muted">
+                          {loc.suite_or_floor ?? '—'}
+                        </TableCell>
+                        <TableCell numeric>
+                          {loc.serviceable_sqft
+                            ? loc.serviceable_sqft.toLocaleString()
+                            : '—'}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={statusBadgeVariant(loc.status)}>
                             {STATUS_LABELS[loc.status]}
-                          </span>
-                        </td>
-                      </tr>
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
                     ))}
-                  </tbody>
-                </table>
+                  </TableBody>
+                </Table>
+              )}
+            </Card>
+
+            {/* Risk Assessment */}
+            <Card>
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <CardTitle>Risk assessment</CardTitle>
+                  {property.risk_assessed_at && (
+                    <CardDescription>
+                      Last assessed{' '}
+                      <span className="font-tabular">
+                        {new Date(property.risk_assessed_at).toLocaleString()}
+                      </span>
+                    </CardDescription>
+                  )}
+                </div>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={handleReassessRisk}
+                  loading={reassessing}
+                >
+                  {property.risk_assessed_at ? 'Re-assess' : 'Assess'}
+                </Button>
               </div>
-            )}
+
+              <div className="mt-4">
+                {!property.risk_assessed_at ? (
+                  <p className="text-sm text-fg-muted">
+                    No risk assessment yet. Click{' '}
+                    <span className="font-medium text-fg">Assess</span> to compute
+                    risk flags.
+                  </p>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-4 mb-4">
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+                          Risk score
+                        </p>
+                        <p className="font-mono text-3xl font-semibold tabular-nums text-fg leading-none mt-1">
+                          {property.risk_score ?? 0}
+                        </p>
+                      </div>
+                      <Badge variant={riskVariant(property.risk_score ?? 0)}>
+                        {riskLabel(property.risk_score ?? 0)}
+                      </Badge>
+                    </div>
+
+                    {(property.risk_flags ?? []).length === 0 ? (
+                      <p className="text-sm text-fg-muted">No risk flags detected.</p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {(property.risk_flags ?? []).map((f, i) => (
+                          <li
+                            key={i}
+                            className={cn(
+                              'rounded-md border-l-2 bg-surface-subtle px-3 py-2 text-sm',
+                              f.severity === 'high' && 'border-danger',
+                              f.severity === 'medium' && 'border-warning',
+                              f.severity === 'low' && 'border-fg-subtle'
+                            )}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-fg capitalize">
+                                {f.type.replace(/_/g, ' ')}
+                              </span>
+                              <Badge variant={severityVariant(f.severity)}>
+                                {f.severity}
+                              </Badge>
+                            </div>
+                            <p className="mt-0.5 text-xs text-fg-muted">
+                              {f.description}
+                            </p>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                )}
+              </div>
+            </Card>
+
+            {/* Comparable Properties */}
+            <ComparablesPanel propertyId={property.property_id} />
+
+            {/* Service Mix Recommendation */}
+            <ServiceMixPanel propertyId={property.property_id} />
           </div>
 
-          {/* Parcel Data */}
-          {hasParcelData && (
-            <div className="bg-white rounded-xl shadow-sm border p-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">Parcel Data</h2>
-              <dl className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm">
-                {property.building_sqft && (
-                  <>
-                    <dt className="text-gray-500">Building Sqft</dt>
-                    <dd className="text-gray-900">{property.building_sqft.toLocaleString()}</dd>
-                  </>
-                )}
-                {property.lot_sqft && (
-                  <>
-                    <dt className="text-gray-500">Lot Sqft</dt>
-                    <dd className="text-gray-900">{property.lot_sqft.toLocaleString()}</dd>
-                  </>
-                )}
-                {property.year_built && (
-                  <>
-                    <dt className="text-gray-500">Year Built</dt>
-                    <dd className="text-gray-900">{property.year_built}</dd>
-                  </>
-                )}
-                {property.owner_name && (
-                  <>
-                    <dt className="text-gray-500">Owner</dt>
-                    <dd className="text-gray-900">{property.owner_name}</dd>
-                  </>
-                )}
-                {property.zoning_code && (
-                  <>
-                    <dt className="text-gray-500">Zoning</dt>
-                    <dd className="text-gray-900">{property.zoning_code}</dd>
-                  </>
-                )}
-                {property.land_use_code && (
-                  <>
-                    <dt className="text-gray-500">Land Use</dt>
-                    <dd className="text-gray-900">{property.land_use_code}</dd>
-                  </>
-                )}
-                {property.parcel_id && (
-                  <>
-                    <dt className="text-gray-500">Parcel ID</dt>
-                    <dd className="text-gray-900 font-mono text-xs">{property.parcel_id}</dd>
-                  </>
-                )}
-              </dl>
-            </div>
-          )}
-
-          {/* RBM Category */}
-          {(property.rbm_category || property.place_name) && (
-            <div className="bg-white rounded-xl shadow-sm border p-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">Business &amp; Classification</h2>
-              <dl className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm">
-                {property.place_name && (
-                  <>
-                    <dt className="text-gray-500">Place Name</dt>
-                    <dd className="text-gray-900">{property.place_name}</dd>
-                  </>
-                )}
-                {property.place_phone && (
-                  <>
-                    <dt className="text-gray-500">Phone</dt>
-                    <dd className="text-gray-900">{property.place_phone}</dd>
-                  </>
-                )}
-                {property.place_website && (
-                  <>
-                    <dt className="text-gray-500">Website</dt>
-                    <dd>
+          {/* Right metadata sidebar (40%) */}
+          <aside className="space-y-6 lg:col-span-2">
+            {/* Business & classification — only when we have something */}
+            {(property.rbm_category || property.place_name) && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Business &amp; classification</CardTitle>
+                </CardHeader>
+                <DefList className="mt-4">
+                  {property.place_name && (
+                    <DefRow term="Place name">{property.place_name}</DefRow>
+                  )}
+                  {property.place_phone && (
+                    <DefRow term="Phone">
+                      <span className="font-tabular">{property.place_phone}</span>
+                    </DefRow>
+                  )}
+                  {property.place_website && (
+                    <DefRow term="Website">
                       <a
                         href={property.place_website}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-blue-600 hover:underline text-sm"
+                        className="text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-sm break-all"
                       >
                         {property.place_website}
                       </a>
-                    </dd>
-                  </>
-                )}
-                {property.rbm_category && (
-                  <>
-                    <dt className="text-gray-500">RBM Category</dt>
-                    <dd className="text-gray-900 capitalize">{property.rbm_category.replace(/_/g, ' ')}</dd>
-                  </>
-                )}
-                {property.rbm_subcategory && (
-                  <>
-                    <dt className="text-gray-500">Subcategory</dt>
-                    <dd className="text-gray-900 capitalize">{property.rbm_subcategory.replace(/_/g, ' ')}</dd>
-                  </>
-                )}
-                {property.rbm_category_confidence != null && (
-                  <>
-                    <dt className="text-gray-500">Confidence</dt>
-                    <dd className="text-gray-900">
-                      {Math.round(property.rbm_category_confidence * 100)}%
+                    </DefRow>
+                  )}
+                  {property.rbm_category && (
+                    <DefRow term="RBM category">
+                      <span className="capitalize">
+                        {property.rbm_category.replace(/_/g, ' ')}
+                      </span>
+                    </DefRow>
+                  )}
+                  {property.rbm_subcategory && (
+                    <DefRow term="Subcategory">
+                      <span className="capitalize">
+                        {property.rbm_subcategory.replace(/_/g, ' ')}
+                      </span>
+                    </DefRow>
+                  )}
+                  {property.rbm_category_confidence != null && (
+                    <DefRow term="Confidence">
+                      <span className="font-tabular">
+                        {Math.round(property.rbm_category_confidence * 100)}%
+                      </span>
                       {property.rbm_category_source && (
-                        <span className="text-gray-400 ml-1">({property.rbm_category_source})</span>
+                        <span className="ml-1 text-fg-subtle">
+                          ({property.rbm_category_source})
+                        </span>
                       )}
-                    </dd>
-                  </>
-                )}
-              </dl>
-            </div>
-          )}
+                    </DefRow>
+                  )}
+                </DefList>
+              </Card>
+            )}
 
-          {/* Risk Assessment */}
-          <div className="bg-white rounded-xl shadow-sm border p-6">
-            <div className="flex items-start justify-between mb-3">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">Risk Assessment</h2>
-                {property.risk_assessed_at && (
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    Last assessed: {new Date(property.risk_assessed_at).toLocaleString()}
+            {/* Parcel data — hidden when nothing populated, per spec */}
+            {hasParcelData && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Parcel data</CardTitle>
+                </CardHeader>
+                <DefList className="mt-4">
+                  {property.building_sqft && (
+                    <DefRow term="Building sqft">
+                      <span className="font-tabular">
+                        {property.building_sqft.toLocaleString()}
+                      </span>
+                    </DefRow>
+                  )}
+                  {property.lot_sqft && (
+                    <DefRow term="Lot sqft">
+                      <span className="font-tabular">
+                        {property.lot_sqft.toLocaleString()}
+                      </span>
+                    </DefRow>
+                  )}
+                  {property.year_built && (
+                    <DefRow term="Year built">
+                      <span className="font-tabular">{property.year_built}</span>
+                    </DefRow>
+                  )}
+                  {property.owner_name && (
+                    <DefRow term="Owner">{property.owner_name}</DefRow>
+                  )}
+                  {property.zoning_code && (
+                    <DefRow term="Zoning">{property.zoning_code}</DefRow>
+                  )}
+                  {property.land_use_code && (
+                    <DefRow term="Land use">{property.land_use_code}</DefRow>
+                  )}
+                  {property.parcel_id && (
+                    <DefRow term="Parcel ID">
+                      <span className="font-mono text-xs text-fg">
+                        {property.parcel_id}
+                      </span>
+                    </DefRow>
+                  )}
+                </DefList>
+              </Card>
+            )}
+
+            {/* Enrichment metadata — collapsible, default closed per spec. */}
+            <details className="group rounded-lg border border-border bg-surface">
+              <summary className="flex cursor-pointer items-center justify-between gap-3 px-6 py-4 text-base font-semibold tracking-tight text-fg list-none [&::-webkit-details-marker]:hidden">
+                Enrichment metadata
+                <ChevronDown className="h-4 w-4 text-fg-muted transition-transform duration-150 group-open:rotate-180" />
+              </summary>
+              <div className="border-t border-border px-6 py-4 space-y-4">
+                <DefList>
+                  <DefRow term="Status">
+                    <Badge variant={enrichmentVariant(property.enrichment_status)}>
+                      {property.enrichment_status}
+                    </Badge>
+                  </DefRow>
+                  {property.geocoded_at && (
+                    <DefRow term="Geocoded">
+                      <span className="font-tabular">
+                        {new Date(property.geocoded_at).toLocaleDateString()}
+                      </span>
+                    </DefRow>
+                  )}
+                  {property.geocode_confidence && (
+                    <DefRow term="Geocode confidence">
+                      {property.geocode_confidence}
+                    </DefRow>
+                  )}
+                  {property.address_validated_at && (
+                    <DefRow term="Address validated">
+                      <span className="font-tabular">
+                        {new Date(property.address_validated_at).toLocaleDateString()}
+                      </span>
+                    </DefRow>
+                  )}
+                  {property.address_validation_verdict && (
+                    <DefRow term="Validation verdict">
+                      {property.address_validation_verdict}
+                    </DefRow>
+                  )}
+                  {property.last_enriched_at && (
+                    <DefRow term="Last enriched">
+                      <span className="font-tabular">
+                        {new Date(property.last_enriched_at).toLocaleDateString()}
+                      </span>
+                    </DefRow>
+                  )}
+                </DefList>
+
+                {enrichMsg && (
+                  <p
+                    role="status"
+                    className={cn(
+                      'rounded-md border px-3 py-2 text-sm',
+                      enrichMsg.toLowerCase().includes('failed')
+                        ? 'border-danger/20 bg-danger-subtle text-danger'
+                        : 'border-success/20 bg-success-subtle text-success'
+                    )}
+                  >
+                    {enrichMsg}
                   </p>
                 )}
-              </div>
-              <Button size="sm" variant="secondary" onClick={handleReassessRisk} loading={reassessing}>
-                {property.risk_assessed_at ? 'Re-assess' : 'Assess'}
-              </Button>
-            </div>
 
-            {!property.risk_assessed_at ? (
-              <p className="text-sm text-gray-500">
-                No risk assessment yet. Click "Assess" to compute risk flags for this property.
-              </p>
-            ) : (
-              <>
-                <div className="flex items-center gap-3 mb-4">
-                  <div>
-                    <p className="text-xs text-gray-500 uppercase tracking-wide">Risk score</p>
-                    <p className="text-2xl font-bold text-gray-900">{property.risk_score ?? 0}</p>
-                  </div>
-                  <div>
-                    <span
-                      className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${
-                        (property.risk_score ?? 0) >= 6
-                          ? 'bg-red-100 text-red-700'
-                          : (property.risk_score ?? 0) >= 3
-                          ? 'bg-orange-100 text-orange-700'
-                          : (property.risk_score ?? 0) >= 1
-                          ? 'bg-yellow-100 text-yellow-700'
-                          : 'bg-green-100 text-green-700'
-                      }`}
-                    >
-                      {(property.risk_score ?? 0) >= 6
-                        ? 'High risk'
-                        : (property.risk_score ?? 0) >= 3
-                        ? 'Elevated'
-                        : (property.risk_score ?? 0) >= 1
-                        ? 'Mild'
-                        : 'No risk'}
-                    </span>
-                  </div>
-                </div>
-
-                {(property.risk_flags ?? []).length === 0 ? (
-                  <p className="text-sm text-gray-500">No risk flags detected.</p>
-                ) : (
-                  <ul className="space-y-2">
-                    {(property.risk_flags ?? []).map((f, i) => (
-                      <li
-                        key={i}
-                        className={`border-l-4 px-3 py-2 text-sm ${
-                          f.severity === 'high'
-                            ? 'border-red-400 bg-red-50'
-                            : f.severity === 'medium'
-                            ? 'border-orange-400 bg-orange-50'
-                            : 'border-yellow-400 bg-yellow-50'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-gray-900">
-                            {f.type.replace(/_/g, ' ')}
-                          </span>
-                          <span
-                            className={`text-xs px-1.5 py-0.5 rounded ${
-                              f.severity === 'high'
-                                ? 'bg-red-100 text-red-700'
-                                : f.severity === 'medium'
-                                ? 'bg-orange-100 text-orange-700'
-                                : 'bg-yellow-100 text-yellow-700'
-                            }`}
-                          >
-                            {f.severity}
-                          </span>
-                        </div>
-                        <p className="text-gray-600 text-xs mt-0.5">{f.description}</p>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </>
-            )}
-          </div>
-
-          {/* Comparable Properties */}
-          <ComparablesPanel propertyId={property.property_id} />
-
-          {/* Service Mix Recommendation */}
-          <ServiceMixPanel propertyId={property.property_id} />
-
-          {/* Enrichment Metadata */}
-          <div className="bg-white rounded-xl shadow-sm border p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Enrichment</h2>
-            <dl className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm mb-4">
-              <dt className="text-gray-500">Status</dt>
-              <dd>
-                <span
-                  className={`px-2 py-0.5 rounded text-xs font-medium ${
-                    property.enrichment_status === 'enriched'
-                      ? 'bg-green-100 text-green-700'
-                      : property.enrichment_status === 'failed'
-                      ? 'bg-red-100 text-red-700'
-                      : 'bg-yellow-100 text-yellow-700'
-                  }`}
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={handleEnrich}
+                  loading={enriching}
                 >
-                  {property.enrichment_status}
-                </span>
-              </dd>
-              {property.geocoded_at && (
-                <>
-                  <dt className="text-gray-500">Geocoded</dt>
-                  <dd className="text-gray-900">{new Date(property.geocoded_at).toLocaleDateString()}</dd>
-                </>
-              )}
-              {property.geocode_confidence && (
-                <>
-                  <dt className="text-gray-500">Geocode Confidence</dt>
-                  <dd className="text-gray-900">{property.geocode_confidence}</dd>
-                </>
-              )}
-              {property.address_validated_at && (
-                <>
-                  <dt className="text-gray-500">Address Validated</dt>
-                  <dd className="text-gray-900">
-                    {new Date(property.address_validated_at).toLocaleDateString()}
-                  </dd>
-                </>
-              )}
-              {property.address_validation_verdict && (
-                <>
-                  <dt className="text-gray-500">Validation Verdict</dt>
-                  <dd className="text-gray-900">{property.address_validation_verdict}</dd>
-                </>
-              )}
-              {property.last_enriched_at && (
-                <>
-                  <dt className="text-gray-500">Last Enriched</dt>
-                  <dd className="text-gray-900">
-                    {new Date(property.last_enriched_at).toLocaleDateString()}
-                  </dd>
-                </>
-              )}
-            </dl>
-
-            {enrichMsg && (
-              <p
-                className={`text-sm mb-3 ${
-                  enrichMsg.includes('failed') ? 'text-red-600' : 'text-green-600'
-                }`}
-              >
-                {enrichMsg}
-              </p>
-            )}
-
-            <Button size="sm" variant="secondary" onClick={handleEnrich} loading={enriching}>
-              Re-enrich this property
-            </Button>
-          </div>
-
+                  Re-enrich this property
+                </Button>
+              </div>
+            </details>
+          </aside>
         </div>
       </div>
-    </div>
+    </AppShell>
   )
+}
+
+// ─── Local helpers ──────────────────────────────────────────────────────────
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+      {children}
+    </p>
+  )
+}
+
+function ExternalAnchor({
+  href,
+  children,
+}: {
+  href: string
+  children: React.ReactNode
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-1 text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-sm"
+    >
+      {children}
+      <ExternalLink className="h-3 w-3" />
+    </a>
+  )
+}
+
+function DefList({
+  className,
+  children,
+}: {
+  className?: string
+  children: React.ReactNode
+}) {
+  return (
+    <dl
+      className={cn(
+        'grid grid-cols-[7rem_1fr] gap-x-4 gap-y-2.5 text-sm',
+        className
+      )}
+    >
+      {children}
+    </dl>
+  )
+}
+
+function DefRow({
+  term,
+  children,
+}: {
+  term: string
+  children: React.ReactNode
+}) {
+  return (
+    <>
+      <dt className="text-fg-muted">{term}</dt>
+      <dd className="text-fg">{children}</dd>
+    </>
+  )
+}
+
+function enrichmentVariant(status: string): BadgeProps['variant'] {
+  if (status === 'enriched') return 'success'
+  if (status === 'failed') return 'danger'
+  return 'warning'
+}
+
+function statusBadgeVariant(
+  status: ServiceLocation['status']
+): BadgeProps['variant'] {
+  if (status === 'active') return 'success'
+  if (status === 'paused') return 'warning'
+  if (status === 'terminated') return 'danger'
+  return 'default'
+}
+
+function severityVariant(
+  severity: 'low' | 'medium' | 'high'
+): BadgeProps['variant'] {
+  if (severity === 'high') return 'danger'
+  if (severity === 'medium') return 'warning'
+  return 'default'
+}
+
+function riskVariant(score: number): BadgeProps['variant'] {
+  if (score >= 6) return 'danger'
+  if (score >= 3) return 'warning'
+  if (score >= 1) return 'warning'
+  return 'success'
+}
+
+function riskLabel(score: number): string {
+  if (score >= 6) return 'High risk'
+  if (score >= 3) return 'Elevated'
+  if (score >= 1) return 'Mild'
+  return 'No risk'
 }

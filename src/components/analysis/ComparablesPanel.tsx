@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
+import { Card, CardHeader, CardTitle } from '../ui/Card'
+import { Skeleton } from '../ui/Skeleton'
+import { cn } from '../../lib/cn'
 
 interface Comparable {
   property_id: string
@@ -61,58 +64,97 @@ export default function ComparablesPanel({ propertyId }: { propertyId: string })
   }, [propertyId, getToken])
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border p-6">
-      <h2 className="text-lg font-semibold text-gray-900 mb-3">Comparable Properties</h2>
+    <Card>
+      <CardHeader>
+        <CardTitle>Comparable properties</CardTitle>
+      </CardHeader>
 
-      {loading && <div className="text-sm text-gray-400">Loading comparables…</div>}
-      {error && (
-        <div className="text-sm text-red-600">
-          Could not load comparables: {error}
-        </div>
-      )}
+      <div className="mt-4">
+        {loading && (
+          <div className="space-y-2">
+            <Skeleton className="h-12" />
+            <Skeleton className="h-12" />
+            <Skeleton className="h-12" />
+          </div>
+        )}
+        {error && (
+          <p
+            role="alert"
+            className="rounded-md border border-danger/20 bg-danger-subtle px-3 py-2 text-sm text-danger"
+          >
+            Could not load comparables: {error}
+          </p>
+        )}
 
-      {!loading && !error && data && (
-        <>
-          {data.comparables.length === 0 ? (
-            <p className="text-sm text-gray-500">{data.summary_text}</p>
-          ) : (
-            <>
-              <p className="text-xs text-gray-500 mb-3">{data.summary_text}</p>
-              <div className="space-y-2">
-                {data.comparables.map((c) => (
-                  <Link
-                    key={c.property_id}
-                    to={`/properties/${c.property_id}`}
-                    className="block border rounded-lg px-3 py-2.5 hover:bg-gray-50 transition-colors"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="font-medium text-gray-900 truncate">{c.address}</div>
-                        <div className="text-xs text-gray-500">
-                          {c.city_state}
-                          {c.sqft > 0 && ` · ${c.sqft.toLocaleString()} sqft`}
-                          {c.distance_miles >= 0 && ` · ${c.distance_miles}mi`}
-                        </div>
-                        {c.similarity_reasons.length > 0 && (
-                          <div className="text-xs text-gray-500 mt-0.5 italic">
-                            {c.similarity_reasons.join(' · ')}
-                          </div>
+        {!loading && !error && data && (
+          <>
+            {data.comparables.length === 0 ? (
+              <p className="text-sm text-fg-muted">{data.summary_text}</p>
+            ) : (
+              <>
+                <p className="mb-3 text-xs text-fg-muted">{data.summary_text}</p>
+                <ul className="space-y-2">
+                  {data.comparables.map((c) => (
+                    <li key={c.property_id}>
+                      <Link
+                        to={`/properties/${c.property_id}`}
+                        className={cn(
+                          'group block rounded-md border border-border bg-surface px-3 py-2.5',
+                          'transition-colors duration-150',
+                          'hover:bg-surface-muted hover:border-border-strong',
+                          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent'
                         )}
-                      </div>
-                      <div className="shrink-0 text-right">
-                        <div className="text-xs text-gray-400 uppercase tracking-wide">Similarity</div>
-                        <div className="font-semibold text-gray-900">
-                          {(c.similarity_score * 100).toFixed(0)}%
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1 space-y-0.5">
+                            <p className="truncate text-sm font-medium text-fg">
+                              {c.address}
+                            </p>
+                            <p className="text-xs text-fg-muted">
+                              {c.city_state}
+                              {c.sqft > 0 && (
+                                <>
+                                  {' · '}
+                                  <span className="font-tabular">
+                                    {c.sqft.toLocaleString()}
+                                  </span>{' '}
+                                  sqft
+                                </>
+                              )}
+                              {c.distance_miles >= 0 && (
+                                <>
+                                  {' · '}
+                                  <span className="font-tabular">
+                                    {c.distance_miles}
+                                  </span>
+                                  mi
+                                </>
+                              )}
+                            </p>
+                            {c.similarity_reasons.length > 0 && (
+                              <p className="text-xs italic text-fg-subtle">
+                                {c.similarity_reasons.join(' · ')}
+                              </p>
+                            )}
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+                              Similarity
+                            </p>
+                            <p className="font-mono text-base font-semibold tabular-nums text-fg">
+                              {(c.similarity_score * 100).toFixed(0)}%
+                            </p>
+                          </div>
                         </div>
-                      </div>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            </>
-          )}
-        </>
-      )}
-    </div>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </>
+        )}
+      </div>
+    </Card>
   )
 }
