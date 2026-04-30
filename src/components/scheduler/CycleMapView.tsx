@@ -3,10 +3,13 @@
 // Spatial reasoning. Full-bleed Mapbox map showing branches + properties
 // + the routes for the day under the time scrubber. Right-side panel
 // summarizes per-crew status for the current date. Drag scrubber to
-// step through the cycle; play-animation + layer toggles deferred.
+// step through the cycle, or press Play to advance through dates
+// automatically. Layer toggles let the user hide branches/pins/routes
+// to focus on a single dimension.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
+import { Pause, Play } from 'lucide-react'
 import { stateClass, type CrewDayStateKind } from './CrewUtilizationChip'
 import { cn } from '../../lib/cn'
 
@@ -92,10 +95,27 @@ export default function CycleMapView({
   }, [utilDays])
 
   const [scrubIdx, setScrubIdx] = useState(0)
+  const [playing, setPlaying] = useState(false)
+  const [playSpeedMs, setPlaySpeedMs] = useState(500)
+  const [showBranches, setShowBranches] = useState(true)
+  const [showPins, setShowPins] = useState(true)
+  const [showRoutes, setShowRoutes] = useState(true)
+
   // Reset scrub if dates list shortens past the current index.
   useEffect(() => {
     if (scrubIdx >= dates.length) setScrubIdx(Math.max(0, dates.length - 1))
   }, [dates, scrubIdx])
+
+  // Autoplay: advance scrubIdx on a timer; loop back to 0 at the end.
+  // Pauses automatically if the user manually drags the scrubber to
+  // the last day (avoids fighting their input).
+  useEffect(() => {
+    if (!playing || dates.length <= 1) return
+    const id = window.setInterval(() => {
+      setScrubIdx((i) => (i >= dates.length - 1 ? 0 : i + 1))
+    }, Math.max(50, playSpeedMs))
+    return () => window.clearInterval(id)
+  }, [playing, playSpeedMs, dates.length])
 
   const currentDate = dates[scrubIdx] ?? cycleStart
 
@@ -165,9 +185,11 @@ export default function CycleMapView({
     }
   }, [branches])
 
-  // Render branches once.
+  // Render branches once. Re-runs when the showBranches toggle flips so
+  // the user can hide them mid-session without remounting the map.
   useEffect(() => {
     if (!mapLoaded || !mapRef.current) return
+    if (!showBranches) return
     const m = mapRef.current
     const branchEls: mapboxgl.Marker[] = []
     for (const b of branches) {
@@ -188,7 +210,7 @@ export default function CycleMapView({
     return () => {
       branchEls.forEach((mk) => mk.remove())
     }
-  }, [mapLoaded, branches])
+  }, [mapLoaded, branches, showBranches])
 
   // Render visit markers + route polylines for the current scrub date.
   // Re-runs whenever currentDate or visit data changes.
@@ -209,24 +231,26 @@ export default function CycleMapView({
         const lat = v.service_locations?.property?.latitude
         const lng = v.service_locations?.property?.longitude
         if (lat == null || lng == null) continue
-        const el = document.createElement('div')
-        el.className =
-          'flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold text-white shadow'
-        el.style.backgroundColor = color
-        el.style.border = '2px solid #fff'
-        el.textContent = String(crewVisits.indexOf(v) + 1)
-        markersRef.current.push(
-          new mapboxgl.Marker({ element: el })
-            .setLngLat([lng, lat])
-            .setPopup(
-              new mapboxgl.Popup({ offset: 14 }).setHTML(
-                `<strong>Stop ${crewVisits.indexOf(v) + 1}</strong><br/>${
-                  v.service_locations?.property?.address_line1 ?? ''
-                }<br/>${v.arrival_time ?? ''}–${v.departure_time ?? ''}`
+        if (showPins) {
+          const el = document.createElement('div')
+          el.className =
+            'flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold text-white shadow'
+          el.style.backgroundColor = color
+          el.style.border = '2px solid #fff'
+          el.textContent = String(crewVisits.indexOf(v) + 1)
+          markersRef.current.push(
+            new mapboxgl.Marker({ element: el })
+              .setLngLat([lng, lat])
+              .setPopup(
+                new mapboxgl.Popup({ offset: 14 }).setHTML(
+                  `<strong>Stop ${crewVisits.indexOf(v) + 1}</strong><br/>${
+                    v.service_locations?.property?.address_line1 ?? ''
+                  }<br/>${v.arrival_time ?? ''}–${v.departure_time ?? ''}`
+                )
               )
-            )
-            .addTo(m)
-        )
+              .addTo(m)
+          )
+        }
         stops.push([lng, lat])
         allCoords.push([lng, lat])
       }
@@ -247,7 +271,7 @@ export default function CycleMapView({
       const sourceId = `route-${crewIdx}`
       if (m.getLayer(sourceId)) m.removeLayer(sourceId)
       if (m.getSource(sourceId)) m.removeSource(sourceId)
-      if (lineCoords.length >= 2) {
+      if (showRoutes && lineCoords.length >= 2) {
         m.addSource(sourceId, {
           type: 'geojson',
           data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: lineCoords } },
@@ -283,7 +307,7 @@ export default function CycleMapView({
         if (m.getSource(sourceId)) m.removeSource(sourceId)
       }
     }
-  }, [mapLoaded, branches, dayVisitsByCrewIndex, dayCrewDays])
+  }, [mapLoaded, branches, dayVisitsByCrewIndex, dayCrewDays, showPins, showRoutes])
 
   if (dates.length === 0) {
     return (
@@ -312,7 +336,42 @@ export default function CycleMapView({
   return (
     <div className="rounded-md border border-border bg-surface overflow-hidden flex flex-col">
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px]" style={{ height }}>
-        <div ref={containerRef} className="bg-surface-subtle" />
+        <div ref={containerRef} className="bg-surface-subtle relative">
+          {/* Layer-toggle panel — top-right floating card. Lets the user
+              hide branches/pins/routes to focus on a single dimension. */}
+          <div className="absolute top-2 right-2 z-10 rounded-md border border-border bg-surface/95 backdrop-blur-sm shadow-sm px-2 py-1.5 text-[11px] space-y-0.5">
+            <p className="text-[9px] uppercase tracking-wider text-fg-subtle font-semibold">
+              Layers
+            </p>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showBranches}
+                onChange={(e) => setShowBranches(e.target.checked)}
+                className="h-3 w-3"
+              />
+              <span className="text-fg">Branches</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showPins}
+                onChange={(e) => setShowPins(e.target.checked)}
+                className="h-3 w-3"
+              />
+              <span className="text-fg">Property pins</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showRoutes}
+                onChange={(e) => setShowRoutes(e.target.checked)}
+                className="h-3 w-3"
+              />
+              <span className="text-fg">Route lines</span>
+            </label>
+          </div>
+        </div>
 
         {/* Right-side crew status panel */}
         <aside className="border-l border-border bg-surface overflow-y-auto">
@@ -371,7 +430,24 @@ export default function CycleMapView({
       <div className="border-t border-border bg-surface-subtle px-4 py-3 flex items-center gap-3">
         <button
           type="button"
-          onClick={() => setScrubIdx((i) => Math.max(0, i - 1))}
+          onClick={() => setPlaying((p) => !p)}
+          disabled={dates.length <= 1}
+          aria-label={playing ? 'Pause autoplay' : 'Play autoplay'}
+          title={playing ? 'Pause' : 'Play through cycle'}
+          className="rounded border border-border bg-surface px-2 py-1 text-xs disabled:opacity-50 inline-flex items-center gap-1"
+        >
+          {playing ? (
+            <Pause className="h-3 w-3" aria-hidden />
+          ) : (
+            <Play className="h-3 w-3" aria-hidden />
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setPlaying(false)
+            setScrubIdx((i) => Math.max(0, i - 1))
+          }}
           disabled={scrubIdx === 0}
           className="rounded border border-border bg-surface px-2 py-1 text-xs disabled:opacity-50"
         >
@@ -382,17 +458,34 @@ export default function CycleMapView({
           min={0}
           max={Math.max(0, dates.length - 1)}
           value={scrubIdx}
-          onChange={(e) => setScrubIdx(Number(e.target.value))}
+          onChange={(e) => {
+            setPlaying(false)
+            setScrubIdx(Number(e.target.value))
+          }}
           className="flex-1 accent-accent"
         />
         <button
           type="button"
-          onClick={() => setScrubIdx((i) => Math.min(dates.length - 1, i + 1))}
+          onClick={() => {
+            setPlaying(false)
+            setScrubIdx((i) => Math.min(dates.length - 1, i + 1))
+          }}
           disabled={scrubIdx === dates.length - 1}
           className="rounded border border-border bg-surface px-2 py-1 text-xs disabled:opacity-50"
         >
           →
         </button>
+        <select
+          value={playSpeedMs}
+          onChange={(e) => setPlaySpeedMs(Number(e.target.value))}
+          className="rounded border border-border bg-surface px-1.5 py-1 text-[11px]"
+          title="Autoplay speed"
+        >
+          <option value={1000}>1×</option>
+          <option value={500}>2×</option>
+          <option value={250}>4×</option>
+          <option value={100}>10×</option>
+        </select>
         <span className="text-xs text-fg-muted font-tabular whitespace-nowrap min-w-[120px] text-right">
           {currentDate}
         </span>
