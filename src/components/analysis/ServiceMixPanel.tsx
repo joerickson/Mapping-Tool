@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../../hooks/useAuth'
+import { Badge } from '../ui/Badge'
+import { Card, CardHeader, CardTitle } from '../ui/Card'
+import { Skeleton } from '../ui/Skeleton'
 
 interface Recommendation {
   offering_name: string
@@ -17,10 +20,13 @@ interface ServiceMixResponse {
   summary_text: string
 }
 
-const CONFIDENCE_BADGE: Record<Recommendation['confidence'], string> = {
-  high: 'bg-green-100 text-green-700 border-green-200',
-  medium: 'bg-yellow-100 text-yellow-700 border-yellow-200',
-  low: 'bg-gray-100 text-gray-700 border-gray-200',
+const CONFIDENCE_VARIANT: Record<
+  Recommendation['confidence'],
+  'success' | 'warning' | 'default'
+> = {
+  high: 'success',
+  medium: 'warning',
+  low: 'default',
 }
 
 export default function ServiceMixPanel({ propertyId }: { propertyId: string }) {
@@ -58,63 +64,76 @@ export default function ServiceMixPanel({ propertyId }: { propertyId: string }) 
   }, [propertyId, getToken])
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border p-6">
-      <h2 className="text-lg font-semibold text-gray-900 mb-3">Service Mix Recommendation</h2>
+    <Card>
+      <CardHeader>
+        <CardTitle>Service mix recommendation</CardTitle>
+      </CardHeader>
 
-      {loading && <div className="text-sm text-gray-400">Loading recommendations…</div>}
-      {error && (
-        <div className="text-sm text-red-600">Could not load service mix: {error}</div>
-      )}
+      <div className="mt-4 space-y-4">
+        {loading && (
+          <div className="space-y-2">
+            <Skeleton className="h-4 w-1/3" />
+            <Skeleton className="h-12" />
+            <Skeleton className="h-12" />
+          </div>
+        )}
+        {error && (
+          <p
+            role="alert"
+            className="rounded-md border border-danger/20 bg-danger-subtle px-3 py-2 text-sm text-danger"
+          >
+            Could not load service mix: {error}
+          </p>
+        )}
 
-      {!loading && !error && data && (
-        <>
-          {data.current_offerings.length > 0 && (
-            <div className="mb-3">
-              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
-                Current offerings
+        {!loading && !error && data && (
+          <>
+            {data.current_offerings.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+                  Current offerings
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {data.current_offerings.map((o) => (
+                    <Badge key={o} variant="accent">
+                      {o}
+                    </Badge>
+                  ))}
+                </div>
               </div>
-              <div className="flex flex-wrap gap-1.5">
-                {data.current_offerings.map((o) => (
-                  <span
-                    key={o}
-                    className="text-xs px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200"
-                  >
-                    {o}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+            )}
 
-          {data.recommended_additions.length === 0 ? (
-            <p className="text-sm text-gray-500">{data.summary_text}</p>
-          ) : (
-            <>
-              <p className="text-xs text-gray-500 mb-2">{data.summary_text}</p>
-              <div className="space-y-2">
-                {data.recommended_additions.map((r) => (
-                  <div key={r.offering_name} className="border rounded-lg px-3 py-2.5">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="font-medium text-gray-900">{r.offering_name}</div>
-                      <span
-                        className={`text-xs px-2 py-0.5 rounded border font-medium ${
-                          CONFIDENCE_BADGE[r.confidence]
-                        }`}
-                      >
-                        {r.confidence} confidence
-                      </span>
-                    </div>
-                    <div className="text-xs text-gray-600 mt-1">{r.rationale}</div>
-                    <div className="text-xs text-gray-500 mt-1 italic">
-                      Est. value: {r.estimated_value}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </>
-      )}
-    </div>
+            {data.recommended_additions.length === 0 ? (
+              <p className="text-sm text-fg-muted">{data.summary_text}</p>
+            ) : (
+              <>
+                <p className="text-xs text-fg-muted">{data.summary_text}</p>
+                <ul className="space-y-2">
+                  {data.recommended_additions.map((r) => (
+                    <li
+                      key={r.offering_name}
+                      className="rounded-md border border-border bg-surface px-3 py-2.5"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <p className="text-sm font-medium text-fg">
+                          {r.offering_name}
+                        </p>
+                        <Badge variant={CONFIDENCE_VARIANT[r.confidence]}>
+                          {r.confidence} confidence
+                        </Badge>
+                      </div>
+                      <p className="mt-1 text-xs text-fg-muted">{r.rationale}</p>
+                      <p className="mt-1 text-xs italic text-fg-subtle">
+                        Est. value: {r.estimated_value}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </>
+        )}
+      </div>
+    </Card>
   )
 }
