@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
+import { Loader2, Sparkles } from 'lucide-react'
 import Button from '../ui/Button'
+import { Badge } from '../ui/Badge'
 import SlideOver from '../ui/SlideOver'
 import MarkdownView from './MarkdownView'
 import { useAuth } from '../../hooks/useAuth'
@@ -166,43 +168,37 @@ export default function SynthesisCard({
     )
 
   return (
-    <div className="bg-gradient-to-br from-indigo-50 via-blue-50 to-sky-50 rounded-xl border-2 border-indigo-200 shadow-sm overflow-hidden">
-      <div className="px-5 py-4 flex items-start justify-between gap-4 flex-wrap">
-        <div className="min-w-0 flex-1">
+    <div className="rounded-lg border border-border bg-surface overflow-hidden">
+      <div className="px-6 py-5 flex items-start justify-between gap-4 flex-wrap">
+        <div className="min-w-0 flex-1 space-y-1.5">
           <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="font-semibold text-indigo-900">Portfolio Synthesis</h3>
+            <Sparkles className="h-4 w-4 text-accent" aria-hidden />
+            <h3 className="text-base font-semibold tracking-tight text-fg">
+              Portfolio Synthesis
+            </h3>
             {(running || row?.status === 'running' || row?.status === 'stale') && (
-              <span className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700 inline-flex items-center gap-1.5">
-                <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
+              <Badge variant="accent" className="gap-1.5">
+                <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
                 Updating…
-              </span>
+              </Badge>
             )}
             {!loading && row?.status === 'completed' && !isStale && (
-              <span className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700">Fresh</span>
+              <Badge variant="success">Fresh</Badge>
             )}
             {!loading && row?.status === 'completed' && isStale && (
-              <span className="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-800">
-                Stale — modules re-run since
-              </span>
+              <Badge variant="warning">Stale — modules re-run since</Badge>
             )}
-            {!loading && !row && (
-              <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600">
-                Not synthesized
-              </span>
-            )}
+            {!loading && !row && <Badge variant="default">Not synthesized</Badge>}
             {!loading && row?.status === 'failed' && (
-              <span className="text-xs px-2 py-0.5 rounded bg-red-100 text-red-700">Failed</span>
+              <Badge variant="danger">Failed</Badge>
             )}
           </div>
-          <p className="text-sm text-indigo-700 mt-1">
+          <p className="text-sm text-fg-muted">
             Combines all module outputs into an executive summary plus a downloadable
             structured report.
           </p>
           {row?.completed_at && (
-            <p className="text-xs text-indigo-600/70 mt-1">
+            <p className="text-xs text-fg-subtle">
               Last synthesized {relativeTime(row.completed_at)}
             </p>
           )}
@@ -212,10 +208,10 @@ export default function SynthesisCard({
           {row?.status === 'completed' && (
             <>
               <Button variant="secondary" size="sm" onClick={() => setReportOpen(true)}>
-                View Full Report
+                View full report
               </Button>
-              <Button variant="secondary" size="sm" onClick={downloadMarkdown}>
-                Download Markdown
+              <Button variant="ghost" size="sm" onClick={downloadMarkdown}>
+                Download
               </Button>
             </>
           )}
@@ -235,10 +231,11 @@ export default function SynthesisCard({
         </div>
       </div>
 
-      {/* Dashboard summary text */}
+      {/* Dashboard summary text. Whitespace-pre-wrap so the synthesizer's
+          paragraph breaks render naturally. */}
       {row?.status === 'completed' && row.summary_text && (
-        <div className="px-5 py-4 border-t border-indigo-200 bg-white/60">
-          <div className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
+        <div className="border-t border-border bg-surface-subtle px-6 py-4">
+          <div className="text-sm text-fg leading-relaxed whitespace-pre-wrap">
             {row.summary_text}
           </div>
         </div>
@@ -246,14 +243,18 @@ export default function SynthesisCard({
 
       {/* Failure message */}
       {row?.status === 'failed' && row.error_message && (
-        <div className="px-5 py-3 border-t bg-red-50 text-sm text-red-700">
-          <div className="font-medium mb-0.5">Synthesis failed</div>
-          <div className="font-mono text-xs whitespace-pre-wrap">{row.error_message}</div>
+        <div className="border-t border-danger/20 bg-danger-subtle px-6 py-3 text-sm text-danger space-y-1">
+          <div className="font-medium">Synthesis failed</div>
+          <div className="font-mono text-xs whitespace-pre-wrap">
+            {row.error_message}
+          </div>
         </div>
       )}
 
       {error && (
-        <div className="px-5 py-3 border-t bg-red-50 text-sm text-red-700">{error}</div>
+        <div className="border-t border-danger/20 bg-danger-subtle px-6 py-3 text-sm text-danger">
+          {error}
+        </div>
       )}
 
       {/* Slide-over report */}
@@ -266,7 +267,7 @@ export default function SynthesisCard({
         {row?.outputs?.full_report_markdown ? (
           <MarkdownView source={row.outputs.full_report_markdown} />
         ) : (
-          <p className="text-sm text-gray-500">No report content available.</p>
+          <p className="text-sm text-fg-muted">No report content available.</p>
         )}
       </SlideOver>
     </div>

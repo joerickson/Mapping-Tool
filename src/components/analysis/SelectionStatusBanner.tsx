@@ -1,5 +1,7 @@
 import { useState } from 'react'
+import { Lock } from 'lucide-react'
 import Button from '../ui/Button'
+import { Badge } from '../ui/Badge'
 import type { SelectedBranch } from './BuildSelectionModal'
 
 interface Props {
@@ -33,37 +35,40 @@ export default function SelectionStatusBanner({
   }
 
   return (
-    <div className="bg-gradient-to-r from-emerald-50 to-green-50 border border-emerald-200 rounded-xl px-5 py-4">
+    <div className="rounded-md border border-accent/20 bg-accent-subtle px-5 py-4">
       <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="text-emerald-700 text-base font-semibold">✓ Branch Selection Locked</span>
-            <span className="text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">
-              K = {branches.length}
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Lock className="h-4 w-4 text-accent" aria-hidden />
+            <span className="text-sm font-semibold text-fg">
+              Branch selection locked
             </span>
+            <Badge variant="accent">
+              K = <span className="font-tabular">{branches.length}</span>
+            </Badge>
           </div>
-          <div className="mt-1 text-sm text-gray-700 break-words">
+          <p className="text-sm text-fg break-words">
             {branches.map((b) => preferCityState(b)).join(' · ')}
-          </div>
-          <div className="mt-1 text-xs text-gray-500">
-            {selectedAt && (
-              <>
-                Selected {relativeTime(selectedAt)}
-                {selectedFromAnalysisId && (
-                  <>
-                    {' from Branch Optimization run '}
-                    <span className="font-mono">{selectedFromAnalysisId.slice(0, 8)}</span>
-                  </>
-                )}
-              </>
-            )}
-          </div>
+          </p>
+          {selectedAt && (
+            <p className="text-xs text-fg-muted">
+              Selected {relativeTime(selectedAt)}
+              {selectedFromAnalysisId && (
+                <>
+                  {' from Branch Optimization run '}
+                  <span className="font-mono text-fg-subtle">
+                    {selectedFromAnalysisId.slice(0, 8)}
+                  </span>
+                </>
+              )}
+            </p>
+          )}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           {confirming && (
-            <span className="text-xs text-gray-600">
-              This will clear your selection. Tier 2 analyses will need to be re-run after re-selecting.
+            <span className="text-xs text-fg-muted max-w-xs">
+              This clears your selection. Tier 2 analyses need to be re-run after.
             </span>
           )}
           <Button
