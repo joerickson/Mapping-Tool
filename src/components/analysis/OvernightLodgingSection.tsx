@@ -27,6 +27,9 @@ interface BreakdownResponse {
     trips: any[]
     properties_requiring_overnight: number
     day_trip_property_count: number
+    cluster_count_with_overrides?: number
+    cluster_count_skipped?: number
+    cluster_count_borderline?: number
   }
   resolved: {
     value: number
@@ -317,6 +320,28 @@ export default function OvernightLodgingSection({
                 </>
               )}
             </p>
+            {((breakdown.result.cluster_count_borderline ?? 0) > 0 ||
+              (breakdown.result.cluster_count_with_overrides ?? 0) > 0 ||
+              (breakdown.result.cluster_count_skipped ?? 0) > 0) && (
+              <p className="mt-1 text-[11px] text-fg-muted flex flex-wrap items-center gap-x-3">
+                {(breakdown.result.cluster_count_borderline ?? 0) > 0 && (
+                  <span className="text-warning">
+                    ⚠ {breakdown.result.cluster_count_borderline} borderline
+                  </span>
+                )}
+                {(breakdown.result.cluster_count_with_overrides ?? 0) > 0 && (
+                  <span className="text-accent">
+                    ⚙ {breakdown.result.cluster_count_with_overrides} override
+                    {breakdown.result.cluster_count_with_overrides === 1 ? '' : 's'} applied
+                  </span>
+                )}
+                {(breakdown.result.cluster_count_skipped ?? 0) > 0 && (
+                  <span>
+                    ⊘ {breakdown.result.cluster_count_skipped} skipped
+                  </span>
+                )}
+              </p>
+            )}
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <Button
                 size="sm"
