@@ -1014,7 +1014,7 @@ function renderRowDetail(
           {
             label: 'Drive miles',
             source: 'routing template',
-            link: { href: '#crew-strategy', label: 'Open Crew Strategy' },
+            link: { href: '#module-crew_strategy', label: 'Open Crew Strategy' },
           },
         ],
         editable: [
@@ -1036,7 +1036,7 @@ function renderRowDetail(
           {
             kind: 'navigate',
             label: 'Edit per-crew vehicle config',
-            href: '#cost-group-vehicle--fuel',
+            href: '#cost-group-vehicle-fuel',
           },
         ],
       }
@@ -1074,7 +1074,7 @@ function renderRowDetail(
           {
             label: 'Selected branches',
             source: 'Branch Decision',
-            link: { href: '#branch-decision', label: 'Edit branch selection' },
+            link: { href: '#module-branch_optimization', label: 'Edit branch selection' },
           },
         ],
         editable: [],
@@ -1082,7 +1082,7 @@ function renderRowDetail(
           {
             kind: 'navigate',
             label: 'Edit per-branch overhead config',
-            href: '#cost-group-branch--operational-costs',
+            href: '#cost-group-branch-operational-costs',
           },
         ],
       }
@@ -1154,7 +1154,7 @@ function renderRowDetail(
           {
             kind: 'navigate',
             label: 'Edit per-line margins (Service Line Pricing)',
-            href: '#cost-group-branch--operational-costs',
+            href: '#cost-group-service-line-pricing',
           },
         ],
       }

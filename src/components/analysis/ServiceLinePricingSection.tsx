@@ -144,7 +144,10 @@ export default function ServiceLinePricingSection({
   }
 
   return (
-    <section className="space-y-3 mt-6">
+    <section
+      id="cost-group-service-line-pricing"
+      className="space-y-3 mt-6 scroll-mt-16"
+    >
       <header>
         <h3 className="text-sm font-semibold text-fg">Service line pricing</h3>
         <p className="text-xs text-fg-muted mt-0.5">
