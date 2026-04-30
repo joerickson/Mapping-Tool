@@ -65,6 +65,17 @@ export default function GanttView({
   scrollToToday,
 }: Props) {
   const [selected, setSelected] = useState<Set<CellKey>>(new Set())
+  // Phase 4f-4 — filter chips for the legend. Empty Set = no filter
+  // (all kinds visible). Add a kind to mute cells of that kind.
+  const [hiddenKinds, setHiddenKinds] = useState<Set<CrewDayStateKind>>(new Set())
+  const toggleKind = (kind: CrewDayStateKind) => {
+    setHiddenKinds((prev) => {
+      const next = new Set(prev)
+      if (next.has(kind)) next.delete(kind)
+      else next.add(kind)
+      return next
+    })
+  }
   const [dragOver, setDragOver] = useState<CellKey | null>(null)
   const dragSource = useRef<CellKey | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -369,7 +380,8 @@ export default function GanttView({
                           stateClass(cell.state.kind),
                           isSelected && 'ring-2 ring-accent ring-inset',
                           isDragOver && 'ring-2 ring-warning ring-inset opacity-70',
-                          draggable && 'cursor-grab'
+                          draggable && 'cursor-grab',
+                          hiddenKinds.has(cell.state.kind) && 'opacity-15 grayscale'
                         )}
                         style={{ minWidth: 28, height: 36 }}
                         title={`${cell.crew_label} · ${cell.scheduled_date}\n${cell.work_hours_scheduled.toFixed(1)}h · ${cell.utilization_pct}%${cell.trip_label ? `\n${cell.trip_label}` : ''}\nCmd+click to select; drag to move`}
@@ -387,25 +399,52 @@ export default function GanttView({
           </tbody>
         </table>
       </div>
-      <div className="border-t border-border bg-surface-subtle px-3 py-2 text-xs text-fg-muted flex items-center gap-4 flex-wrap">
-        <span className="flex items-center gap-1">
-          <span className="inline-block h-3 w-3 rounded bg-accent/90" /> Full
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="inline-block h-3 w-3 rounded bg-accent/40" /> Partial
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="inline-block h-3 w-3 rounded bg-danger/15 border border-danger/30" /> Idle
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="inline-block h-3 w-3 rounded bg-fg-subtle/15 border border-fg-subtle/20" /> Between
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="inline-block h-3 w-3 rounded bg-warning/30 border border-warning/40" /> Travel
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="inline-block h-3 w-3 rounded bg-accent/70" /> Overnight
-        </span>
+      <div className="border-t border-border bg-surface-subtle px-3 py-2 text-xs text-fg-muted flex items-center gap-2 flex-wrap">
+        <span className="text-fg-subtle mr-1">Filter:</span>
+        {(
+          [
+            { kinds: ['fully_utilized'] as const, label: 'Full', dot: 'bg-indigo-600' },
+            { kinds: ['partial'] as const, label: 'Partial', dot: 'bg-indigo-200 border border-indigo-300' },
+            { kinds: ['idle'] as const, label: 'Idle', dot: 'bg-red-100 border border-red-300' },
+            { kinds: ['between_trips'] as const, label: 'Between', dot: 'bg-zinc-200 border border-zinc-300' },
+            { kinds: ['travel_day'] as const, label: 'Travel', dot: 'bg-amber-200 border border-amber-400' },
+            { kinds: ['overnight_continuation'] as const, label: 'Overnight', dot: 'bg-indigo-500' },
+          ] as Array<{ kinds: readonly CrewDayStateKind[]; label: string; dot: string }>
+        ).map((chip) => {
+          const allHidden = chip.kinds.every((k) => hiddenKinds.has(k))
+          return (
+            <button
+              key={chip.label}
+              type="button"
+              onClick={() => {
+                setHiddenKinds((prev) => {
+                  const next = new Set(prev)
+                  if (allHidden) for (const k of chip.kinds) next.delete(k)
+                  else for (const k of chip.kinds) next.add(k)
+                  return next
+                })
+              }}
+              className={cn(
+                'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 transition-colors',
+                allHidden
+                  ? 'border-border text-fg-subtle line-through opacity-60'
+                  : 'border-border-strong text-fg hover:bg-surface'
+              )}
+            >
+              <span className={cn('inline-block h-2.5 w-2.5 rounded', chip.dot)} />
+              {chip.label}
+            </button>
+          )
+        })}
+        {hiddenKinds.size > 0 && (
+          <button
+            type="button"
+            onClick={() => setHiddenKinds(new Set())}
+            className="text-accent hover:underline"
+          >
+            Clear filters
+          </button>
+        )}
         <span className="ml-auto text-fg-subtle">
           Cmd+click to select · drag to move · T jumps to today
         </span>

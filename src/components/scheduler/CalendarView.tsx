@@ -200,7 +200,7 @@ export default function CalendarView({ days, onDayClick, onCellDrop }: Props) {
                     className={cn(
                       'flex items-center gap-1 text-[10px] leading-tight rounded px-1 py-0.5',
                       isIdle
-                        ? 'bg-danger/10 text-danger'
+                        ? 'bg-red-50 text-red-700'
                         : 'bg-surface-subtle hover:bg-surface',
                       d.state.kind === 'partial' && 'opacity-80',
                       draggable && 'cursor-grab'
@@ -210,7 +210,7 @@ export default function CalendarView({ days, onDayClick, onCellDrop }: Props) {
                     <span
                       className={cn(
                         'h-2 w-2 rounded-full shrink-0',
-                        isIdle ? 'bg-danger/60' : CREW_COLORS[d.crew_index % CREW_COLORS.length]
+                        isIdle ? 'bg-red-500' : CREW_COLORS[d.crew_index % CREW_COLORS.length]
                       )}
                     />
                     <span className="truncate flex-1 font-medium text-fg">{label}</span>

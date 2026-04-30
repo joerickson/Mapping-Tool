@@ -29,22 +29,26 @@ const STATE_LABEL: Record<CrewDayStateKind, string> = {
   overnight_continuation: 'Overnight',
 }
 
+// Use Tailwind's static palette for these state colors — the
+// CSS-var-based theme tokens (bg-accent etc.) don't support the
+// `/<opacity>` modifier without channel-formatted vars, and silent
+// no-op opacity is what made the Gantt look colorless.
 export function stateClass(kind: CrewDayStateKind): string {
   switch (kind) {
     case 'fully_utilized':
-      return 'bg-accent/90 text-white border-accent'
+      return 'bg-indigo-600 text-white border-indigo-700'
     case 'partial':
-      return 'bg-accent/40 text-fg border-accent/50'
+      return 'bg-indigo-200 text-indigo-900 border-indigo-300'
     case 'idle':
-      return 'bg-danger/15 text-danger border-danger/30'
+      return 'bg-red-100 text-red-700 border-red-300'
     case 'between_trips':
-      return 'bg-fg-subtle/15 text-fg-muted border-fg-subtle/20'
+      return 'bg-zinc-200 text-zinc-700 border-zinc-300'
     case 'travel_day':
-      return 'bg-warning/30 text-fg border-warning/40'
+      return 'bg-amber-200 text-amber-900 border-amber-400'
     case 'rest_day':
-      return 'bg-surface-subtle text-fg-muted border-border'
+      return 'bg-zinc-100 text-zinc-600 border-zinc-200'
     case 'overnight_continuation':
-      return 'bg-accent/70 text-white border-accent'
+      return 'bg-indigo-500 text-white border-indigo-600'
   }
 }
 
