@@ -129,6 +129,14 @@ export function determineCascadingEffects(
         )
         continue
       }
+      if (c.field === 'building_size_class_override') {
+        addStale(
+          c.field,
+          ['crew_strategy', 'bid_pricing_structure'],
+          'Building-size override changes crew-day math + scheduler pairing.'
+        )
+        continue
+      }
       if (c.field === 'crew_size_override') {
         addStale(
           c.field,

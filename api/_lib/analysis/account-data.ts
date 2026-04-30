@@ -26,6 +26,8 @@ export interface AccountServiceLocation {
   visits_per_year_override: number | null
   service_offering_id: string | null
   status: string
+  building_size_class_override?: 'small' | 'standard' | 'large' | 'multi_day' | null
+  building_size_override_reason?: string | null
 }
 
 // Pull every property whose service_locations belong to (account_id, client_id).
@@ -60,7 +62,7 @@ export async function loadAccountProperties(
   const { data: props, error: propErr } = await db
     .from('properties')
     .select(
-      'id, address_line1, address_line2, city, state, postal_code, latitude, longitude, geocode_confidence, address_validation_verdict, service_locations(id, property_id, client_id, display_name, serviceable_sqft, visits_per_year_override, service_offering_id, status)'
+      'id, address_line1, address_line2, city, state, postal_code, latitude, longitude, geocode_confidence, address_validation_verdict, service_locations(id, property_id, client_id, display_name, serviceable_sqft, visits_per_year_override, service_offering_id, status, building_size_class_override, building_size_override_reason)'
     )
     .in('id', propIds)
   if (propErr) throw new Error(`properties lookup failed: ${propErr.message}`)

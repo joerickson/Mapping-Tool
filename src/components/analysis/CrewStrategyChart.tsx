@@ -42,6 +42,7 @@ interface BranchUtilRow {
 interface CrewOption {
   label: string
   crew_count: number
+  crew_count_optimistic?: number
   surge_crew_count?: number
   surge_weeks?: number
   utilization_pct: number
@@ -73,10 +74,34 @@ interface CrewOption {
   }
 }
 
+interface CrewCountAnalysis {
+  conservative: {
+    crews_needed: number
+    total_crew_days_per_cycle: number
+    working_days_per_cycle: number
+    rationale: string
+  }
+  optimistic: {
+    crews_needed: number
+    total_crew_days_per_cycle: number
+    working_days_per_cycle: number
+    rationale: string
+  }
+  size_class_breakdown: {
+    small: number
+    standard: number
+    large: number
+    multi_day: number
+  }
+  total_visits_per_cycle: number
+  cycles_per_year: number
+}
+
 interface CrewStrategyOutputs {
   property_count: number
   k_used: number
   total_project_hours_per_year: number
+  crew_count_analysis?: CrewCountAnalysis
   options: { A: CrewOption; B: CrewOption; C: CrewOption }
   recommended_option: 'A' | 'B' | 'C'
   recommended_rationale: string
@@ -148,6 +173,62 @@ export default function CrewStrategyChart({ data }: { data: CrewStrategyOutputs 
         <p className="mt-1 text-sm text-fg-muted">{data.recommended_rationale}</p>
       </div>
 
+      {/* Phase 3.8 — Building-count math summary */}
+      {data.crew_count_analysis && (
+        <Card padding="md">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+            Building-count crew math
+          </p>
+          <p className="mt-1 text-sm text-fg">
+            <span className="font-tabular font-semibold">
+              {data.crew_count_analysis.conservative.crews_needed} crews
+            </span>{' '}
+            (conservative)
+            {data.crew_count_analysis.optimistic.crews_needed !==
+              data.crew_count_analysis.conservative.crews_needed && (
+              <>
+                {' — '}
+                <span className="font-tabular font-semibold">
+                  {data.crew_count_analysis.optimistic.crews_needed}
+                </span>{' '}
+                with small-property pairing (optimistic)
+              </>
+            )}
+          </p>
+          <p className="mt-1 text-xs text-fg-muted">
+            {data.crew_count_analysis.conservative.total_crew_days_per_cycle} building-days ÷{' '}
+            {data.crew_count_analysis.conservative.working_days_per_cycle} working days ={' '}
+            {(
+              data.crew_count_analysis.conservative.total_crew_days_per_cycle /
+              data.crew_count_analysis.conservative.working_days_per_cycle
+            ).toFixed(2)}{' '}
+            → {data.crew_count_analysis.conservative.crews_needed} crews.
+          </p>
+          <dl className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+            <Stat label="Small (≤4 hr)">
+              <span className="font-tabular">
+                {data.crew_count_analysis.size_class_breakdown.small}
+              </span>
+            </Stat>
+            <Stat label="Standard (4–8 hr)">
+              <span className="font-tabular">
+                {data.crew_count_analysis.size_class_breakdown.standard}
+              </span>
+            </Stat>
+            <Stat label="Large (8–16 hr)">
+              <span className="font-tabular">
+                {data.crew_count_analysis.size_class_breakdown.large}
+              </span>
+            </Stat>
+            <Stat label="Multi-day (>16 hr)">
+              <span className="font-tabular">
+                {data.crew_count_analysis.size_class_breakdown.multi_day}
+              </span>
+            </Stat>
+          </dl>
+        </Card>
+      )}
+
       {/* Cost comparison bar chart */}
       <section className="space-y-2">
         <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
@@ -211,6 +292,13 @@ export default function CrewStrategyChart({ data }: { data: CrewStrategyOutputs 
             <dl className="my-3 grid grid-cols-2 gap-3 border-y border-border py-3 text-sm">
               <Stat label="Crews">
                 <span className="font-tabular">{o.crew_count}</span>
+                {o.crew_count_optimistic != null &&
+                  o.crew_count_optimistic !== o.crew_count && (
+                    <span className="text-fg-muted text-xs">
+                      {' '}
+                      (or <span className="font-tabular">{o.crew_count_optimistic}</span> w/ pairing)
+                    </span>
+                  )}
                 {o.surge_crew_count ? (
                   <span className="text-fg-muted">
                     {' + '}

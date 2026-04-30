@@ -32,6 +32,13 @@ import type { ServiceLocation } from '../types'
 
 const PROPERTY_FIELD_BY_KEY = Object.fromEntries(PROPERTY_FIELDS.map((f) => [f.key, f]))
 
+const SIZE_CLASS_LABEL: Record<'small' | 'standard' | 'large' | 'multi_day', string> = {
+  small: 'Small',
+  standard: 'Standard',
+  large: 'Large',
+  multi_day: 'Multi-day',
+}
+
 // Extends Property with DB fields that aren't in the base type + joined tables
 interface PropertyDetail {
   property_id: string
@@ -481,6 +488,7 @@ export default function PropertyDetailPage() {
                       <TableHead>Name</TableHead>
                       <TableHead>Suite / floor</TableHead>
                       <TableHead className="text-right">Sqft</TableHead>
+                      <TableHead>Size class</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="w-8" />
                     </TableRow>
@@ -504,6 +512,16 @@ export default function PropertyDetailPage() {
                           {loc.serviceable_sqft
                             ? loc.serviceable_sqft.toLocaleString()
                             : '—'}
+                        </TableCell>
+                        <TableCell className="text-xs text-fg-muted">
+                          {loc.building_size_class_override ? (
+                            <span title={loc.building_size_override_reason ?? undefined}>
+                              {SIZE_CLASS_LABEL[loc.building_size_class_override]}
+                              <span className="text-fg-subtle"> · override</span>
+                            </span>
+                          ) : (
+                            <span className="text-fg-subtle">Auto</span>
+                          )}
                         </TableCell>
                         <TableCell>
                           <Badge variant={statusBadgeVariant(loc.status)}>

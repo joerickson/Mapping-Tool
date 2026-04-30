@@ -24,6 +24,8 @@ interface BidOutputs {
     crew_count: number | null
     branch_count: number | null
     fte_count: number | null
+    source?: 'scheduler_template' | 'crew_strategy_estimate' | 'manual_override'
+    scheduler_template?: { id: string; name: string } | null
   }
   cost_buildup: {
     direct_labor: number
@@ -77,8 +79,51 @@ export default function BidPricingChart({ data }: { data: BidOutputs }) {
     { key: 'margin', value: data.margin.margin_amount },
   ].filter((r) => r.value > 0)
 
+  // Phase 3.8 — source-of-truth indicator for the headline bid number.
+  const source = data.sourced_from.source ?? null
+  const sourceLine = (() => {
+    if (source === 'scheduler_template') {
+      const name = data.sourced_from.scheduler_template?.name ?? 'active template'
+      return {
+        label: `Scheduler optimization (high confidence)`,
+        sub: `Crew count from active template "${name}".`,
+        tone: 'success' as const,
+      }
+    }
+    if (source === 'manual_override') {
+      return {
+        label: 'Manual override',
+        sub: 'Crew count + costs entered manually.',
+        tone: 'neutral' as const,
+      }
+    }
+    return {
+      label: 'Crew strategy estimate (run scheduler for actual numbers)',
+      sub: 'Pre-scheduler estimate from building-count math.',
+      tone: 'warn' as const,
+    }
+  })()
+
   return (
     <div className="space-y-6">
+      {/* Source-of-truth indicator */}
+      <div
+        className={
+          'rounded-md border px-3 py-2 text-xs ' +
+          (sourceLine.tone === 'success'
+            ? 'border-success/30 bg-success/5 text-success'
+            : sourceLine.tone === 'warn'
+              ? 'border-warning/30 bg-warning/5 text-warning'
+              : 'border-border bg-surface-subtle text-fg-muted')
+        }
+      >
+        <p className="font-semibold">
+          {sourceLine.tone === 'success' ? '✓ ' : sourceLine.tone === 'warn' ? '⚠ ' : ''}
+          Source: {sourceLine.label}
+        </p>
+        <p className="mt-0.5 text-fg-muted">{sourceLine.sub}</p>
+      </div>
+
       {/* Headline bid number — quiet 1px-bordered card per design rules
           (the legacy version used a green→teal gradient + 2px border which
           shouted; we let the typography do the work instead). */}

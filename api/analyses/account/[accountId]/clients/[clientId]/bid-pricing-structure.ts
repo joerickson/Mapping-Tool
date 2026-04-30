@@ -110,6 +110,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const branchOpt = await fetchLatestCompletedAnalysis(db, accountId, clientId, 'branch_optimization')
     const workforce = await fetchLatestCompletedAnalysis(db, accountId, clientId, 'workforce_sizing')
 
+    // Phase 3.8 — when an active routing template exists for this client,
+    // the scheduler's actual numbers are the source of truth. Prefer them
+    // over Crew Strategy's pre-scheduler estimate.
+    const { data: schedulerTemplateRow } = await db
+      .from('routing_templates')
+      .select(
+        'id, name, crew_count, cycle_length_days, total_drive_miles_per_cycle, total_work_minutes_per_cycle, total_overnight_nights_per_cycle, total_estimated_cost_per_year'
+      )
+      .eq('account_id', accountId)
+      .eq('client_id', clientId)
+      .eq('status', 'active')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const schedulerTemplate = (schedulerTemplateRow as any) ?? null
+
     // Phase 3.7 — calculate overnight cost from selected branches + property
     // visit hours, then resolve final hotels value (override / calc / flat).
     const offerings = await loadAccountOfferings(db, accountId, clientId)
@@ -161,7 +177,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       crewStrategy?.outputs,
       branchOpt?.outputs,
       workforce?.outputs,
-      hotelsResolved
+      hotelsResolved,
+      schedulerTemplate
     )
 
     await completeAnalysisRecord(db, analysisId, {
@@ -177,18 +194,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
+export type BidPricingSource =
+  | 'scheduler_template'
+  | 'crew_strategy_estimate'
+  | 'manual_override'
+
 export function computeBidPricing(
   properties: Awaited<ReturnType<typeof loadAccountProperties>>,
   inputs: BidInputs,
   crewStrategyOutputs: any,
   branchOptOutputs: any,
   workforceOutputs: any,
-  hotelsResolved?: ResolvedHotelsCost
+  hotelsResolved?: ResolvedHotelsCost,
+  schedulerTemplate?: {
+    id: string
+    name: string
+    crew_count: number
+    cycle_length_days: number
+    total_drive_miles_per_cycle: number | null
+    total_work_minutes_per_cycle: number | null
+    total_overnight_nights_per_cycle: number | null
+  } | null
 ) {
   let resolvedLabor = inputs.total_annual_labor_cost
   let resolvedVehicleFuel = inputs.total_annual_vehicle_cost
   let resolvedCrewCount = inputs.crew_count
   let recommendedOption: string | null = null
+  // Phase 3.8 — track where each number actually came from. Manual
+  // overrides win, then scheduler template, then crew_strategy estimate.
+  const manualOverride =
+    inputs.crew_count != null ||
+    inputs.total_annual_labor_cost != null ||
+    inputs.total_annual_vehicle_cost != null
+  let source: BidPricingSource = manualOverride
+    ? 'manual_override'
+    : schedulerTemplate
+      ? 'scheduler_template'
+      : 'crew_strategy_estimate'
+
+  // Scheduler template wins when present — it's the actual operational plan.
+  if (schedulerTemplate && !manualOverride) {
+    if (resolvedCrewCount == null) resolvedCrewCount = schedulerTemplate.crew_count
+  }
 
   if (crewStrategyOutputs) {
     recommendedOption = crewStrategyOutputs.recommended_option
@@ -274,7 +321,13 @@ export function computeBidPricing(
   summaryParts.push(
     `Monthly invoice estimate: $${Math.round(monthly_invoice_estimate).toLocaleString()}.`
   )
-  if (recommendedOption) {
+  if (source === 'scheduler_template' && schedulerTemplate) {
+    summaryParts.push(
+      `Crew count from active scheduler template "${schedulerTemplate.name}" (${resolvedCrewCount} crews).`
+    )
+  } else if (source === 'manual_override') {
+    summaryParts.push('Crew count + costs from manual override.')
+  } else if (recommendedOption) {
     summaryParts.push(`Labor pulled from Crew Strategy Option ${recommendedOption}.`)
   }
 
@@ -287,6 +340,10 @@ export function computeBidPricing(
         crew_count: resolvedCrewCount,
         branch_count: resolvedBranchCount,
         fte_count: fteCount,
+        source,
+        scheduler_template: schedulerTemplate
+          ? { id: schedulerTemplate.id, name: schedulerTemplate.name }
+          : null,
       },
       cost_buildup: {
         direct_labor: Math.round(direct_labor),

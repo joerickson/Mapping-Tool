@@ -88,6 +88,26 @@ export const SERVICE_LOCATION_FIELDS: FieldSpec[] = [
     helper: 'Stales Crew Strategy + Bid Pricing.',
   },
   {
+    key: 'building_size_class_override',
+    label: 'Building size (override)',
+    kind: 'select',
+    options: [
+      { value: '', label: 'Auto (from hours/visit)' },
+      { value: 'small', label: 'Small (≤4 hr — pairs)' },
+      { value: 'standard', label: 'Standard (4–8 hr)' },
+      { value: 'large', label: 'Large (8–16 hr)' },
+      { value: 'multi_day', label: 'Multi-day (>16 hr)' },
+    ],
+    helper:
+      'Forces a size class regardless of hours/visit. Affects crew-day math + scheduler pairing.',
+  },
+  {
+    key: 'building_size_override_reason',
+    label: 'Override reason',
+    kind: 'text',
+    helper: 'Optional note explaining why this building was reclassified.',
+  },
+  {
     key: 'crew_size_override',
     label: 'Crew size (override)',
     kind: 'number',

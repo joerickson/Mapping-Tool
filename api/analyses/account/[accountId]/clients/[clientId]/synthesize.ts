@@ -151,6 +151,11 @@ Format full_report_markdown with these sections (in order):
 ## Risks & Considerations
 ## Sensitivity Notes
 
+Phase 3.8 — building-count crew math:
+- Crew Strategy now reports BOTH a conservative crew count (1 building = 1 crew-day, no pairing) AND an optimistic count (small adjacent properties paired in a single day). The conservative number is what to size the bid around; the optimistic is how low you could go if scheduling consistently shows the work fits.
+- If both numbers exist and DIFFER, surface the range under "Risks & Considerations": e.g. "Crew sizing analysis shows X-Y crews depending on geographic packing efficiency. We recommend bidding at X crews to ensure capacity, with the option to scale down to Y if scheduling consistently shows the work fits." (replace X with the conservative count and Y with the optimistic count). This is typically a 6-figure-per-year swing — call it out.
+- If a routing template exists for this client, the Bid Pricing module pulls crew_count from the actual scheduler plan ("source": "scheduler_template"). Mention this is the authoritative number; the Crew Strategy estimate is the pre-scheduler ceiling. If there is a meaningful delta between the two (>= 1 crew), note it: e.g. "Crew Strategy estimates 4 crews; the scheduler optimization confirms 3 crews are sufficient with current geographic packing."
+
 Output strictly as JSON with two string keys: dashboard_summary, full_report_markdown.
 Do NOT wrap the JSON in markdown code fences.`
 
