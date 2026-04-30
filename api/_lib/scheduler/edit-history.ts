@@ -182,6 +182,21 @@ export async function applyReverse(
     case 'mark_cancelled':
       await applyVisitStatus(db, reverse as unknown as VisitStatusPayload)
       break
+    case 'bulk_operation': {
+      // Reverse payload: { action, items: [...] }
+      const action = reverse.action as string
+      const items = (reverse.items as any[]) ?? []
+      for (const item of items) {
+        if (action === 'move') {
+          await applyVisitMove(db, item as VisitMovePayload)
+        } else if (action === 'lock' || action === 'unlock') {
+          await applyVisitLock(db, item as VisitLockPayload)
+        } else if (action === 'mark_complete') {
+          await applyVisitStatus(db, item as VisitStatusPayload)
+        }
+      }
+      break
+    }
     default:
       // Other edit types not yet supported in undo; surface to caller.
       throw new Error(`Undo not yet supported for edit_type: ${edit_type}`)

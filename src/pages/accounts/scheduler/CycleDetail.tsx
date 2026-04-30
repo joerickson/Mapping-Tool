@@ -43,6 +43,7 @@ interface Visit {
   status: string
   unplaced_reason: string | null
   is_locked: boolean
+  crew_day_route_id: string | null
   attached_addons: Array<{ offering_name: string; hours: number; cohort_year: number }>
   service_locations?: { display_name: string | null; property: { address_line1: string } | null } | null
 }
@@ -78,6 +79,7 @@ export default function CycleDetailPage() {
   const [view, setView] = useState<CycleViewKind>('gantt')
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [optimizationScore, setOptimizationScore] = useState<number | null>(null)
+  const [selectedVisitIds, setSelectedVisitIds] = useState<Set<string>>(new Set())
 
   const load = useCallback(async () => {
     if (!cycleId) return
@@ -151,6 +153,112 @@ export default function CycleDetailPage() {
       setSaveState('failed')
     }
   }
+
+  // Bulk action helper — POSTs /visits/bulk-action so the entire bulk
+  // shows up as one history entry (single Cmd+Z reverts the lot).
+  async function handleBulkAction(action: 'move' | 'lock' | 'unlock' | 'mark_complete', visitIds: string[], payload?: Record<string, unknown>) {
+    if (visitIds.length === 0) return
+    setSaveState('saving')
+    try {
+      const token = await getToken()
+      const res = await fetch('/api/scheduler/visits/bulk-action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ visit_ids: visitIds, action, payload }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error ?? `Bulk ${action} failed (${res.status})`)
+      }
+      await load()
+      setSaveState('saved')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      setSaveState('failed')
+    }
+  }
+
+  // Resolve visit IDs for a set of (crew_index, date) cells. Visits know
+  // their date directly and their crew via the linked crew_day_route.
+  function visitsForCells(cells: Array<{ crew_index: number; date: string }>): string[] {
+    const cellSet = new Set(cells.map((c) => `${c.crew_index}|${c.date}`))
+    const crewByRouteId = new Map<string, number>()
+    for (const cd of crewDays) crewByRouteId.set(cd.id, cd.crew_index)
+    const ids: string[] = []
+    for (const v of visits) {
+      if (!v.scheduled_date || !v.crew_day_route_id) continue
+      const ci = crewByRouteId.get(v.crew_day_route_id)
+      if (ci == null) continue
+      if (cellSet.has(`${ci}|${v.scheduled_date}`)) ids.push(v.id)
+    }
+    return ids
+  }
+
+  // Drag-drop drop handler. Opens a propagation prompt; on confirm,
+  // bulk-moves the source day's visits to the target date.
+  const [pendingDrop, setPendingDrop] = useState<{
+    sourceVisitIds: string[]
+    targetDate: string
+    description: string
+  } | null>(null)
+
+  function handleCellDrop(drop: { source: { crew_index: number; date: string }; target: { crew_index: number; date: string } }) {
+    const ids = visitsForCells([drop.source])
+    if (ids.length === 0) return
+    setPendingDrop({
+      sourceVisitIds: ids,
+      targetDate: drop.target.date,
+      description: `Move ${ids.length} visit${ids.length === 1 ? '' : 's'} from ${drop.source.date} to ${drop.target.date}`,
+    })
+  }
+
+  function exportVisitsCsv() {
+    const rows = [
+      ['Date', 'Time', 'Property', 'Hours', 'Status', 'Locked', 'Add-ons'],
+      ...visits.map((v) => [
+        v.scheduled_date ?? '',
+        v.arrival_time && v.departure_time ? `${v.arrival_time}–${v.departure_time}` : '',
+        v.service_locations?.display_name ?? v.service_locations?.property?.address_line1 ?? v.service_location_id,
+        v.hours_per_visit_total != null ? Number(v.hours_per_visit_total).toFixed(2) : '',
+        v.status,
+        v.is_locked ? 'yes' : 'no',
+        v.attached_addons.map((a) => `${a.offering_name} (${a.cohort_year})`).join('; '),
+      ]),
+    ]
+    const csv = rows
+      .map((r) => r.map((c) => {
+        const s = String(c ?? '')
+        // Quote any cell containing comma, quote, or newline.
+        if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`
+        return s
+      }).join(','))
+      .join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `cycle-${cycle?.cycle_number ?? 'export'}-visits.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  // Today-jump counter — bumped on T key. GanttView re-scrolls when it changes.
+  const [todayCounter, setTodayCounter] = useState(0)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tgt = e.target as HTMLElement
+      if (tgt?.tagName === 'INPUT' || tgt?.tagName === 'TEXTAREA' || tgt?.isContentEditable) return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.key === 't' || e.key === 'T') {
+        e.preventDefault()
+        setTodayCounter((c) => c + 1)
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
 
   // Portfolio-level utilization stats, used by Gantt summary banner +
   // bottom status bar.
@@ -247,9 +355,17 @@ export default function CycleDetailPage() {
               Gantt — Crew × day utilization
             </h2>
             <p className="text-xs text-fg-muted">
-              Each cell is one crew on one workday. Click a cell to inspect the route. Drag-drop ships in 4f-2.
+              Drag a cell to move that day's visits to a different date or crew · Cmd+click to multi-select · L/U lock/unlock · T jumps to today · Cmd+Z to undo
             </p>
-            <GanttView days={utilDays} />
+            <GanttView
+              days={utilDays}
+              scrollToToday={todayCounter}
+              onCellDrop={handleCellDrop}
+              onBulkAction={(action, cells) => {
+                const ids = visitsForCells(cells)
+                handleBulkAction(action, ids)
+              }}
+            />
           </div>
         )}
 
@@ -328,8 +444,34 @@ export default function CycleDetailPage() {
 
         {/* Visits */}
         <Card padding="none">
-          <div className="border-b border-border px-4 py-3">
-            <CardTitle>Scheduled visits</CardTitle>
+          <div className="border-b border-border px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-3">
+              <CardTitle>Scheduled visits</CardTitle>
+              {selectedVisitIds.size > 0 && (
+                <span className="text-xs text-fg-muted">
+                  · <span className="font-tabular font-medium">{selectedVisitIds.size}</span> selected
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 text-xs">
+              {selectedVisitIds.size > 0 && (
+                <>
+                  <Button size="sm" variant="secondary" onClick={() => handleBulkAction('lock', Array.from(selectedVisitIds))}>
+                    Lock
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => handleBulkAction('unlock', Array.from(selectedVisitIds))}>
+                    Unlock
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => handleBulkAction('mark_complete', Array.from(selectedVisitIds))}>
+                    Mark complete
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setSelectedVisitIds(new Set())}>Clear</Button>
+                </>
+              )}
+              <Button size="sm" variant="ghost" onClick={exportVisitsCsv}>
+                Export CSV
+              </Button>
+            </div>
           </div>
           {visits.length === 0 ? (
             <p className="px-4 py-6 text-sm text-fg-muted">No visits scheduled.</p>
@@ -337,6 +479,20 @@ export default function CycleDetailPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-8">
+                    <input
+                      type="checkbox"
+                      checked={selectedVisitIds.size > 0 && selectedVisitIds.size === visits.length}
+                      ref={(el) => {
+                        if (el) el.indeterminate = selectedVisitIds.size > 0 && selectedVisitIds.size < visits.length
+                      }}
+                      onChange={(e) => {
+                        if (e.target.checked) setSelectedVisitIds(new Set(visits.map((v) => v.id)))
+                        else setSelectedVisitIds(new Set())
+                      }}
+                      className="rounded border-border accent-accent"
+                    />
+                  </TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Time</TableHead>
                   <TableHead>Property</TableHead>
@@ -349,6 +505,19 @@ export default function CycleDetailPage() {
               <TableBody>
                 {visits.map((v) => (
                   <TableRow key={v.id}>
+                    <TableCell>
+                      <input
+                        type="checkbox"
+                        checked={selectedVisitIds.has(v.id)}
+                        onChange={() => {
+                          const next = new Set(selectedVisitIds)
+                          if (next.has(v.id)) next.delete(v.id)
+                          else next.add(v.id)
+                          setSelectedVisitIds(next)
+                        }}
+                        className="rounded border-border accent-accent"
+                      />
+                    </TableCell>
                     <TableCell className="text-xs font-tabular">{v.scheduled_date ?? '—'}</TableCell>
                     <TableCell className="text-xs font-tabular">
                       {v.arrival_time ?? '—'}{v.departure_time ? `–${v.departure_time}` : ''}
@@ -431,6 +600,16 @@ export default function CycleDetailPage() {
         visit={moveTarget}
         onClose={() => setMoveTarget(null)}
         onMoved={() => { setMoveTarget(null); load() }}
+      />
+
+      <BulkMoveConfirmDialog
+        pending={pendingDrop}
+        onClose={() => setPendingDrop(null)}
+        onConfirm={async () => {
+          if (!pendingDrop) return
+          await handleBulkAction('move', pendingDrop.sourceVisitIds, { to_date: pendingDrop.targetDate })
+          setPendingDrop(null)
+        }}
       />
 
       <HistoryDrawer cycleId={cycleId!} onChange={load} />
@@ -581,3 +760,36 @@ function formatMin(min: number): string {
   const m = min % 60
   return m === 0 ? `${h}h` : `${h}h ${m}m`
 }
+
+function BulkMoveConfirmDialog({
+  pending,
+  onClose,
+  onConfirm,
+}: {
+  pending: { sourceVisitIds: string[]; targetDate: string; description: string } | null
+  onClose: () => void
+  onConfirm: () => void
+}) {
+  if (!pending) return null
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose() }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Confirm move</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-2 text-sm">
+          <p>{pending.description}.</p>
+          <p className="text-xs text-fg-muted">
+            This applies to the cycle only — template propagation arrives in 4f-3.
+            Cmd+Z to undo.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button onClick={onConfirm}>Move {pending.sourceVisitIds.length}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
