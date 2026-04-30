@@ -232,6 +232,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'PATCH') {
     const body = (req.body ?? {}) as Record<string, unknown>
 
+    const ALLOWED_TEXT = new Set<string>([
+      'crew_strategy_selected_option',
+    ])
     const ALLOWED_NUMERIC = new Set<string>([
       'crew_size',
       'hours_per_day',
@@ -287,6 +290,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       } else if (ALLOWED_JSONB.has(k)) {
         if (v == null || typeof v === 'object') patch[k] = v
+      } else if (ALLOWED_TEXT.has(k)) {
+        if (v == null || v === '') patch[k] = null
+        else if (typeof v === 'string') patch[k] = v
       }
     }
 
