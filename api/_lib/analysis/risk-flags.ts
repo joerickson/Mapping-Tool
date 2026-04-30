@@ -139,13 +139,43 @@ export function computeRiskFlags(
   return { flags, score }
 }
 
-// Pull the most recent branch_optimization output's branches at the recommended_k.
-// Returns null if no completed run exists.
+// Branch set used as input to risk-flag computation (isolation distance
+// from the actual deployed network).
+//
+// Resolution order:
+//   1. User's saved selection in account_operational_constraints.selected_branches.
+//      This is what the user actually plans to deploy and is what risk should
+//      be computed against — even if it differs from the optimization's
+//      recommendation (e.g. user picked K=3 over the recommended K=2).
+//   2. Fallback: the optimization's recommended_k branches from the most
+//      recent completed branch_optimization. Used before the user has
+//      confirmed a selection.
+//   3. null — no selection AND no completed optimization yet.
 export async function fetchLatestBranchSet(
   db: SupabaseClient,
   accountId: string,
   clientId: string
 ): Promise<Array<{ lat: number; lng: number; name: string }> | null> {
+  // 1. User selection wins.
+  const { data: aoc } = await db
+    .from('account_operational_constraints')
+    .select('selected_branches')
+    .eq('account_id', accountId)
+    .eq('client_id', clientId)
+    .maybeSingle()
+
+  const selected = (aoc as any)?.selected_branches as
+    | Array<{ name?: string; city_state?: string; lat: number; lng: number }>
+    | null
+  if (Array.isArray(selected) && selected.length > 0) {
+    return selected.map((b) => ({
+      name: b.city_state || b.name || '',
+      lat: b.lat,
+      lng: b.lng,
+    }))
+  }
+
+  // 2. Fall back to optimization recommendation.
   const { data } = await db
     .from('portfolio_analyses')
     .select('outputs')
