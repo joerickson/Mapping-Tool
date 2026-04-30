@@ -1,8 +1,21 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
+import {
+  Building2,
+  FileText,
+  LayoutDashboard,
+  Map as MapIcon,
+  Sparkles,
+} from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
-import Navbar from '../../components/ui/Navbar'
 import Button from '../../components/ui/Button'
+import AppShell from '../../components/layout/AppShell'
+import {
+  Sidebar,
+  SidebarItem,
+  SidebarSection,
+} from '../../components/layout/Sidebar'
+import { StatusDot, type StatusVariant } from '../../components/ui/StatusDot'
 import AnalysisCard, {
   type AnalysisStatus,
   STUCK_AFTER_MS,
@@ -697,40 +710,48 @@ export default function AccountAnalysisPage() {
     return null
   }
 
-  return (
-    <div className="flex flex-col h-screen bg-gray-50">
-      <Navbar />
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
+  const moduleStatuses: Array<{ key: ModuleKey; title: string; status: AnalysisStatus }> =
+    MODULES.map((m) => ({ key: m.key, title: m.title, status: statusFor(m.key) }))
 
-          {/* Header */}
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              {/* Breadcrumb */}
-              <div className="text-sm text-gray-400 mb-1 flex items-center gap-1.5 flex-wrap">
-                <Link to="/accounts" className="hover:text-gray-600">Accounts</Link>
-                <span>›</span>
-                <Link to={`/accounts/${accountId}`} className="hover:text-gray-600">
-                  {account?.display_name ?? account?.name ?? '…'}
-                </Link>
-                <span>›</span>
-                <span className="text-gray-700">{client?.display_name ?? client?.name ?? '…'}</span>
-                <span>›</span>
-                <span className="text-gray-700">Analysis</span>
-              </div>
-              <Link to={`/accounts/${accountId}`} className="text-sm text-blue-600 hover:underline">
-                ← Back to {account?.display_name ?? account?.name ?? 'account'}
-              </Link>
-              <h1 className="text-2xl font-bold text-gray-900 mt-1">
-                Smart Analysis
-                {account && (
-                  <span className="text-gray-500 font-normal">
-                    {' · '}{account.display_name ?? account.name}
-                    {client && <> · {client.display_name ?? client.name}</>}
-                  </span>
-                )}
-              </h1>
-            </div>
+  return (
+    <AppShell
+      breadcrumb={[
+        { label: 'Accounts', to: '/accounts' },
+        {
+          label: account?.display_name ?? account?.name ?? '…',
+          to: `/accounts/${accountId}`,
+        },
+        { label: client?.display_name ?? client?.name ?? '…' },
+        { label: 'Analysis' },
+      ]}
+      sidebar={
+        <AnalysisSidebar
+          accountId={accountId!}
+          clientId={clientId!}
+          moduleStatuses={moduleStatuses}
+        />
+      }
+    >
+      <div className="mx-auto max-w-6xl px-6 py-8 space-y-6">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <Link
+              to={`/accounts/${accountId}`}
+              className="text-sm text-accent hover:underline"
+            >
+              ← Back to {account?.display_name ?? account?.name ?? 'account'}
+            </Link>
+            <h1 className="text-2xl font-semibold tracking-tight text-fg">
+              Smart Analysis
+              {account && (
+                <span className="text-fg-muted font-normal">
+                  {' · '}{account.display_name ?? account.name}
+                  {client && <> · {client.display_name ?? client.name}</>}
+                </span>
+              )}
+            </h1>
+          </div>
             <Button onClick={runAll} disabled={Object.values(running).some(Boolean)}>
               Run All Analyses
             </Button>
@@ -927,8 +948,9 @@ export default function AccountAnalysisPage() {
                 margin: baselineMargin,
               })
               return (
+                // id anchor lets the AnalysisSidebar deep-link with #module-…
+                <div key={m.key} id={`module-${m.key}`} className="scroll-mt-16">
                 <AnalysisCard
-                  key={m.key}
                   title={m.title}
                   description={description}
                   status={status}
@@ -954,6 +976,7 @@ export default function AccountAnalysisPage() {
                 >
                   {renderModuleBody(m.key)}
                 </AnalysisCard>
+                </div>
               )
             })}
           </div>
@@ -974,10 +997,86 @@ export default function AccountAnalysisPage() {
             />
           )}
 
-        </div>
       </div>
-    </div>
+    </AppShell>
   )
+}
+
+// Sidebar shown on the Analysis Dashboard. Modules section uses anchor
+// links (#module-…) so clicking scrolls to the matching card on the page.
+// Anchors live on a wrapper div added inside the MODULES.map render.
+function AnalysisSidebar({
+  accountId,
+  clientId,
+  moduleStatuses,
+}: {
+  accountId: string
+  clientId: string
+  moduleStatuses: Array<{ key: ModuleKey; title: string; status: AnalysisStatus }>
+}) {
+  return (
+    <Sidebar>
+      <SidebarSection title="Analysis">
+        <SidebarItem
+          icon={LayoutDashboard}
+          to={`/accounts/${accountId}/clients/${clientId}/analysis`}
+          active
+        >
+          Dashboard
+        </SidebarItem>
+        <SidebarItem icon={MapIcon} disabled>
+          Map
+        </SidebarItem>
+        <SidebarItem icon={Building2} disabled>
+          Properties
+        </SidebarItem>
+        <SidebarItem icon={Sparkles} disabled>
+          Bid Pricing
+        </SidebarItem>
+      </SidebarSection>
+
+      <SidebarSection title="Modules">
+        {moduleStatuses.map((m) => (
+          <SidebarItem
+            key={m.key}
+            icon={FileText}
+            // Hash-only links scroll to the on-page anchor without unmounting.
+            to={`#module-${m.key}`}
+            trailing={
+              <StatusDot
+                variant={moduleSidebarStatus(m.status)}
+                label={false}
+                size="sm"
+              />
+            }
+          >
+            {m.title}
+          </SidebarItem>
+        ))}
+      </SidebarSection>
+
+      <SidebarSection title="Saved Scenarios">
+        <li className="px-2 py-1 text-xs text-fg-subtle">
+          Coming in Phase D
+        </li>
+      </SidebarSection>
+    </Sidebar>
+  )
+}
+
+function moduleSidebarStatus(s: AnalysisStatus): StatusVariant {
+  switch (s) {
+    case 'completed':
+      return 'fresh'
+    case 'running':
+      return 'running'
+    case 'failed':
+      return 'failed'
+    case 'stuck':
+      return 'stale'
+    default:
+      return 'never'
+  }
 }
 
 // Phase 3.5 — per-module "Using: …" line + which Cost Assumptions group to

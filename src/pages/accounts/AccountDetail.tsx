@@ -1,8 +1,15 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Building2, Home, Settings, Users } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
-import Navbar from '../../components/ui/Navbar'
 import Button from '../../components/ui/Button'
+import { Badge } from '../../components/ui/Badge'
+import AppShell from '../../components/layout/AppShell'
+import {
+  Sidebar,
+  SidebarItem,
+  SidebarSection,
+} from '../../components/layout/Sidebar'
 import type { Account, Client } from '../../types'
 
 // Phase 3.6 — Account Overview shape returned by /api/accounts/[id]/overview
@@ -130,49 +137,70 @@ export default function AccountDetailPage() {
   }
 
   if (loading) return (
-    <div className="flex flex-col h-full bg-gray-50"><Navbar />
-      <div className="flex-1 flex items-center justify-center text-gray-400">Loading…</div>
-    </div>
+    <AppShell breadcrumb={[{ label: 'Accounts', to: '/accounts' }, { label: 'Loading…' }]}>
+      <div className="flex h-full items-center justify-center text-fg-subtle">
+        Loading…
+      </div>
+    </AppShell>
   )
 
   if (!account) return (
-    <div className="flex flex-col h-full bg-gray-50"><Navbar />
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-center space-y-3">
-          <p className="text-gray-500">Account not found.</p>
-          <Link to="/accounts" className="text-blue-600 text-sm hover:underline">← Back to accounts</Link>
+    <AppShell breadcrumb={[{ label: 'Accounts', to: '/accounts' }, { label: 'Not found' }]}>
+      <div className="flex h-full items-center justify-center">
+        <div className="space-y-3 text-center">
+          <p className="text-fg-muted">Account not found.</p>
+          <Link to="/accounts" className="text-sm text-accent hover:underline">
+            ← Back to accounts
+          </Link>
         </div>
       </div>
-    </div>
+    </AppShell>
   )
 
   const isPM = account.account_type === 'property_manager'
   const selfClient = !isPM ? clients[0] : null
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
-      <Navbar />
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
-          {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>}
-
-          {/* Header */}
-          <div className="flex items-start justify-between">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <Link to="/accounts" className="text-gray-400 hover:text-gray-600 text-sm">Accounts</Link>
-                <span className="text-gray-300">›</span>
-                <h1 className="text-2xl font-bold text-gray-900">{account.display_name ?? account.name}</h1>
-                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${TYPE_BADGE[account.account_type]}`}>
-                  {TYPE_LABEL[account.account_type]}
-                </span>
-              </div>
-              {account.display_name && <p className="text-sm text-gray-400">{account.name}</p>}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>Edit</Button>
-            </div>
+    <AppShell
+      breadcrumb={[
+        { label: 'Accounts', to: '/accounts' },
+        { label: account.display_name ?? account.name },
+      ]}
+      sidebar={
+        <AccountOverviewSidebar
+          accountId={id!}
+          accountName={account.display_name ?? account.name}
+          clients={overview?.clients ?? clients.map(toOverviewLite)}
+          isPropertyManager={isPM}
+        />
+      }
+    >
+      <div className="mx-auto max-w-5xl px-6 py-8 space-y-6">
+        {error && (
+          <div className="p-3 bg-danger-subtle border border-danger/20 rounded-md text-danger text-sm">
+            {error}
           </div>
+        )}
+
+        {/* Header */}
+        <div className="flex items-start justify-between">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-semibold tracking-tight text-fg">
+                {account.display_name ?? account.name}
+              </h1>
+              <Badge variant={isPM ? 'accent' : 'default'}>
+                {TYPE_LABEL[account.account_type]}
+              </Badge>
+            </div>
+            {account.display_name && (
+              <p className="text-sm text-fg-subtle">{account.name}</p>
+            )}
+          </div>
+          <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
+            Edit
+          </Button>
+        </div>
 
           {/* Phase 3.6 — banner when bounced from old /analysis URL */}
           {fromLegacyAnalysis && (
@@ -307,7 +335,6 @@ export default function AccountDetailPage() {
               </table>
             </div>
           )}
-        </div>
       </div>
 
       {/* Edit modal */}
@@ -359,7 +386,7 @@ export default function AccountDetailPage() {
           </div>
         </div>
       )}
-    </div>
+    </AppShell>
   )
 }
 
@@ -370,6 +397,82 @@ function StatCard({ label, value }: { label: string; value: string }) {
       <p className="text-sm text-gray-500 mt-0.5">{label}</p>
     </div>
   )
+}
+
+// Sidebar shown next to the Account Overview page. Lives in this file
+// because the data shape is page-specific; if it grows, factor out.
+function AccountOverviewSidebar({
+  accountId,
+  accountName,
+  clients,
+  isPropertyManager,
+}: {
+  accountId: string
+  accountName: string
+  clients: Pick<OverviewClient, 'id' | 'name' | 'display_name' | 'property_count'>[]
+  isPropertyManager: boolean
+}) {
+  return (
+    <Sidebar>
+      <SidebarSection title="Account">
+        <SidebarItem icon={Home} to={`/accounts/${accountId}`} active>
+          Overview
+        </SidebarItem>
+        <SidebarItem icon={Settings} disabled>
+          Settings
+        </SidebarItem>
+        <SidebarItem icon={Users} disabled>
+          Team
+        </SidebarItem>
+      </SidebarSection>
+
+      <SidebarSection title={`Clients · ${accountName}`}>
+        {clients.length === 0 ? (
+          <li className="px-2 py-1 text-xs text-fg-subtle">
+            No clients on this account.
+          </li>
+        ) : (
+          clients.map((c) => (
+            <SidebarItem
+              key={c.id}
+              icon={Building2}
+              to={`/accounts/${accountId}/clients/${c.id}/analysis`}
+              trailing={
+                c.property_count > 0 ? (
+                  <Badge variant="default">{c.property_count}</Badge>
+                ) : null
+              }
+            >
+              {c.display_name ?? c.name}
+            </SidebarItem>
+          ))
+        )}
+        {isPropertyManager && (
+          <SidebarItem
+            icon={Users}
+            to={`/accounts/${accountId}/clients/new`}
+            className="text-fg-subtle"
+          >
+            + Add client
+          </SidebarItem>
+        )}
+      </SidebarSection>
+    </Sidebar>
+  )
+}
+
+// Adapter so the sidebar can render before /overview returns by falling
+// back to the bare clients list. property_count = 0 hides the badge.
+function toOverviewLite(c: Client): Pick<
+  OverviewClient,
+  'id' | 'name' | 'display_name' | 'property_count'
+> {
+  return {
+    id: c.id,
+    name: c.name,
+    display_name: c.display_name ?? null,
+    property_count: 0,
+  }
 }
 
 function ClientSetupBanner({ client }: { client: Client }) {
