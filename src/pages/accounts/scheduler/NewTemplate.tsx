@@ -44,21 +44,29 @@ export default function NewTemplatePage() {
   const [filter, setFilter] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [crewCount, setCrewCount] = useState(2)
+  const [crewCountUserEdited, setCrewCountUserEdited] = useState(false)
+  const [recommendedCrew, setRecommendedCrew] = useState<{
+    count: number
+    option: string
+  } | null>(null)
   const [cycleStartYear, setCycleStartYear] = useState(new Date().getUTCFullYear())
   const [planningMode, setPlanningMode] = useState<'auto' | 'hybrid' | 'manual'>('auto')
   const [objective, setObjective] = useState<'minimize_drive' | 'maximize_utilization' | 'balanced'>('balanced')
   const [customCycleDays, setCustomCycleDays] = useState<number | ''>('')
 
   const load = useCallback(async () => {
-    if (!clientId) return
+    if (!clientId || !accountId) return
     setLoading(true)
     try {
       const token = await getToken()
-      const [slRes, offRes] = await Promise.all([
+      const [slRes, offRes, latestRes] = await Promise.all([
         fetch(`/api/v1/service-locations?client_id=${clientId}`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
         fetch(`/api/v1/service-offerings?client_id=${clientId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`/api/analyses/account/${accountId}/clients/${clientId}/latest`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
       ])
@@ -67,12 +75,28 @@ export default function NewTemplatePage() {
         const o = await offRes.json()
         setOfferings(Array.isArray(o) ? o : o.items ?? [])
       }
+      if (latestRes.ok) {
+        const rows = await latestRes.json()
+        const cs = (rows as any[]).find((r) => r.module_key === 'crew_strategy' && r.status === 'completed')
+        if (cs?.outputs) {
+          const opt = cs.outputs.recommended_option as string | undefined
+          const count = opt
+            ? (cs.outputs.options?.[opt]?.crew_count as number | undefined)
+            : undefined
+          if (count != null) {
+            setRecommendedCrew({ count, option: opt ?? '?' })
+            // Default to recommendation only if user hasn't manually edited.
+            if (!crewCountUserEdited) setCrewCount(count)
+          }
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
     }
-  }, [clientId, getToken])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountId, clientId, getToken])
 
   useEffect(() => { load() }, [load])
 
@@ -192,14 +216,38 @@ export default function NewTemplatePage() {
             <FormField label="Description (optional)">
               <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
             </FormField>
-            <FormField label="Crew count">
+            <FormField
+              label="Crew count"
+              helper={
+                recommendedCrew
+                  ? crewCount === recommendedCrew.count
+                    ? `Recommended from Crew Strategy (Option ${recommendedCrew.option}).`
+                    : `Crew Strategy recommends ${recommendedCrew.count} (Option ${recommendedCrew.option}).`
+                  : 'Run Crew Strategy in Smart Analysis to get a recommendation.'
+              }
+            >
               <Input
                 type="number"
                 min={1}
                 max={20}
                 value={crewCount}
-                onChange={(e) => setCrewCount(Math.max(1, Number(e.target.value) || 1))}
+                onChange={(e) => {
+                  setCrewCountUserEdited(true)
+                  setCrewCount(Math.max(1, Number(e.target.value) || 1))
+                }}
               />
+              {recommendedCrew && crewCount !== recommendedCrew.count && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCrewCountUserEdited(false)
+                    setCrewCount(recommendedCrew.count)
+                  }}
+                  className="text-xs text-accent hover:underline mt-1 self-start"
+                >
+                  Use recommended ({recommendedCrew.count})
+                </button>
+              )}
             </FormField>
             <FormField label="Cycle start year">
               <Input

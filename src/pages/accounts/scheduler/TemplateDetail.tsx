@@ -72,6 +72,10 @@ export default function TemplateDetailPage() {
   const [regenObjective, setRegenObjective] = useState<'minimize_drive' | 'maximize_utilization' | 'balanced'>('balanced')
   const [regenerating, setRegenerating] = useState(false)
   const [archiving, setArchiving] = useState(false)
+  const [recommendedCrew, setRecommendedCrew] = useState<{
+    count: number
+    option: string
+  } | null>(null)
 
   const load = useCallback(async () => {
     if (!templateId) return
@@ -93,12 +97,32 @@ export default function TemplateDetailPage() {
         const cy = await cyRes.json()
         setCycles(cy.cycles ?? [])
       }
+      // Pull crew_strategy recommendation for the regenerate dialog hint.
+      if (accountId && clientId) {
+        const latestRes = await fetch(
+          `/api/analyses/account/${accountId}/clients/${clientId}/latest`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        )
+        if (latestRes.ok) {
+          const rows = await latestRes.json()
+          const cs = (rows as any[]).find(
+            (r) => r.module_key === 'crew_strategy' && r.status === 'completed'
+          )
+          if (cs?.outputs) {
+            const opt = cs.outputs.recommended_option as string | undefined
+            const count = opt
+              ? (cs.outputs.options?.[opt]?.crew_count as number | undefined)
+              : undefined
+            if (count != null) setRecommendedCrew({ count, option: opt ?? '?' })
+          }
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
     }
-  }, [templateId, getToken])
+  }, [accountId, clientId, templateId, getToken])
 
   useEffect(() => { load() }, [load])
 
@@ -343,14 +367,14 @@ export default function TemplateDetailPage() {
                 <TableBody>
                   {(template.trips ?? []).map((t: any) => (
                     <TableRow key={t.trip_id}>
-                      <TableCell className="text-xs font-mono">{t.trip_id}</TableCell>
+                      <TableCell className="text-sm">{t.trip_label ?? t.trip_id}</TableCell>
                       <TableCell numeric>{t.crew_index + 1}</TableCell>
                       <TableCell>
                         <Badge variant={t.trip_type === 'overnight' ? 'warning' : 'outline'}>
                           {t.trip_type}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-xs">{t.cluster_id}</TableCell>
+                      <TableCell className="text-xs text-fg-muted">{t.cluster_label ?? t.cluster_id}</TableCell>
                       <TableCell numeric>{t.relative_start_day}</TableCell>
                       <TableCell numeric>{t.duration_days}d</TableCell>
                       <TableCell numeric>
@@ -404,7 +428,7 @@ export default function TemplateDetailPage() {
                 <TableBody>
                   {(template.geographic_clusters ?? []).map((c: any) => (
                     <TableRow key={c.cluster_id}>
-                      <TableCell className="text-xs font-mono">{c.cluster_id}</TableCell>
+                      <TableCell className="text-sm">{c.cluster_label ?? c.cluster_id}</TableCell>
                       <TableCell>
                         <Badge variant={c.cluster_type === 'remote' ? 'warning' : 'outline'}>
                           {c.cluster_type}
@@ -482,7 +506,16 @@ export default function TemplateDetailPage() {
               Re-runs the optimizer against the same property set with adjusted settings.
               Cycles already generated stay intact; future cycles will use the new structure.
             </p>
-            <FormField label="Crew count">
+            <FormField
+              label="Crew count"
+              helper={
+                recommendedCrew
+                  ? regenCrewCount === recommendedCrew.count
+                    ? `Recommended from Crew Strategy (Option ${recommendedCrew.option}).`
+                    : `Crew Strategy recommends ${recommendedCrew.count} (Option ${recommendedCrew.option}).`
+                  : undefined
+              }
+            >
               <Input
                 type="number"
                 min={1}
@@ -490,6 +523,15 @@ export default function TemplateDetailPage() {
                 value={regenCrewCount}
                 onChange={(e) => setRegenCrewCount(Math.max(1, Number(e.target.value) || 1))}
               />
+              {recommendedCrew && regenCrewCount !== recommendedCrew.count && (
+                <button
+                  type="button"
+                  onClick={() => setRegenCrewCount(recommendedCrew.count)}
+                  className="text-xs text-accent hover:underline mt-1 self-start"
+                >
+                  Use recommended ({recommendedCrew.count})
+                </button>
+              )}
             </FormField>
             <FormField
               label="Custom cycle length (days, optional)"
