@@ -737,7 +737,15 @@ export default function AccountAnalysisPage() {
       )
     if (key === 'workforce_sizing') return <WorkforceSizingChart data={row.outputs} />
     if (key === 'seasonality_capacity') return <SeasonalityChart data={row.outputs} />
-    if (key === 'bid_pricing_structure') return <BidPricingChart data={row.outputs} />
+    if (key === 'bid_pricing_structure')
+      return (
+        <BidPricingChart
+          data={row.outputs}
+          accountId={accountId!}
+          clientId={clientId!}
+          onHotelsOverridden={() => runModule('bid_pricing_structure', 'bid-pricing-structure')}
+        />
+      )
     return null
   }
 

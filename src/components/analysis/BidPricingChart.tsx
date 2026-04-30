@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   BarChart,
   Bar,
@@ -9,12 +10,14 @@ import {
   CartesianGrid,
 } from 'recharts'
 import { Card } from '../ui/Card'
+import Button from '../ui/Button'
 import {
   CHART_CATEGORICAL,
   tickStyle,
   tooltipStyle,
   useChartTheme,
 } from '../../hooks/useChartTheme'
+import OvernightBreakdownDrawer from './OvernightBreakdownDrawer'
 
 interface BidOutputs {
   property_count: number
@@ -85,7 +88,22 @@ const ROW_LABELS: Record<string, string> = {
   margin: 'Margin',
 }
 
-export default function BidPricingChart({ data }: { data: BidOutputs }) {
+interface BidPricingChartProps {
+  data: BidOutputs
+  // When provided, the hotels row exposes a "View calculation" button
+  // that opens the OvernightBreakdownDrawer with override controls.
+  accountId?: string
+  clientId?: string
+  onHotelsOverridden?: () => void
+}
+
+export default function BidPricingChart({
+  data,
+  accountId,
+  clientId,
+  onHotelsOverridden,
+}: BidPricingChartProps) {
+  const [hotelsOpen, setHotelsOpen] = useState(false)
   const theme = useChartTheme()
   // Phase 3.7 — hotels is a structured object now; pull the dollar total
   // out of it (older bare-number outputs still work).
@@ -245,6 +263,16 @@ export default function BidPricingChart({ data }: { data: BidOutputs }) {
                     )
                   </span>
                 )}
+                {r.key === 'hotels' && accountId && clientId && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setHotelsOpen(true)}
+                    className="ml-2"
+                  >
+                    View calculation
+                  </Button>
+                )}
               </span>
               <span className="font-mono tabular-nums text-fg">
                 ${r.value.toLocaleString()}
@@ -284,6 +312,16 @@ export default function BidPricingChart({ data }: { data: BidOutputs }) {
           · <span className="font-tabular not-italic">{data.sourced_from.crew_count}</span> crews
           · <span className="font-tabular not-italic">{data.sourced_from.branch_count}</span> branches
         </p>
+      )}
+
+      {accountId && clientId && (
+        <OvernightBreakdownDrawer
+          open={hotelsOpen}
+          onClose={() => setHotelsOpen(false)}
+          accountId={accountId}
+          clientId={clientId}
+          onOverrideSaved={onHotelsOverridden}
+        />
       )}
     </div>
   )
