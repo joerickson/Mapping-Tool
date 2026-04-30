@@ -173,9 +173,15 @@ export default function CalendarView({ days, onDayClick, onCellDrop }: Props) {
               {sortedCellDays.map((d) => {
                 const isIdle = d.state.kind === 'idle' || d.state.kind === 'between_trips'
                 const draggable = !isIdle
+                // Phase 4f-4 — show the property the crew is at, not
+                // the cluster name. Falls back to trip_label for older
+                // cycles whose route jsonb didn't have addresses.
                 const label = isIdle
                   ? d.state.kind === 'idle' ? 'idle' : 'between'
-                  : d.trip_label ?? '—'
+                  : d.property_summary ?? d.trip_label ?? '—'
+                const fullTooltip = !isIdle && d.property_addresses && d.property_addresses.length > 0
+                  ? `${d.crew_label}: ${d.work_hours_scheduled.toFixed(1)}h · ${d.state.kind}\n${d.property_addresses.join('\n')}${d.trip_label ? `\nCluster: ${d.trip_label}` : ''}${draggable ? '\n(drag to move)' : ''}`
+                  : `${d.crew_label}: ${d.work_hours_scheduled.toFixed(1)}h · ${d.state.kind}${draggable ? ' (drag to move)' : ''}`
                 return (
                   <div
                     key={d.crew_index}
@@ -199,7 +205,7 @@ export default function CalendarView({ days, onDayClick, onCellDrop }: Props) {
                       d.state.kind === 'partial' && 'opacity-80',
                       draggable && 'cursor-grab'
                     )}
-                    title={`${d.crew_label}: ${d.work_hours_scheduled.toFixed(1)}h · ${d.state.kind}${draggable ? ' (drag to move)' : ''}`}
+                    title={fullTooltip}
                   >
                     <span
                       className={cn(

@@ -41,6 +41,12 @@ export interface CrewUtilizationDay {
   trip_day_number: number | null
   trip_total_days: number | null
   day_type: string | null
+  // Per-day property labels — what the crew is actually visiting on
+  // this day. Phase 4f-4: the cluster (trip_label) alone wasn't useful
+  // because users wanted to see which property the crew is on.
+  property_count: number
+  property_summary: string | null
+  property_addresses: string[]
 }
 
 interface ComputeOptions {
@@ -78,7 +84,7 @@ export async function computeCrewUtilization(
   const { data: routes } = await db
     .from('crew_day_routes')
     .select(
-      'crew_index, crew_label, scheduled_date, day_type, total_work_minutes, trip_id, trip_label, trip_day_number, trip_total_days'
+      'crew_index, crew_label, scheduled_date, day_type, total_work_minutes, trip_id, trip_label, trip_day_number, trip_total_days, route'
     )
     .eq('cycle_instance_id', cycleInstanceId)
 
@@ -134,6 +140,11 @@ export async function computeCrewUtilization(
         } else {
           kind = 'idle'
         }
+        const stops = Array.isArray(route.route) ? (route.route as any[]) : []
+        const addresses = stops
+          .map((s) => (typeof s?.address === 'string' ? s.address.trim() : null))
+          .filter((s): s is string => !!s)
+        const propertySummary = summarizeAddresses(addresses)
         initial.push({
           crew_index: crewIdx,
           crew_label: route.crew_label ?? `Crew ${crewIdx + 1}`,
@@ -153,6 +164,9 @@ export async function computeCrewUtilization(
           trip_day_number: route.trip_day_number ?? null,
           trip_total_days: route.trip_total_days ?? null,
           day_type: route.day_type ?? null,
+          property_count: stops.length,
+          property_summary: propertySummary,
+          property_addresses: addresses,
         })
       } else {
         initial.push({
@@ -169,6 +183,9 @@ export async function computeCrewUtilization(
           trip_day_number: null,
           trip_total_days: null,
           day_type: null,
+          property_count: 0,
+          property_summary: null,
+          property_addresses: [],
         })
       }
     }
@@ -217,4 +234,18 @@ export async function computeCrewUtilization(
   }
 
   return initial
+}
+
+// Build a compact label that fits in a Gantt cell or Calendar tile.
+// Strips ", City, State ZIP" so we get the street portion. If multiple
+// stops, show the first + "+N more".
+function summarizeAddresses(addresses: string[]): string | null {
+  if (addresses.length === 0) return null
+  const street = (addr: string) => {
+    const comma = addr.indexOf(',')
+    return (comma > 0 ? addr.slice(0, comma) : addr).trim()
+  }
+  if (addresses.length === 1) return street(addresses[0])
+  const first = street(addresses[0])
+  return `${first} +${addresses.length - 1} more`
 }

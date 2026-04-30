@@ -20,6 +20,11 @@ export interface UtilDay {
   utilization_pct: number
   trip_id: string | null
   trip_label: string | null
+  // Phase 4f-4 — what the crew is actually visiting that day. Filled
+  // from crew_day_routes.route by the crew-utilization endpoint.
+  property_count?: number
+  property_summary?: string | null
+  property_addresses?: string[]
 }
 
 export interface DropTarget {
@@ -220,19 +225,42 @@ export default function GanttView({
               // Build a "trip ribbon" — consecutive same-trip days collapse
               // into one cell so the user can read the location without
               // hovering. Cells with no trip get their own narrow td.
-              const ribbon: Array<{ colSpan: number; label: string | null; trip_id: string | null }> = []
+              // Per-day property label. Merge consecutive days with the
+              // exact same property_summary so multi-day overnight stays
+              // collapse into one cell. trip_label is kept only as the
+              // hover tooltip — the user wanted to see WHICH PROPERTY
+              // the crew is on each day, not the cluster name.
+              const ribbon: Array<{
+                colSpan: number
+                label: string | null
+                tooltip: string | null
+                trip_id: string | null
+              }> = []
               let k = 0
               while (k < allDates.length) {
                 const c = crew.cells.get(allDates[k])
-                const tripId = c?.trip_id ?? null
-                if (!tripId) {
-                  ribbon.push({ colSpan: 1, label: null, trip_id: null })
+                const summary = c?.property_summary ?? null
+                if (!summary) {
+                  ribbon.push({ colSpan: 1, label: null, tooltip: null, trip_id: null })
                   k++
                   continue
                 }
                 let j = k
-                while (j < allDates.length && (crew.cells.get(allDates[j])?.trip_id ?? null) === tripId) j++
-                ribbon.push({ colSpan: j - k, label: c?.trip_label ?? tripId, trip_id: tripId })
+                while (
+                  j < allDates.length &&
+                  (crew.cells.get(allDates[j])?.property_summary ?? null) === summary
+                ) j++
+                const tooltipParts: string[] = []
+                if (c?.property_addresses && c.property_addresses.length > 0) {
+                  tooltipParts.push(c.property_addresses.join('\n'))
+                }
+                if (c?.trip_label) tooltipParts.push(`Cluster: ${c.trip_label}`)
+                ribbon.push({
+                  colSpan: j - k,
+                  label: summary,
+                  tooltip: tooltipParts.join('\n\n') || null,
+                  trip_id: c?.trip_id ?? null,
+                })
                 k = j
               }
               return (
@@ -266,7 +294,7 @@ export default function GanttView({
                         'border-b border-border text-[11px] text-fg-muted px-1 py-0.5 truncate',
                         seg.label && 'bg-surface-subtle font-medium text-fg'
                       )}
-                      title={seg.label ?? ''}
+                      title={seg.tooltip ?? seg.label ?? ''}
                       style={{ height: 18, minWidth: 28 }}
                     >
                       {seg.label ?? ''}
