@@ -359,8 +359,8 @@ export default function TemplateDetailPage() {
                     <TableHead>Crew</TableHead>
                     <TableHead>Type</TableHead>
                     <TableHead>Cluster</TableHead>
-                    <TableHead>Day in cycle</TableHead>
-                    <TableHead>Duration</TableHead>
+                    <TableHead>Starts on day</TableHead>
+                    <TableHead>Trip length</TableHead>
                     <TableHead>Stops</TableHead>
                   </TableRow>
                 </TableHeader>

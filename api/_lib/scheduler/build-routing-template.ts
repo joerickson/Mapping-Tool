@@ -355,34 +355,54 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
             // Heuristic: if remaining work ≤ one day's worth, this is the last.
             remaining.reduce((s, v) => s + v.hours_per_visit, 0) <=
               input.config.max_work_hours_per_crew_day
-          const dayResult = routeDay({
+          const candidatePool = remaining.map((v) => ({
+            id: v.service_location_id,
+            property_id: v.property_id,
+            address: v.address,
+            lat: v.lat,
+            lng: v.lng,
+            hours_per_visit: v.hours_per_visit,
+            visits_per_year: 1,
+            constraints: v.constraints,
+          }))
+          const baseRoutingConfig = {
+            crew_size: input.config.crew_size,
+            hours_per_day: input.config.hours_per_day,
+            work_start_time: input.config.work_start_time,
+            work_end_time: input.config.work_end_time,
+            buffer_minutes_per_stop: input.config.buffer_minutes_per_stop,
+            drive_speed_mph: input.config.drive_speed_mph,
+            return_to_branch: isLikelyLastDay,
+          }
+          const baseRoutingPrefs = {
+            objective: 'minimize_drive' as const,
+            soft_constraint_weight: input.preferences.soft_constraint_weight,
+            allow_hard_constraint_violation: input.preferences.allow_hard_constraint_violation,
+          }
+          let dayResult = routeDay({
             branch: { name: dayStartLoc.name, lat: dayStartLoc.lat, lng: dayStartLoc.lng },
-            scheduled_date: '2026-01-01', // placeholder — only constraint date matters; cycle gen rewrites
-            candidate_properties: remaining.map((v) => ({
-              id: v.service_location_id,
-              property_id: v.property_id,
-              address: v.address,
-              lat: v.lat,
-              lng: v.lng,
-              hours_per_visit: v.hours_per_visit,
-              visits_per_year: 1,
-              constraints: v.constraints,
-            })),
-            config: {
-              crew_size: input.config.crew_size,
-              hours_per_day: input.config.hours_per_day,
-              work_start_time: input.config.work_start_time,
-              work_end_time: input.config.work_end_time,
-              buffer_minutes_per_stop: input.config.buffer_minutes_per_stop,
-              drive_speed_mph: input.config.drive_speed_mph,
-              return_to_branch: isLikelyLastDay,
-            },
-            preferences: {
-              objective: 'minimize_drive',
-              soft_constraint_weight: input.preferences.soft_constraint_weight,
-              allow_hard_constraint_violation: input.preferences.allow_hard_constraint_violation,
-            },
+            scheduled_date: '2026-01-01', // placeholder — cycle gen rewrites
+            candidate_properties: candidatePool,
+            config: baseRoutingConfig,
+            preferences: baseRoutingPrefs,
           })
+
+          // Force-place fallback: if no property fit a regular work day,
+          // retry with a wide internal day window so oversized single-
+          // visit properties (e.g. hours_per_visit > 10) can land
+          // somewhere. The configured 08:00–18:00 still defines the
+          // *target* day; this fat day is template-internal accounting.
+          // Real-world crews would split such visits across days, which
+          // the cycle-instance edit flow handles.
+          if (dayResult.route.length === 0 && remaining.length > 0) {
+            dayResult = routeDay({
+              branch: { name: dayStartLoc.name, lat: dayStartLoc.lat, lng: dayStartLoc.lng },
+              scheduled_date: '2026-01-01',
+              candidate_properties: candidatePool,
+              config: { ...baseRoutingConfig, work_end_time: '23:59' },
+              preferences: baseRoutingPrefs,
+            })
+          }
 
           if (dayResult.route.length === 0) break
 
@@ -433,13 +453,22 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
           dayNumber++
         }
 
-        // Anything still in `remaining` couldn't fit
+        // Anything still in `remaining` couldn't fit. Distinguish the
+        // failure mode in the detail so the user can act:
+        //   - hit cycle end (used == maxDaysForTrip): trip needs longer
+        //     cycle, more crews, or the cluster needs to be split
+        //   - hit no-fit (used < maxDaysForTrip): some pathological
+        //     constraint or geometry left routeDay producing 0 stops
+        const usedDays = days.length
+        const hitCycleEnd = usedDays >= maxDaysForTrip
         for (const v of remaining) {
           unplaced.push({
             service_location_id: v.service_location_id,
             address: v.address,
             reason: 'time_overflow',
-            detail: `Couldn't fit before cycle end (cluster ${cluster.cluster_label}, est ${tripDurationEstimate} days, used ${days.length}/${maxDaysForTrip} available)`,
+            detail: hitCycleEnd
+              ? `Trip ran out of cycle days for cluster ${cluster.cluster_label} (used ${usedDays}/${maxDaysForTrip} days; consider adding crews or extending cycle)`
+              : `routeDay couldn't fit any remaining property in a day for cluster ${cluster.cluster_label} (gave up after ${usedDays} days; possible constraint or geometry issue)`,
           })
         }
 
