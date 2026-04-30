@@ -149,6 +149,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (body.labor_burden_breakdown && typeof body.labor_burden_breakdown === 'object') {
       upsert.labor_burden_breakdown = body.labor_burden_breakdown
     }
+    // Phase 3.7 — overnight cost knobs + flat override.
+    if (body.hotel_cost_config && typeof body.hotel_cost_config === 'object') {
+      upsert.hotel_cost_config = body.hotel_cost_config
+    }
+    if ('hotels_annual_override' in body) {
+      const raw = body.hotels_annual_override
+      if (raw === null || raw === '' || raw === undefined) {
+        upsert.hotels_annual_override = null
+      } else {
+        const n = typeof raw === 'string' ? parseFloat(raw) : raw
+        upsert.hotels_annual_override = Number.isFinite(n) ? n : null
+      }
+    }
     for (const k of numericFields) {
       const raw = body[k]
       if (raw === undefined || raw === null || raw === '') {

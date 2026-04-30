@@ -5,6 +5,24 @@
 // can just read `constraints.crew_size` and always get a number.
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+export interface HotelCostConfig {
+  cost_per_night: number
+  overnight_trigger_one_way_hours: number
+  max_work_hours_per_crew_day: number
+  buffer_hours_per_day: number
+  per_diem_per_night: number
+  include_per_diem: boolean
+}
+
+export const HOTEL_COST_CONFIG_DEFAULTS: HotelCostConfig = {
+  cost_per_night: 120,
+  overnight_trigger_one_way_hours: 3,
+  max_work_hours_per_crew_day: 8,
+  buffer_hours_per_day: 2,
+  per_diem_per_night: 50,
+  include_per_diem: true,
+}
+
 export interface ExistingBranch {
   name: string
   address?: string | null
@@ -56,7 +74,15 @@ export interface OperationalConstraints {
 
   // Operational costs
   branch_overhead_annual: number
+  // Legacy flat input — kept as a fallback for cases where the calculated
+  // overnight cost can't be computed (no selected branches yet) and the
+  // user hasn't set an override. Phase 3.7 introduced a calculated value.
   hotels_annual: number
+  // Phase 3.7 — knobs for the calculated overnight cost.
+  hotel_cost_config: HotelCostConfig
+  // Phase 3.7 — when set, modules use this flat value INSTEAD of the
+  // calculated number. Lets a user pin a contractual or matched figure.
+  hotels_annual_override: number | null
   vehicle_lease_annual_per_crew: number
   supplies_pct_of_labor: number
   insurance_annual: number
@@ -151,6 +177,34 @@ function pickNumeric(row: any, key: keyof SystemDefaults): number {
   return typeof v === 'string' ? parseFloat(v) : v
 }
 
+function mergeHotelConfig(saved: any): HotelCostConfig {
+  if (!saved || typeof saved !== 'object') return { ...HOTEL_COST_CONFIG_DEFAULTS }
+  return {
+    cost_per_night:
+      typeof saved.cost_per_night === 'number' ? saved.cost_per_night : HOTEL_COST_CONFIG_DEFAULTS.cost_per_night,
+    overnight_trigger_one_way_hours:
+      typeof saved.overnight_trigger_one_way_hours === 'number'
+        ? saved.overnight_trigger_one_way_hours
+        : HOTEL_COST_CONFIG_DEFAULTS.overnight_trigger_one_way_hours,
+    max_work_hours_per_crew_day:
+      typeof saved.max_work_hours_per_crew_day === 'number'
+        ? saved.max_work_hours_per_crew_day
+        : HOTEL_COST_CONFIG_DEFAULTS.max_work_hours_per_crew_day,
+    buffer_hours_per_day:
+      typeof saved.buffer_hours_per_day === 'number'
+        ? saved.buffer_hours_per_day
+        : HOTEL_COST_CONFIG_DEFAULTS.buffer_hours_per_day,
+    per_diem_per_night:
+      typeof saved.per_diem_per_night === 'number'
+        ? saved.per_diem_per_night
+        : HOTEL_COST_CONFIG_DEFAULTS.per_diem_per_night,
+    include_per_diem:
+      typeof saved.include_per_diem === 'boolean'
+        ? saved.include_per_diem
+        : HOTEL_COST_CONFIG_DEFAULTS.include_per_diem,
+  }
+}
+
 export async function loadConstraints(
   db: SupabaseClient,
   accountId: string,
@@ -187,6 +241,13 @@ export async function loadConstraints(
     surge_premium_multiplier: pickNumeric(r, 'surge_premium_multiplier'),
     branch_overhead_annual: pickNumeric(r, 'branch_overhead_annual'),
     hotels_annual: pickNumeric(r, 'hotels_annual'),
+    hotel_cost_config: mergeHotelConfig(r?.hotel_cost_config),
+    hotels_annual_override:
+      r?.hotels_annual_override == null
+        ? null
+        : typeof r.hotels_annual_override === 'string'
+          ? parseFloat(r.hotels_annual_override)
+          : r.hotels_annual_override,
     vehicle_lease_annual_per_crew: pickNumeric(r, 'vehicle_lease_annual_per_crew'),
     supplies_pct_of_labor: pickNumeric(r, 'supplies_pct_of_labor'),
     insurance_annual: pickNumeric(r, 'insurance_annual'),

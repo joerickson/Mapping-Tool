@@ -27,6 +27,12 @@ import {
 } from '../../../../../_lib/analysis/operational-constraints.js'
 import { nearestCity, populationBand } from '../../../../../_lib/analysis/constrained-kmeans.js'
 import { regionForState } from '../../../../../_lib/analysis/regions.js'
+import { computePropertyVisitHours } from '../../../../../_lib/analysis/property-hours.js'
+import {
+  calculateOvernights,
+  type OvernightConfig,
+  type OvernightResult,
+} from '../../../../../_lib/analysis/overnight-calculator.js'
 
 // Status enum for utilization band evaluation. Order matters for severity:
 // 'overcapacity' > 'underutilized' > 'acceptable' > 'ideal'.
@@ -156,7 +162,49 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }))
     const kUsed = constraints.selected_k ?? branches.length
 
-    const result = computeCrewStrategy(properties, offerings, branches, kUsed, inputs)
+    // Phase 3.7 — overnight cost is identical across A/B/C (same properties,
+    // same branches; what differs is the crew structure, not the work
+    // location). Compute once, attach to each option's summary.
+    const visits = computePropertyVisitHours(properties, offerings, {
+      project_clean_base_hours: inputs.project_clean_base_hours,
+      project_clean_hours_per_sqft: inputs.project_clean_hours_per_sqft,
+      upholstery_solo_hours: inputs.upholstery_solo_hours,
+      upholstery_combo_hours_pct: inputs.upholstery_combo_hours_pct,
+      visits_per_year_default: inputs.visits_per_year_default,
+    })
+    const overnightConfig: OvernightConfig = {
+      drive_speed_mph: constraints.drive_speed_mph,
+      overnight_trigger_one_way_hours:
+        constraints.hotel_cost_config.overnight_trigger_one_way_hours,
+      max_work_hours_per_crew_day:
+        constraints.hotel_cost_config.max_work_hours_per_crew_day,
+      buffer_hours_per_day: constraints.hotel_cost_config.buffer_hours_per_day,
+      crew_size: inputs.crew_size,
+      cost_per_night: constraints.hotel_cost_config.cost_per_night,
+      per_diem_per_night: constraints.hotel_cost_config.per_diem_per_night,
+      include_per_diem: constraints.hotel_cost_config.include_per_diem,
+    }
+    const overnight = calculateOvernights(
+      visits
+        .filter(
+          (v) =>
+            v.property.latitude != null &&
+            v.property.longitude != null &&
+            v.hours_per_visit > 0
+        )
+        .map((v) => ({
+          id: v.property.id,
+          address: v.property.address_line1,
+          lat: v.property.latitude as number,
+          lng: v.property.longitude as number,
+          visits_per_year: v.visits_per_year,
+          hours_per_visit: v.hours_per_visit,
+        })),
+      branches,
+      overnightConfig
+    )
+
+    const result = computeCrewStrategy(properties, offerings, branches, kUsed, inputs, overnight)
 
     await completeAnalysisRecord(db, analysisId, {
       outputs: result.outputs,
@@ -176,7 +224,8 @@ export function computeCrewStrategy(
   offerings: Map<string, { id: string; name: string }>,
   branches: Array<{ name: string; lat: number; lng: number; property_count?: number }>,
   kUsed: number,
-  inputs: CrewStrategyInputs
+  inputs: CrewStrategyInputs,
+  overnight?: OvernightResult
 ) {
   // ── Per-property work hours per year ──────────────────────────────────────
   // For each property we want total annual project-crew hours. A property may
@@ -598,6 +647,31 @@ export function computeCrewStrategy(
     }
   }
 
+  // ── Phase 3.7 — overnight summary, identical across options ───────────────
+  const largestTrip = (overnight?.trips ?? []).reduce<{
+    name: string
+    properties: number
+    nights: number
+  } | null>((best, t) => {
+    if (!best || t.properties_in_cluster.length > best.properties) {
+      return {
+        name: t.cluster_id,
+        properties: t.properties_in_cluster.length,
+        nights: t.nights_per_trip,
+      }
+    }
+    return best
+  }, null)
+  const overnightSummary = overnight
+    ? {
+        total_overnight_nights: overnight.total_overnight_nights_per_year,
+        total_overnight_cost: overnight.total_overnight_cost,
+        properties_requiring_overnight: overnight.properties_requiring_overnight,
+        cluster_count: overnight.trips.length,
+        largest_cluster: largestTrip,
+      }
+    : null
+
   // ── Output assembly ───────────────────────────────────────────────────────
   const options = {
     A: {
@@ -608,6 +682,7 @@ export function computeCrewStrategy(
       annual_vehicle_cost: Math.round(optionA_vehicle),
       total_annual_cost: Math.round(totalA),
       utilization_breakdown: { portfolio: optionA_portfolio },
+      overnight_summary: overnightSummary,
       pros: [
         'Highest utilization — pay only for actual work hours',
         'Flexible — crews go where the demand is',
@@ -634,6 +709,7 @@ export function computeCrewStrategy(
         per_region: optionB_per_region,
         portfolio: optionB_portfolio,
       },
+      overnight_summary: overnightSummary,
       pros: [
         'Simple — each crew owns one cluster',
         'Defensible to clients — predictable, named teams',
@@ -657,6 +733,7 @@ export function computeCrewStrategy(
       annual_vehicle_cost: Math.round(optionC_vehicle),
       total_annual_cost: Math.round(totalC),
       utilization_breakdown: { portfolio: optionC_portfolio },
+      overnight_summary: overnightSummary,
       pros: [
         'Lowest labor cost — FT crews highly utilized year-round',
         'Matches seasonal demand peaks (school breaks, etc.)',
