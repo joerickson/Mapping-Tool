@@ -50,9 +50,116 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'No committable rows found' })
   }
 
+  // ─── Pre-flight dedup ──────────────────────────────────────────────
+  // If a prior commit timed out mid-loop, properties may have inserted
+  // without staged_rows.service_location_id being updated — so the
+  // simple "skip rows that already have service_location_id" filter
+  // misses them, and the next retry walks every row, falling back to
+  // the per-row 23505 recovery (slow + wasteful).
+  //
+  // Solution: before the main loop, look up which rows are already
+  // fully committed in the DB by matching dedupe_hash → properties,
+  // then (property_id, service_offering_id, client_id) →
+  // service_locations. Patch the staged rows so the skip filter works
+  // correctly. Subsequent retries are fast and only touch real
+  // remaining work.
+  const hashes = [
+    ...new Set(stagedRows.map((r: any) => r.dedupe_hash as string | null).filter(Boolean) as string[]),
+  ]
+  const propertyByHash = new Map<string, string>()
+  if (hashes.length > 0) {
+    // Chunk in case there are thousands of hashes — keeps the .in()
+    // URL well under PostgREST's limit.
+    const HASH_CHUNK = 500
+    for (let i = 0; i < hashes.length; i += HASH_CHUNK) {
+      const chunk = hashes.slice(i, i + HASH_CHUNK)
+      const { data: props } = await db
+        .from('properties')
+        .select('id, address_hash')
+        .eq('client_id', batch.client_id as string)
+        .in('address_hash', chunk)
+      for (const p of (props ?? []) as Array<{ id: string; address_hash: string }>) {
+        propertyByHash.set(p.address_hash, p.id)
+      }
+    }
+  }
+
+  // For staged rows whose property exists, check if the SL also exists.
+  // Build a lookup keyed by (property_id, service_offering_id).
+  const slLookupKeys = new Set<string>()
+  const slKey = (pid: string, oid: string) => `${pid}::${oid}`
+  for (const row of stagedRows) {
+    const hash = row.dedupe_hash as string | null
+    const offeringId = row.service_offering_id as string | null
+    if (!hash || !offeringId) continue
+    const propId = propertyByHash.get(hash)
+    if (propId) slLookupKeys.add(slKey(propId, offeringId))
+  }
+  const existingSlByKey = new Map<string, string>()
+  if (slLookupKeys.size > 0) {
+    const propIds = Array.from(propertyByHash.values())
+    const offeringIds = [
+      ...new Set(stagedRows.map((r: any) => r.service_offering_id as string | null).filter(Boolean) as string[]),
+    ]
+    const ID_CHUNK = 300
+    for (let i = 0; i < propIds.length; i += ID_CHUNK) {
+      const propChunk = propIds.slice(i, i + ID_CHUNK)
+      const { data: sls } = await db
+        .from('service_locations')
+        .select('id, property_id, service_offering_id')
+        .eq('client_id', batch.client_id as string)
+        .in('property_id', propChunk)
+        .in('service_offering_id', offeringIds)
+      for (const sl of (sls ?? []) as Array<{
+        id: string
+        property_id: string
+        service_offering_id: string
+      }>) {
+        existingSlByKey.set(slKey(sl.property_id, sl.service_offering_id), sl.id)
+      }
+    }
+  }
+
+  // Patch staged rows we now know are fully committed: stamp
+  // service_location_id + property_id so the regular skip filter works
+  // and future retries see them as done.
+  const preflightPatches: Array<{ id: string; service_location_id: string; property_id: string }> = []
+  for (const row of stagedRows) {
+    if (row.service_location_id) continue
+    const hash = row.dedupe_hash as string | null
+    const offeringId = row.service_offering_id as string | null
+    if (!hash || !offeringId) continue
+    const propId = propertyByHash.get(hash)
+    if (!propId) continue
+    const slId = existingSlByKey.get(slKey(propId, offeringId))
+    if (!slId) continue
+    preflightPatches.push({
+      id: row.id as string,
+      service_location_id: slId,
+      property_id: propId,
+    })
+  }
+  // Apply the patches. Per-row updates because Supabase JS doesn't
+  // batch-update varying values; volume here is bounded by the
+  // partial-commit count which is typically a few hundred max.
+  for (const patch of preflightPatches) {
+    await db
+      .from('upload_staged_rows')
+      .update({
+        service_location_id: patch.service_location_id,
+        property_id: patch.property_id,
+      })
+      .eq('id', patch.id)
+    // Update in-memory copy too so the filter below sees them as done.
+    const memRow = (stagedRows as any[]).find((r) => r.id === patch.id)
+    if (memRow) {
+      memRow.service_location_id = patch.service_location_id
+      memRow.property_id = patch.property_id
+    }
+  }
+
   // Skip rows that were committed in a prior run (have service_location_id
-  // already populated). For partial-failure recovery the user just clicks
-  // "Retry commit" and we pick up where we left off.
+  // already populated, either originally or via the preflight patch above).
   let alreadyCommittedSkipped = 0
   const rowsToProcess = stagedRows.filter((r: any) => {
     if (r.service_location_id) {
