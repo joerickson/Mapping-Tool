@@ -367,7 +367,14 @@ export default function TemplateDetailPage() {
                 <TableBody>
                   {(template.trips ?? []).map((t: any) => (
                     <TableRow key={t.trip_id}>
-                      <TableCell className="text-sm">{t.trip_label ?? t.trip_id}</TableCell>
+                      <TableCell className="text-sm">
+                        <div>{t.trip_label ?? t.trip_id}</div>
+                        {t.trip_type === 'overnight' && t.start_location?.name && (
+                          <div className="text-[11px] text-fg-subtle">
+                            out of {t.start_location.name}
+                          </div>
+                        )}
+                      </TableCell>
                       <TableCell numeric>{t.crew_index + 1}</TableCell>
                       <TableCell>
                         <Badge variant={t.trip_type === 'overnight' ? 'warning' : 'outline'}>

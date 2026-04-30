@@ -49,6 +49,7 @@ interface CrewDay {
   crew_index: number
   scheduled_date: string
   day_type: string
+  start_location: { type?: string; name?: string; lat?: number; lng?: number } | null
   total_drive_minutes: number | null
   total_work_minutes: number | null
   total_day_minutes: number | null
@@ -192,10 +193,17 @@ export default function CycleDetailPage() {
                     <TableCell className="text-xs font-tabular">{cd.scheduled_date}</TableCell>
                     <TableCell numeric>{cd.crew_index + 1}</TableCell>
                     <TableCell className="text-sm">
-                      {cd.trip_label ?? cd.trip_id}
-                      {cd.trip_total_days && cd.trip_total_days > 1
-                        ? <span className="text-fg-subtle text-xs ml-1">(day {cd.trip_day_number}/{cd.trip_total_days})</span>
-                        : null}
+                      <div>
+                        {cd.trip_label ?? cd.trip_id}
+                        {cd.trip_total_days && cd.trip_total_days > 1
+                          ? <span className="text-fg-subtle text-xs ml-1">(day {cd.trip_day_number}/{cd.trip_total_days})</span>
+                          : null}
+                      </div>
+                      {cd.day_type === 'overnight' && cd.start_location?.name && cd.start_location?.type === 'branch' && (
+                        <div className="text-[11px] text-fg-subtle">
+                          out of {cd.start_location.name}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Badge variant={cd.day_type === 'overnight' ? 'warning' : 'outline'}>
