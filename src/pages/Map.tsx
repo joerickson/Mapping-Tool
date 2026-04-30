@@ -33,6 +33,7 @@ export default function MapPage() {
   const { clients, selectedClientId } = useClient()
   const [propertiesWithLocations, setPropertiesWithLocations] = useState<PropertyWithLocations[]>([])
   const [loading, setLoading] = useState(true)
+  const [fetchError, setFetchError] = useState<string | null>(null)
   const [filter, setFilter] = useState<MapFilter>(DEFAULT_FILTER)
   const [selectedProperty, setSelectedProperty] = useState<PropertyWithLocations | null>(null)
   const [panelOpen, setPanelOpen] = useState(false)
@@ -55,19 +56,29 @@ export default function MapPage() {
     let cancelled = false
     async function load() {
       setLoading(true)
+      setFetchError(null)
       try {
         const token = await getToken()
         const buildParams = (offset: number) => {
           const params = new URLSearchParams()
           // Apply nav-level client switcher as a filter baseline
-          const effectiveClients = filter.clients.length
-            ? filter.clients
+          const filterClientsClean = filter.clients.filter(
+            (id) => typeof id === 'string' && id.trim().length > 0
+          )
+          const effectiveClients = filterClientsClean.length
+            ? filterClientsClean
             : selectedClientId
             ? [selectedClientId]
             : []
           if (effectiveClients.length) params.set('client_id', effectiveClients.join(','))
-          if (filter.statuses.length) params.set('status', filter.statuses.join(','))
-          if (filter.portfolios.length) params.set('portfolio_id', filter.portfolios.join(','))
+          const statusesClean = filter.statuses.filter(
+            (s) => typeof s === 'string' && s.trim().length > 0
+          )
+          if (statusesClean.length) params.set('status', statusesClean.join(','))
+          const portfoliosClean = filter.portfolios.filter(
+            (p) => typeof p === 'string' && p.trim().length > 0
+          )
+          if (portfoliosClean.length) params.set('portfolio_id', portfoliosClean.join(','))
           if (filter.cityState) params.set('city_state', filter.cityState)
           params.set('limit', '2000')
           params.set('offset', String(offset))
@@ -88,7 +99,13 @@ export default function MapPage() {
           const res = await fetch(`/api/v1/properties?${buildParams(offset)}`, {
             headers: { Authorization: `Bearer ${token}` },
           })
-          if (!res.ok) break
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}))
+            const msg =
+              (body as { error?: string }).error ?? `Request failed: ${res.status}`
+            if (!cancelled) setFetchError(msg)
+            break
+          }
           const data = await res.json()
           const batch: PropertyWithLocations[] = data.properties ?? []
           all.push(...batch)
@@ -96,6 +113,10 @@ export default function MapPage() {
           offset += batch.length
         }
         if (!cancelled) setPropertiesWithLocations(all)
+      } catch (err) {
+        if (!cancelled) {
+          setFetchError(err instanceof Error ? err.message : String(err))
+        }
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -198,6 +219,11 @@ export default function MapPage() {
         <FilterSidebar filter={filter} onChange={setFilter} />
 
         <div className="flex-1 relative">
+          {fetchError && !loading && (
+            <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 max-w-lg rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-danger shadow">
+              <span className="font-medium">Map data error:</span> {fetchError}
+            </div>
+          )}
           {loading && (
             <div
               role="status"
