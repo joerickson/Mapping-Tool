@@ -1,13 +1,15 @@
 // Phase 4d — materialize a cycle instance from a routing template.
+// Phase 4f-3+ — bulk-insert hot path so generation doesn't hit Vercel's
+// maxDuration on big cycles. Pre-allocate UUIDs in JS so visits can
+// reference their crew_day_route_id without a per-row roundtrip.
 //
 // Walks the template.trips structure, converts relative_start_day +
 // trip_day_number into actual calendar dates, and re-checks each
 // attached addon against the latest addon_cohort_assignments (an addon
 // already completed since the template was built gets dropped from
 // this cycle's visit).
-//
-// Persists scheduled_visits, crew_day_routes, cycle_instances rows.
 import type { SupabaseClient } from '@supabase/supabase-js'
+import crypto from 'crypto'
 
 interface GenerateOptions {
   applyTemplateChanges?: boolean
@@ -25,6 +27,10 @@ export interface GenerateResult {
   addons_dropped_due_to_completion: number
 }
 
+// Supabase Postgres tops out around 65k parameters per insert; chunk
+// into safer batches.
+const INSERT_BATCH_SIZE = 500
+
 export async function generateCycleInstance(
   db: SupabaseClient,
   templateId: string,
@@ -40,7 +46,6 @@ export async function generateCycleInstance(
   if (tplErr || !tpl) throw new Error(`Template not found: ${tplErr?.message}`)
   const template = tpl as any
 
-  // Existing instance?
   const { data: existing } = await db
     .from('cycle_instances')
     .select('id, status')
@@ -61,7 +66,6 @@ export async function generateCycleInstance(
   }
 
   if (existing && options.applyTemplateChanges) {
-    // Wipe existing scheduled_visits + crew_day_routes for this cycle.
     await db.from('scheduled_visits').delete().eq('cycle_instance_id', (existing as { id: string }).id)
     await db.from('crew_day_routes').delete().eq('cycle_instance_id', (existing as { id: string }).id)
   }
@@ -90,13 +94,11 @@ export async function generateCycleInstance(
     const cycleYear = Number(startDate.slice(0, 4))
     for (const row of cohortRows ?? []) {
       const r = row as { id: string; last_completed_date: string | null; next_due_year: number }
-      // If next_due_year is now beyond this cycle's year, the addon was
-      // completed and bumped — drop it from this cycle.
       if (r.next_due_year > cycleYear) completedCohorts.add(r.id)
     }
   }
 
-  // Insert cycle_instance row first so we have an id.
+  // Insert (or refresh) the cycle_instance row.
   let cycleInstanceId: string
   if (existing) {
     cycleInstanceId = (existing as { id: string }).id
@@ -120,55 +122,45 @@ export async function generateCycleInstance(
     cycleInstanceId = (inserted as { id: string }).id
   }
 
-  // Materialize crew_day_routes + scheduled_visits.
-  let visitsCreated = 0
-  let crewDaysCreated = 0
+  // Build all crew_day_routes + scheduled_visits in memory first,
+  // pre-allocating UUIDs so visits can carry the crew_day_route_id.
+  // Then bulk-insert in chunks. This drops the round-trip count from
+  // O(trips × days) + O(days) to ~2 batches per table.
+  const crewDayRoutes: any[] = []
+  const scheduledVisits: any[] = []
   let addonsDropped = 0
 
   for (const trip of trips) {
     for (const day of trip.days ?? []) {
       const dayOffset = (trip.relative_start_day ?? 0) + ((day.trip_day_number ?? 1) - 1)
       const scheduledDate = addDays(startDate, dayOffset)
-      // Skip days outside the cycle window
       if (scheduledDate > endDate) continue
 
-      // Insert crew_day_route
-      const { data: routeRow, error: routeErr } = await db
-        .from('crew_day_routes')
-        .insert({
-          cycle_instance_id: cycleInstanceId,
-          template_id: templateId,
-          trip_id: trip.trip_id,
-          trip_label: trip.trip_label ?? trip.trip_id,
-          crew_index: trip.crew_index ?? 0,
-          crew_label: `Crew ${(trip.crew_index ?? 0) + 1}`,
-          scheduled_date: scheduledDate,
-          day_type: trip.trip_type === 'overnight' ? 'overnight' : 'local',
-          start_location: trip.start_location ?? {},
-          end_location: trip.end_location ?? null,
-          route: day.stops ?? [],
-          total_drive_minutes: day.summary?.total_drive_minutes ?? null,
-          total_work_minutes: day.summary?.total_work_minutes ?? null,
-          total_buffer_minutes: day.summary?.total_buffer_minutes ?? null,
-          total_day_minutes: day.summary?.total_day_minutes ?? null,
-          total_drive_miles: day.summary?.total_drive_miles ?? null,
-          trip_day_number: day.trip_day_number ?? 1,
-          trip_total_days: trip.duration_days ?? 1,
-        })
-        .select('id')
-        .single()
-      if (routeErr) {
-        console.error('[generate-cycle] crew_day_routes insert failed:', routeErr.message)
-        continue
-      }
-      const crewDayRouteId = (routeRow as { id: string }).id
-      crewDaysCreated++
+      const crewDayRouteId = crypto.randomUUID()
+      crewDayRoutes.push({
+        id: crewDayRouteId,
+        cycle_instance_id: cycleInstanceId,
+        template_id: templateId,
+        trip_id: trip.trip_id,
+        trip_label: trip.trip_label ?? trip.trip_id,
+        crew_index: trip.crew_index ?? 0,
+        crew_label: `Crew ${(trip.crew_index ?? 0) + 1}`,
+        scheduled_date: scheduledDate,
+        day_type: trip.trip_type === 'overnight' ? 'overnight' : 'local',
+        start_location: trip.start_location ?? {},
+        end_location: trip.end_location ?? null,
+        route: day.stops ?? [],
+        total_drive_minutes: day.summary?.total_drive_minutes ?? null,
+        total_work_minutes: day.summary?.total_work_minutes ?? null,
+        total_buffer_minutes: day.summary?.total_buffer_minutes ?? null,
+        total_day_minutes: day.summary?.total_day_minutes ?? null,
+        total_drive_miles: day.summary?.total_drive_miles ?? null,
+        trip_day_number: day.trip_day_number ?? 1,
+        trip_total_days: trip.duration_days ?? 1,
+      })
 
-      // Insert one scheduled_visit per stop
-      const visitRows: any[] = []
       for (let i = 0; i < (day.stops ?? []).length; i++) {
         const stop = day.stops[i]
-        // Filter completed addons out
         const refreshedAddons: any[] = []
         for (const a of stop.attached_addons ?? []) {
           if (completedCohorts.has(a.cohort_assignment_id)) {
@@ -181,7 +173,7 @@ export async function generateCycleInstance(
         const totalHours =
           baseHours + refreshedAddons.reduce((s, a) => s + (a.hours ?? 0), 0)
 
-        visitRows.push({
+        scheduledVisits.push({
           cycle_instance_id: cycleInstanceId,
           template_id: templateId,
           service_location_id: stop.service_location_id,
@@ -199,28 +191,46 @@ export async function generateCycleInstance(
           status: 'placed',
         })
       }
-      if (visitRows.length > 0) {
-        const { error: vErr } = await db.from('scheduled_visits').insert(visitRows)
-        if (!vErr) visitsCreated += visitRows.length
-        else console.error('[generate-cycle] scheduled_visits insert failed:', vErr.message)
-      }
     }
   }
 
   // Surface unplaced visits as scheduled_visits with status='unplaced'.
   for (const u of (template.unplaced_visits ?? []) as any[]) {
     if (!u.service_location_id) continue
-    await db.from('scheduled_visits').insert({
+    scheduledVisits.push({
       cycle_instance_id: cycleInstanceId,
       template_id: templateId,
       service_location_id: u.service_location_id,
-      property_id: u.property_id ?? u.service_location_id, // best-effort
+      property_id: u.property_id ?? u.service_location_id,
       visit_number_in_cycle: 1,
       status: 'unplaced',
       unplaced_reason: u.detail ?? u.reason,
       hours_per_visit_base: 0,
       hours_per_visit_total: 0,
-    }).then(null, () => {})
+    })
+  }
+
+  // Bulk-insert in chunks.
+  let crewDaysCreated = 0
+  for (let i = 0; i < crewDayRoutes.length; i += INSERT_BATCH_SIZE) {
+    const chunk = crewDayRoutes.slice(i, i + INSERT_BATCH_SIZE)
+    const { error } = await db.from('crew_day_routes').insert(chunk)
+    if (error) {
+      console.error('[generate-cycle] crew_day_routes batch failed:', error.message)
+    } else {
+      crewDaysCreated += chunk.length
+    }
+  }
+
+  let visitsCreated = 0
+  for (let i = 0; i < scheduledVisits.length; i += INSERT_BATCH_SIZE) {
+    const chunk = scheduledVisits.slice(i, i + INSERT_BATCH_SIZE)
+    const { error } = await db.from('scheduled_visits').insert(chunk)
+    if (error) {
+      console.error('[generate-cycle] scheduled_visits batch failed:', error.message)
+    } else {
+      visitsCreated += chunk.length
+    }
   }
 
   return {
@@ -244,5 +254,5 @@ function addDays(date: string, n: number): string {
 function extractTime(iso: string | null | undefined): string | null {
   if (!iso) return null
   if (iso.length >= 16 && iso.includes('T')) return iso.slice(11, 16)
-  return iso // already HH:MM
+  return iso
 }
