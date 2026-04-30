@@ -82,12 +82,13 @@ function DayOfWeekForm({
             <button
               key={i}
               type="button"
+              aria-pressed={on}
               onClick={() => toggle(i)}
               className={cn(
-                'flex-1 rounded-md border px-2 py-2 text-xs font-medium transition-colors',
+                'flex-1 rounded-md border-2 px-2 py-2 text-xs font-medium transition-colors',
                 on
-                  ? 'border-accent bg-accent/10 text-fg'
-                  : 'border-border bg-surface text-fg-subtle hover:text-fg'
+                  ? 'border-accent bg-accent text-accent-fg'
+                  : 'border-border bg-surface text-fg-subtle hover:border-border-strong hover:text-fg'
               )}
             >
               {label}
