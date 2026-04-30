@@ -125,7 +125,10 @@ export default function HistoryDrawer({ cycleId, onChange }: Props) {
       {open && (
         <>
           <div className="fixed inset-0 z-40 bg-fg/30" onClick={() => setOpen(false)} />
-          <aside className="fixed right-0 top-0 bottom-0 z-50 w-96 bg-surface-elevated border-l border-border shadow-2xl flex flex-col">
+          <aside
+            style={{ backgroundColor: 'var(--color-bg-elevated, #ffffff)' }}
+            className="fixed right-0 top-0 bottom-0 z-50 w-96 border-l border-border shadow-2xl flex flex-col"
+          >
             <header className="flex items-center justify-between border-b border-border px-4 py-3">
               <div>
                 <p className="text-base font-semibold text-fg">Edit history</p>

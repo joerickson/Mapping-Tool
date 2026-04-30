@@ -215,8 +215,12 @@ export default function OvernightBreakdownDrawer({
         onClick={onClose}
       />
       <div
+        // Inline opaque background — Tailwind's bg-surface-elevated
+        // (a CSS-var token) paints inconsistently in some renderings.
+        // Inline style guarantees zero see-through.
+        style={{ backgroundColor: 'var(--color-bg-elevated, #ffffff)' }}
         className={cn(
-          'fixed right-0 top-0 bottom-0 z-50 w-full max-w-2xl bg-surface-elevated shadow-2xl',
+          'fixed right-0 top-0 bottom-0 z-50 w-full max-w-2xl shadow-2xl',
           'border-l border-border flex flex-col'
         )}
       >
@@ -501,6 +505,11 @@ function SummaryStrip({
         </p>
       )}
 
+      {/* Phase 4.1 — auditable math. Walks the user from the per-cluster
+          formula to the rolled-up totals so they can verify how N
+          overnight properties = M nights. */}
+      <CalculationExplainer data={data} />
+
       {allowOverride && (
         <div className="mt-3 pt-3 border-t border-border space-y-1.5">
           <p className="text-[10px] uppercase tracking-wider text-fg-subtle font-semibold">
@@ -570,6 +579,149 @@ function Stat({ label, value }: { label: string; value: string | number }) {
         {typeof value === 'number' ? value.toLocaleString() : value}
       </dd>
     </div>
+  )
+}
+
+// Walks the user from "N overnight properties" → "M total nights" →
+// "$X annual cost" with the actual cluster-by-cluster math. Collapsed
+// by default; click to expand. Showing the per-cluster contributions
+// is what lets the user audit the rollup.
+function CalculationExplainer({ data }: { data: BreakdownData }) {
+  const trips = data.result.trips
+  const config = (data as any).config ?? {}
+  const costPerNight = Number(config.cost_per_night ?? 0)
+  const perDiemPerNight = Number(config.per_diem_per_night ?? 0)
+
+  if (trips.length === 0) return null
+
+  // Derive per-cluster contributions and the bucketed math.
+  const totalNights = data.result.total_overnight_nights_per_year
+  const totalProps = data.result.properties_requiring_overnight
+  const totalHotel = data.result.total_hotel_cost
+  const totalPerDiem = data.result.total_per_diem_cost
+
+  // Sort clusters by annual_nights desc so the user sees the biggest
+  // contributors first.
+  const sorted = [...trips].sort((a, b) => b.annual_nights - a.annual_nights)
+  const top = sorted.slice(0, 8)
+  const restCount = sorted.length - top.length
+  const restNights = sorted.slice(top.length).reduce((s, t) => s + t.annual_nights, 0)
+  const restCost = sorted.slice(top.length).reduce((s, t) => s + t.annual_total_cost, 0)
+
+  // Average crew size from one of the trips (per-diem cost / nights /
+  // per-diem rate). Falls back to 3 if math is unrecoverable.
+  const sample = trips.find((t) => t.annual_per_diem_cost > 0 && t.per_diem_per_night_used > 0)
+  const inferredCrewSize =
+    sample && sample.annual_nights > 0 && sample.per_diem_per_night_used > 0
+      ? Math.round(sample.annual_per_diem_cost / sample.annual_nights / sample.per_diem_per_night_used)
+      : 3
+
+  return (
+    <details className="mt-3 pt-3 border-t border-border group">
+      <summary className="cursor-pointer text-xs font-semibold text-accent hover:underline list-none">
+        How is this calculated? ▾
+      </summary>
+      <div className="mt-3 space-y-3 text-xs text-fg">
+        <div className="rounded-md border border-border bg-surface p-3 space-y-1">
+          <p className="font-semibold">Per-cluster formula</p>
+          <p className="text-fg-muted font-tabular leading-relaxed">
+            <span className="text-fg">work_hours_per_visit</span> ÷{' '}
+            <span className="text-fg">max_work_hours_per_crew_day</span> ={' '}
+            <span className="text-fg">work_days_per_trip</span>{' '}
+            (rounded up)
+          </p>
+          <p className="text-fg-muted font-tabular leading-relaxed">
+            <span className="text-fg">nights_per_trip</span> ={' '}
+            <span className="text-fg">work_days_per_trip</span> · crew sleeps each night
+          </p>
+          <p className="text-fg-muted font-tabular leading-relaxed">
+            <span className="text-fg">annual_nights</span> ={' '}
+            <span className="text-fg">nights_per_trip</span> ×{' '}
+            <span className="text-fg">trips_per_year</span>
+          </p>
+          <p className="text-fg-muted font-tabular leading-relaxed pt-1 border-t border-border">
+            <span className="text-fg">annual_cost</span> = annual_nights × ${costPerNight}/night
+            + annual_nights × {inferredCrewSize} crew × ${perDiemPerNight}/diem
+          </p>
+        </div>
+
+        <div className="rounded-md border border-border bg-surface p-3 space-y-2">
+          <div className="flex items-baseline justify-between">
+            <p className="font-semibold">Per-cluster contributions</p>
+            <span className="text-[10px] text-fg-subtle">sorted by nights</span>
+          </div>
+          <table className="w-full font-tabular text-[11px]">
+            <thead className="text-fg-subtle text-[10px] uppercase tracking-wider">
+              <tr>
+                <th className="text-left pb-1">Cluster</th>
+                <th className="text-right pb-1">Props</th>
+                <th className="text-right pb-1">N/trip</th>
+                <th className="text-right pb-1">Trips/yr</th>
+                <th className="text-right pb-1">Annual nights</th>
+                <th className="text-right pb-1">Annual $</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {top.map((t) => (
+                <tr key={t.cluster_id}>
+                  <td className="py-1 text-fg truncate max-w-[180px]" title={t.cluster_label}>
+                    {t.cluster_label}
+                  </td>
+                  <td className="py-1 text-right">{t.properties_in_cluster.length}</td>
+                  <td className="py-1 text-right">{t.nights_per_trip}</td>
+                  <td className="py-1 text-right">{t.trips_per_year}</td>
+                  <td className="py-1 text-right font-semibold">{t.annual_nights}</td>
+                  <td className="py-1 text-right">${t.annual_total_cost.toLocaleString()}</td>
+                </tr>
+              ))}
+              {restCount > 0 && (
+                <tr className="text-fg-muted italic">
+                  <td className="py-1" colSpan={4}>
+                    + {restCount} smaller cluster{restCount === 1 ? '' : 's'}
+                  </td>
+                  <td className="py-1 text-right">{restNights}</td>
+                  <td className="py-1 text-right">${restCost.toLocaleString()}</td>
+                </tr>
+              )}
+              <tr className="border-t-2 border-border-strong font-semibold">
+                <td className="pt-2 text-fg" colSpan={4}>Total</td>
+                <td className="pt-2 text-right">{totalNights}</td>
+                <td className="pt-2 text-right">
+                  ${(totalHotel + totalPerDiem).toLocaleString()}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div className="rounded-md border border-border bg-surface p-3 space-y-1.5">
+          <p className="font-semibold">Why nights &gt; properties</p>
+          <p className="text-fg-muted leading-relaxed">
+            <span className="font-tabular text-fg">{totalProps}</span> overnight properties produces{' '}
+            <span className="font-tabular text-fg">{totalNights}</span> annual nights because:
+          </p>
+          <ul className="list-disc pl-4 space-y-0.5 text-fg-muted leading-relaxed">
+            <li>
+              Multi-day clusters generate multiple nights per trip (e.g. a 3-day cluster = 3 nights).
+            </li>
+            <li>
+              Each cluster runs <span className="font-tabular text-fg">trips_per_year</span> times
+              (max visits/year across its properties), so the per-trip nights stack across
+              the cycle.
+            </li>
+            <li>
+              Largest contributing cluster: <span className="font-tabular text-fg">{sorted[0].cluster_label}</span>{' '}
+              ({sorted[0].annual_nights} nights = {sorted[0].nights_per_trip} ×{' '}
+              {sorted[0].trips_per_year}).
+            </li>
+          </ul>
+        </div>
+
+        <p className="text-[10px] text-fg-subtle">
+          Click any cluster card below for its individual nights / cost / overrides. Click "Edit" on a card to override its math.
+        </p>
+      </div>
+    </details>
   )
 }
 

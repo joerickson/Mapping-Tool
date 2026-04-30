@@ -134,7 +134,13 @@ export default function ChatPanel({ accountId, clientId }: { accountId: string; 
             className="fixed inset-0 z-40 bg-fg/30 backdrop-blur-sm"
             onClick={() => setOpen(false)}
           />
-          <div className="fixed right-0 top-0 bottom-0 z-50 flex w-full flex-col border-l border-border bg-surface shadow-lg sm:w-[480px]">
+          <div
+            // Inline opaque background — see Dialog/OvernightBreakdownDrawer.
+            // Tailwind bg-surface (CSS-var token) renders inconsistently
+            // in some browsers; inline style guarantees opacity.
+            style={{ backgroundColor: 'var(--color-bg, #ffffff)' }}
+            className="fixed right-0 top-0 bottom-0 z-50 flex w-full flex-col border-l border-border shadow-2xl sm:w-[480px]"
+          >
             <div className="flex items-center justify-between border-b border-border px-5 py-3">
               <h2 className="text-base font-semibold tracking-tight text-fg">
                 Analysis chat

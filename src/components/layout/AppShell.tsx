@@ -104,8 +104,9 @@ export default function AppShell({
               />
               <DialogPrimitive.Content
                 aria-label="Navigation menu"
+                style={{ backgroundColor: 'var(--color-bg, #ffffff)' }}
                 className={cn(
-                  'fixed inset-y-0 left-0 z-50 w-[260px] border-r border-border bg-surface md:hidden',
+                  'fixed inset-y-0 left-0 z-50 w-[260px] border-r border-border md:hidden',
                   'data-[state=open]:animate-in data-[state=open]:slide-in-from-left',
                   'data-[state=closed]:animate-out data-[state=closed]:slide-out-to-left'
                 )}
