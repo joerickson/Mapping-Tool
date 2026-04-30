@@ -28,20 +28,23 @@ export interface AccountServiceLocation {
   status: string
 }
 
-// Pull every property whose service_locations are owned by a client of this
-// account. (clients.account_id → service_locations.client_id → properties.)
+// Pull every property whose service_locations belong to (account_id, client_id).
+// Phase 3.6: clientId is required — analysis is always per-client.
 export async function loadAccountProperties(
   db: SupabaseClient,
   accountId: string,
-  clientId?: string | null
+  clientId: string
 ): Promise<AccountProperty[]> {
-  // Step 1: client ids for this account (optionally filtered to one)
-  let clientQuery = db.from('clients').select('id').eq('account_id', accountId)
-  if (clientId) clientQuery = clientQuery.eq('id', clientId)
-  const { data: clientRows, error: clientErr } = await clientQuery
+  // Step 1: confirm the client belongs to this account
+  const { data: clientRow, error: clientErr } = await db
+    .from('clients')
+    .select('id')
+    .eq('id', clientId)
+    .eq('account_id', accountId)
+    .maybeSingle()
   if (clientErr) throw new Error(`clients lookup failed: ${clientErr.message}`)
-  const clientIds = (clientRows ?? []).map((c: any) => c.id)
-  if (!clientIds.length) return []
+  if (!clientRow) return []
+  const clientIds = [clientId]
 
   // Step 2: distinct property ids via service_locations
   const { data: slRows, error: slErr } = await db
@@ -160,17 +163,19 @@ export async function failAnalysisRecord(
     .eq('id', id)
 }
 
-// Fetch the most recent completed analysis row for a given account+module.
+// Fetch the most recent completed analysis row for a given account+client+module.
 // Used by chained modules (bid_pricing pulls from crew_strategy etc.).
 export async function fetchLatestCompletedAnalysis(
   db: SupabaseClient,
   accountId: string,
+  clientId: string,
   moduleKey: string
 ): Promise<{ id: string; outputs: any; summary_text: string | null } | null> {
   const { data } = await db
     .from('portfolio_analyses')
     .select('id, outputs, summary_text')
     .eq('account_id', accountId)
+    .eq('client_id', clientId)
     .eq('module_key', moduleKey)
     .eq('status', 'completed')
     .order('created_at', { ascending: false })

@@ -71,6 +71,7 @@ interface PropertyOption {
 
 interface Props {
   accountId: string
+  clientId: string
   onSaved?: (saved: OperationalConstraints) => void
   onUpdatedAtChange?: (iso: string | null) => void
 }
@@ -129,7 +130,7 @@ const FIELD_LABELS: Record<string, string> = {
   max_one_way_drive_minutes: 'Max one-way drive (min)',
 }
 
-export default function OperationalConstraintsPanel({ accountId, onSaved, onUpdatedAtChange }: Props) {
+export default function OperationalConstraintsPanel({ accountId, clientId, onSaved, onUpdatedAtChange }: Props) {
   const { getToken } = useAuth()
   const [data, setData] = useState<OperationalConstraints | null>(null)
   const [loading, setLoading] = useState(true)
@@ -142,7 +143,7 @@ export default function OperationalConstraintsPanel({ accountId, onSaved, onUpda
     try {
       const token = await getToken()
       const res = await fetch(
-        `/api/accounts/${accountId}/operational-constraints`,
+        `/api/accounts/${accountId}/clients/${clientId}/operational-constraints`,
         { headers: { Authorization: `Bearer ${token}` } }
       )
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -159,7 +160,7 @@ export default function OperationalConstraintsPanel({ accountId, onSaved, onUpda
   useEffect(() => {
     loadConstraints()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accountId])
+  }, [accountId, clientId])
 
   const overriddenCount = data
     ? countOverriddenFields(data)
@@ -202,6 +203,7 @@ export default function OperationalConstraintsPanel({ accountId, onSaved, onUpda
       {data && (
         <ConstraintsEditor
           accountId={accountId}
+          clientId={clientId}
           open={editorOpen}
           onClose={() => setEditorOpen(false)}
           constraints={data}
@@ -233,6 +235,7 @@ function countOverriddenFields(c: OperationalConstraints): number {
 
 interface EditorProps {
   accountId: string
+  clientId: string
   open: boolean
   onClose: () => void
   constraints: OperationalConstraints
@@ -241,7 +244,7 @@ interface EditorProps {
 
 type TabKey = 'infrastructure' | 'crew_economics' | 'cost_margin'
 
-function ConstraintsEditor({ accountId, open, onClose, constraints, onSaved }: EditorProps) {
+function ConstraintsEditor({ accountId, clientId, open, onClose, constraints, onSaved }: EditorProps) {
   const { getToken } = useAuth()
   const [activeTab, setActiveTab] = useState<TabKey>('infrastructure')
   const [draft, setDraft] = useState<OperationalConstraints>(constraints)
@@ -302,7 +305,7 @@ function ConstraintsEditor({ accountId, open, onClose, constraints, onSaved }: E
     return () => {
       cancelled = true
     }
-  }, [open, accountId, getToken])
+  }, [open, accountId, clientId, getToken])
 
   const handleSave = async () => {
     setSaving(true)
@@ -330,7 +333,7 @@ function ConstraintsEditor({ accountId, open, onClose, constraints, onSaved }: E
         }
       }
 
-      const res = await fetch(`/api/accounts/${accountId}/operational-constraints`, {
+      const res = await fetch(`/api/accounts/${accountId}/clients/${clientId}/operational-constraints`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

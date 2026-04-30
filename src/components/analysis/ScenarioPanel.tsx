@@ -32,6 +32,7 @@ interface SavedScenario {
 
 interface Props {
   accountId: string
+  clientId: string
   hasSelection: boolean
   // Baseline values pulled from current operational_constraints + bid_pricing run
   baselineLaborCost: number
@@ -44,6 +45,7 @@ interface Props {
 
 export default function ScenarioPanel({
   accountId,
+  clientId,
   hasSelection,
   baselineLaborCost,
   baselineFuelCost,
@@ -82,7 +84,7 @@ export default function ScenarioPanel({
   const refreshScenarios = async () => {
     try {
       const token = await getToken()
-      const res = await fetch(`/api/accounts/${accountId}/scenarios`, {
+      const res = await fetch(`/api/accounts/${accountId}/clients/${clientId}/scenarios`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (res.ok) setSavedScenarios((await res.json()) ?? [])
@@ -93,7 +95,7 @@ export default function ScenarioPanel({
   useEffect(() => {
     refreshScenarios()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accountId])
+  }, [accountId, clientId])
 
   const overrides = useMemo(() => {
     const o: Record<string, any> = {}
@@ -138,7 +140,7 @@ export default function ScenarioPanel({
     try {
       const token = await getToken()
       const res = await fetch(
-        `/api/analyses/account/${accountId}/scenario-compute`,
+        `/api/analyses/account/${accountId}/clients/${clientId}/scenario-compute`,
         {
           method: 'POST',
           headers: {
@@ -163,7 +165,7 @@ export default function ScenarioPanel({
 
   const saveScenario = async (name: string, description: string) => {
     const token = await getToken()
-    const res = await fetch(`/api/accounts/${accountId}/scenarios`, {
+    const res = await fetch(`/api/accounts/${accountId}/clients/${clientId}/scenarios`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -214,7 +216,7 @@ export default function ScenarioPanel({
   const requestApply = async (scenarioId: string) => {
     const token = await getToken()
     const res = await fetch(
-      `/api/accounts/${accountId}/scenarios/${scenarioId}/apply`,
+      `/api/accounts/${accountId}/clients/${clientId}/scenarios/${scenarioId}/apply`,
       {
         method: 'POST',
         headers: {
@@ -237,7 +239,7 @@ export default function ScenarioPanel({
     if (!confirmApplyId) return
     const token = await getToken()
     const res = await fetch(
-      `/api/accounts/${accountId}/scenarios/${confirmApplyId}/apply?confirm=true`,
+      `/api/accounts/${accountId}/clients/${clientId}/scenarios/${confirmApplyId}/apply?confirm=true`,
       {
         method: 'POST',
         headers: {
@@ -260,7 +262,7 @@ export default function ScenarioPanel({
 
   const deleteScenario = async (id: string) => {
     const token = await getToken()
-    const res = await fetch(`/api/accounts/${accountId}/scenarios/${id}`, {
+    const res = await fetch(`/api/accounts/${accountId}/clients/${clientId}/scenarios/${id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     })

@@ -1,5 +1,5 @@
 import React from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom'
 import { ClientProvider } from './context/ClientContext'
 import AuthGuard from './components/auth/AuthGuard'
 import LoginPage from './pages/Login'
@@ -30,6 +30,13 @@ import ClientDetailPage from './pages/clients/ClientDetail'
 import ClientSetupPage from './pages/clients/ClientSetup'
 import UploadSummaryPage from './pages/UploadSummary'
 import PropertyDetailPage from './pages/PropertyDetail'
+
+// Phase 3.6 — old /accounts/:accountId/analysis bounces to the new Account
+// Overview where the user picks a client.
+function AnalysisRedirectToOverview() {
+  const { accountId } = useParams<{ accountId: string }>()
+  return <Navigate to={`/accounts/${accountId}?from=legacy-analysis`} replace />
+}
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -97,7 +104,14 @@ export default function App() {
           <Route path="/accounts" element={<AuthGuard><AccountsListPage /></AuthGuard>} />
           <Route path="/accounts/new" element={<AuthGuard><NewAccountPage /></AuthGuard>} />
           <Route path="/accounts/:id" element={<AuthGuard><AccountDetailPage /></AuthGuard>} />
-          <Route path="/accounts/:accountId/analysis" element={<AuthGuard><AccountAnalysisPage /></AuthGuard>} />
+          <Route
+            path="/accounts/:accountId/analysis"
+            element={<AuthGuard><AnalysisRedirectToOverview /></AuthGuard>}
+          />
+          <Route
+            path="/accounts/:accountId/clients/:clientId/analysis"
+            element={<AuthGuard><AccountAnalysisPage /></AuthGuard>}
+          />
           <Route path="/accounts/:id/clients/new" element={<AuthGuard><NewAccountClientPage /></AuthGuard>} />
 
           {/* Clients */}

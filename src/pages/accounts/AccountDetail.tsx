@@ -1,9 +1,35 @@
 import { useState, useEffect } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import Navbar from '../../components/ui/Navbar'
 import Button from '../../components/ui/Button'
 import type { Account, Client } from '../../types'
+
+// Phase 3.6 — Account Overview shape returned by /api/accounts/[id]/overview
+interface OverviewClient {
+  id: string
+  name: string
+  display_name: string | null
+  status: string
+  property_count: number
+  service_location_count: number
+  states_count: number
+  last_analysis_at: string | null
+  last_synthesis_at: string | null
+  synthesis_status: 'fresh' | 'stale' | 'never'
+  branch_selection: {
+    selected_k: number | null
+    selected_branches: Array<{ city_state: string }> | null
+  }
+}
+interface AccountOverview {
+  client_count: number
+  total_properties: number
+  total_service_locations: number
+  unique_states: number
+  last_activity_at: string | null
+  clients: OverviewClient[]
+}
 
 const TYPE_BADGE: Record<string, string> = {
   self_managed: 'bg-blue-100 text-blue-700',
@@ -26,6 +52,9 @@ export default function AccountDetailPage() {
 
   const [account, setAccount] = useState<AccountDetail | null>(null)
   const [clients, setClients] = useState<Client[]>([])
+  const [overview, setOverview] = useState<AccountOverview | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const fromLegacyAnalysis = searchParams.get('from') === 'legacy-analysis'
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -43,15 +72,19 @@ export default function AccountDetailPage() {
     setLoading(true)
     try {
       const token = await getToken()
-      const [accRes, clientsRes] = await Promise.all([
+      const [accRes, clientsRes, overviewRes] = await Promise.all([
         fetch(`/api/v1/accounts/${id}`, { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`/api/v1/clients?account_id=${id}`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`/api/accounts/${id}/overview`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null),
       ])
       if (!accRes.ok) throw new Error('Account not found')
       const data: AccountDetail = await accRes.json()
       const clientData: Client[] = clientsRes.ok ? await clientsRes.json() : []
+      const overviewData: AccountOverview | null =
+        overviewRes && overviewRes.ok ? await overviewRes.json() : null
       setAccount(data)
       setClients(clientData)
+      setOverview(overviewData)
       setEditName(data.name)
       setEditDisplayName(data.display_name ?? '')
       setEditStatus(data.status)
@@ -137,91 +170,112 @@ export default function AccountDetailPage() {
               {account.display_name && <p className="text-sm text-gray-400">{account.name}</p>}
             </div>
             <div className="flex items-center gap-2">
-              <Link
-                to={`/accounts/${id}/analysis`}
-                className="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                Smart Analysis →
-              </Link>
               <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>Edit</Button>
             </div>
           </div>
 
-          {/* Stats */}
-          <div className="grid grid-cols-2 gap-4">
-            <StatCard label={isPM ? 'Clients' : 'Service Locations'} value={isPM ? String(account.stats.client_count) : String(account.stats.service_location_count)} />
-            <StatCard label="Service Locations" value={String(account.stats.service_location_count)} />
-          </div>
-
-          {/* Self-managed: single-client view */}
-          {!isPM && selfClient && (
-            <div className="bg-white rounded-xl shadow-sm border p-5">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="font-semibold text-gray-800">Client</h2>
-                <Link to={`/clients/${selfClient.id}`} className="text-sm text-blue-600 hover:underline">View →</Link>
+          {/* Phase 3.6 — banner when bounced from old /analysis URL */}
+          {fromLegacyAnalysis && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm flex items-start justify-between gap-3">
+              <div>
+                Smart Analysis is now per-client. Pick a client below to continue.
               </div>
-              <p className="text-sm text-gray-700 font-medium">{selfClient.display_name ?? selfClient.name}</p>
-              <ClientSetupBanner client={selfClient} />
+              <button
+                onClick={() => { searchParams.delete('from'); setSearchParams(searchParams, { replace: true }) }}
+                className="text-amber-600 hover:text-amber-800 text-xs"
+              >
+                Dismiss
+              </button>
             </div>
           )}
 
-          {/* Property manager: clients list */}
-          {isPM && (
-            <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-              <div className="px-5 py-4 border-b flex items-center justify-between">
-                <h2 className="font-semibold text-gray-800">Clients</h2>
+          {/* Aggregate stats */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <StatCard
+              label="Clients"
+              value={String(overview?.client_count ?? account.stats.client_count)}
+            />
+            <StatCard
+              label="Properties"
+              value={String(overview?.total_properties ?? '—')}
+            />
+            <StatCard
+              label="Service Locations"
+              value={String(overview?.total_service_locations ?? account.stats.service_location_count)}
+            />
+            <StatCard
+              label="States"
+              value={String(overview?.unique_states ?? '—')}
+            />
+          </div>
+
+          {/* Clients (analysis overview) — Phase 3.6: per-client cards with
+              analysis status + View/Start Analysis buttons. */}
+          <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+            <div className="px-5 py-4 border-b flex items-center justify-between">
+              <h2 className="font-semibold text-gray-800">Clients</h2>
+              {isPM && (
                 <Link
                   to={`/accounts/${id}/clients/new`}
                   className="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                 >
                   + Add Client
                 </Link>
-              </div>
-              {clients.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 gap-3">
-                  <p className="text-gray-500 text-sm">No clients yet.</p>
+              )}
+            </div>
+            {(overview?.clients ?? clients.map((c) => ({
+              id: c.id,
+              name: c.name,
+              display_name: c.display_name,
+              status: c.status,
+              property_count: 0,
+              service_location_count: 0,
+              states_count: 0,
+              last_analysis_at: null as string | null,
+              last_synthesis_at: null as string | null,
+              synthesis_status: 'never' as const,
+              branch_selection: { selected_k: null, selected_branches: null },
+            }))).length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 gap-3">
+                <p className="text-gray-500 text-sm">No clients yet.</p>
+                {isPM && (
                   <Link
                     to={`/accounts/${id}/clients/new`}
                     className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700"
                   >
                     Add your first client →
                   </Link>
-                </div>
-              ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b bg-gray-50">
-                      <th className="text-left px-4 py-3 font-semibold text-gray-600">Name</th>
-                      <th className="text-left px-4 py-3 font-semibold text-gray-600">Status</th>
-                      <th className="text-left px-4 py-3 font-semibold text-gray-600">Contact</th>
-                      <th className="text-left px-4 py-3 font-semibold text-gray-600">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {clients.map((c) => (
-                      <tr key={c.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-4 py-3">
-                          <Link to={`/clients/${c.id}`} className="font-medium text-gray-900 hover:text-blue-600">
-                            {c.display_name ?? c.name}
-                          </Link>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${c.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                            {c.status}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-gray-500 text-xs">{c.primary_contact_name ?? '—'}</td>
-                        <td className="px-4 py-3 flex gap-2">
-                          <Link to={`/clients/${c.id}`} className="text-blue-600 hover:underline text-xs">View</Link>
-                          <Link to={`/clients/${c.id}/setup`} className="text-gray-500 hover:underline text-xs">Setup</Link>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          )}
+                )}
+              </div>
+            ) : (
+              <ul className="divide-y">
+                {(overview?.clients ?? []).map((c) => (
+                  <ClientOverviewRow key={c.id} accountId={id!} client={c} />
+                ))}
+                {!overview && clients.map((c) => (
+                  // Fallback before /overview returns: lighter row that still
+                  // exposes the View Analysis link.
+                  <li key={c.id} className="px-5 py-4 flex items-center justify-between gap-4">
+                    <div>
+                      <Link to={`/clients/${c.id}`} className="font-medium text-gray-900 hover:text-blue-600">
+                        {c.display_name ?? c.name}
+                      </Link>
+                      <p className="text-xs text-gray-400 mt-0.5">Loading analysis status…</p>
+                    </div>
+                    <Link
+                      to={`/accounts/${id}/clients/${c.id}/analysis`}
+                      className="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                    >
+                      View Analysis →
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {/* Self-managed: surface client setup banner */}
+          {!isPM && selfClient && <ClientSetupBanner client={selfClient} />}
 
           {/* Recent uploads */}
           {account.recent_uploads.length > 0 && (
@@ -326,4 +380,66 @@ function ClientSetupBanner({ client }: { client: Client }) {
       </Link>
     </div>
   )
+}
+
+function ClientOverviewRow({
+  accountId,
+  client,
+}: {
+  accountId: string
+  client: OverviewClient
+}) {
+  const synthBadge = (() => {
+    switch (client.synthesis_status) {
+      case 'fresh':
+        return <span className="px-1.5 py-0.5 rounded bg-green-100 text-green-700 text-xs">Synthesis fresh</span>
+      case 'stale':
+        return <span className="px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 text-xs">Synthesis stale</span>
+      default:
+        return null
+    }
+  })()
+  const lastRun = client.last_analysis_at ? relativeTime(client.last_analysis_at) : null
+  const hasAnalysis = !!client.last_analysis_at
+  return (
+    <li className="px-5 py-4 flex items-center justify-between gap-4">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Link to={`/clients/${client.id}`} className="font-medium text-gray-900 hover:text-blue-600">
+            {client.display_name ?? client.name}
+          </Link>
+          {synthBadge}
+        </div>
+        <p className="text-xs text-gray-500 mt-0.5">
+          {client.property_count} {client.property_count === 1 ? 'property' : 'properties'}
+          {' · '}
+          {client.states_count} {client.states_count === 1 ? 'state' : 'states'}
+          {client.branch_selection.selected_k != null && (
+            <>{' · '}{client.branch_selection.selected_k} {client.branch_selection.selected_k === 1 ? 'branch' : 'branches'}</>
+          )}
+          {' · Last analysis: '}{lastRun ?? 'never'}
+        </p>
+      </div>
+      <Link
+        to={`/accounts/${accountId}/clients/${client.id}/analysis`}
+        className="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 whitespace-nowrap"
+      >
+        {hasAnalysis ? 'View Analysis →' : 'Start Analysis →'}
+      </Link>
+    </li>
+  )
+}
+
+function relativeTime(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return 'just now'
+  const sec = Math.floor(ms / 1000)
+  if (sec < 60) return `${sec}s ago`
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min} min ago`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}h ago`
+  const day = Math.floor(hr / 24)
+  if (day < 30) return `${day} day${day === 1 ? '' : 's'} ago`
+  return `${Math.floor(day / 30)} mo ago`
 }

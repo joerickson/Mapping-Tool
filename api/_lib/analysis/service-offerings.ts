@@ -46,27 +46,17 @@ export function isWorkforceBOffering(name: string): boolean {
   return /housekeeping|janitorial|S\s*&\s*I\b|porter/i.test(name)
 }
 
-// Pull every service_offering visible to this account (its own offerings +
-// the offerings of its clients). One query, returned as an id-keyed Map.
+// Pull every service_offering visible to (account, client) — the account's
+// account-level offerings plus the named client's own offerings.
 export async function loadAccountOfferings(
   db: SupabaseClient,
-  accountId: string
+  accountId: string,
+  clientId: string
 ): Promise<Map<string, OfferingRow>> {
-  // Get the account's clients first
-  const { data: clientRows } = await db
-    .from('clients')
-    .select('id')
-    .eq('account_id', accountId)
-  const clientIds = (clientRows ?? []).map((c: any) => c.id)
-
   const { data: offerings, error } = await db
     .from('service_offerings')
     .select('id, name, pricing_model, default_visits_per_year, default_hours_per_visit, default_crew_size')
-    .or(
-      `account_id.eq.${accountId}${
-        clientIds.length ? `,client_id.in.(${clientIds.join(',')})` : ''
-      }`
-    )
+    .or(`account_id.eq.${accountId},client_id.eq.${clientId}`)
   if (error) throw new Error(`service_offerings lookup failed: ${error.message}`)
 
   const map = new Map<string, OfferingRow>()

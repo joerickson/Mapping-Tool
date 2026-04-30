@@ -1,40 +1,7 @@
-// GET /api/analyses/account/[accountId]/latest
-// Returns the most recent portfolio_analyses row per module_key for this account.
-// Used by the dashboard to populate cards on load.
+// Phase 3.6 — moved to /clients/[clientId]/...  Returns 410 Gone.
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { createAdminClient } from '../../../_lib/supabase.js'
-import { authenticateRequest } from '../../../_lib/auth.js'
+import { MOVED_TO_CLIENT_SCOPE } from '../../../_lib/analysis/scope.js'
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method === 'OPTIONS') return res.status(200).end()
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
-
-  try {
-    await authenticateRequest(req)
-  } catch (err: any) {
-    return res.status(err.statusCode ?? 401).json({ error: err.message ?? 'Unauthorized' })
-  }
-
-  const accountId = req.query.accountId as string
-  const db = createAdminClient()
-
-  // Pull the most recent ~50 rows for this account; bucket client-side by module_key.
-  const { data, error } = await db
-    .from('portfolio_analyses')
-    .select('id, account_id, client_id, module_key, status, outputs, summary_text, property_count, created_at, completed_at, error_message')
-    .eq('account_id', accountId)
-    .order('created_at', { ascending: false })
-    .limit(50)
-
-  if (error) return res.status(500).json({ error: error.message })
-
-  const seen = new Set<string>()
-  const latest: any[] = []
-  for (const row of data ?? []) {
-    const r = row as any
-    if (seen.has(r.module_key)) continue
-    seen.add(r.module_key)
-    latest.push(r)
-  }
-  return res.status(200).json(latest)
+export default function handler(_req: VercelRequest, res: VercelResponse) {
+  return res.status(MOVED_TO_CLIENT_SCOPE.status).json(MOVED_TO_CLIENT_SCOPE.body)
 }

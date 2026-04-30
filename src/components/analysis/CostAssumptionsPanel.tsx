@@ -130,12 +130,13 @@ const GROUPS: Array<{
 
 interface Props {
   accountId: string
+  clientId: string
   // Optional initial-expand support so module cards can deep-link by group
   highlightGroup?: string | null
   onSaved?: () => void
 }
 
-export default function CostAssumptionsPanel({ accountId, highlightGroup, onSaved }: Props) {
+export default function CostAssumptionsPanel({ accountId, clientId, highlightGroup, onSaved }: Props) {
   const { getToken } = useAuth()
   const [data, setData] = useState<CostAssumptionsConstraints | null>(null)
   const [loading, setLoading] = useState(true)
@@ -152,7 +153,7 @@ export default function CostAssumptionsPanel({ accountId, highlightGroup, onSave
     try {
       const token = await getToken()
       const res = await fetch(
-        `/api/accounts/${accountId}/operational-constraints`,
+        `/api/accounts/${accountId}/clients/${clientId}/operational-constraints`,
         { headers: { Authorization: `Bearer ${token}` } }
       )
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -168,7 +169,7 @@ export default function CostAssumptionsPanel({ accountId, highlightGroup, onSave
   useEffect(() => {
     refresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accountId])
+  }, [accountId, clientId])
 
   // If a deep-link group changed, expand and scroll into view. The dashboard
   // appends "#<timestamp>" to the group name on each click so the same group
@@ -236,7 +237,7 @@ export default function CostAssumptionsPanel({ accountId, highlightGroup, onSave
         utilization_constraint: (data as any).utilization_constraint ?? undefined,
       }
       const res = await fetch(
-        `/api/accounts/${accountId}/operational-constraints`,
+        `/api/accounts/${accountId}/clients/${clientId}/operational-constraints`,
         {
           method: 'PUT',
           headers: {
