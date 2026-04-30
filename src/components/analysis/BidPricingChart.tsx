@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   BarChart,
   Bar,
@@ -9,14 +9,18 @@ import {
   Cell,
   CartesianGrid,
 } from 'recharts'
+import { ChevronDown, Loader2, Lock, Pencil, RotateCcw } from 'lucide-react'
 import { Card } from '../ui/Card'
 import Button from '../ui/Button'
+import { Input } from '../ui/Input'
 import {
   CHART_CATEGORICAL,
   tickStyle,
   tooltipStyle,
   useChartTheme,
 } from '../../hooks/useChartTheme'
+import { useAuth } from '../../hooks/useAuth'
+import { cn } from '../../lib/cn'
 import OvernightBreakdownDrawer from './OvernightBreakdownDrawer'
 
 interface BidOutputs {
@@ -189,6 +193,10 @@ interface BidPricingChartProps {
   accountId?: string
   clientId?: string
   onHotelsOverridden?: () => void
+  // Phase 4.2 — fired after any inline edit (rate, percentage, etc.)
+  // saves so the parent can re-run the bid pricing module. Defaults
+  // to the same callback as onHotelsOverridden when not provided.
+  onChanged?: () => void
 }
 
 export default function BidPricingChart({
@@ -196,9 +204,12 @@ export default function BidPricingChart({
   accountId,
   clientId,
   onHotelsOverridden,
+  onChanged,
 }: BidPricingChartProps) {
   const [hotelsOpen, setHotelsOpen] = useState(false)
+  const [expandedRow, setExpandedRow] = useState<string | null>(null)
   const theme = useChartTheme()
+  const triggerReRun = onChanged ?? onHotelsOverridden
   // Phase 3.7 — hotels is a structured object now; pull the dollar total
   // out of it (older bare-number outputs still work).
   const hotelsValue =
@@ -483,64 +494,73 @@ export default function BidPricingChart({
         </div>
       </section>
 
-      {/* Detailed breakdown */}
+      {/* Detailed breakdown — Phase 4.2 expandable rows. */}
       <section className="space-y-2">
         <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
           Detailed breakdown
         </h4>
         <ul className="divide-y divide-border rounded-md border border-border bg-surface">
-          {buildupRows.map((r) => (
-            <li
-              key={r.key}
-              className="flex items-center justify-between px-4 py-2 text-sm"
-            >
-              <span className="text-fg-muted">
-                {ROW_LABELS[r.key]}
-                {r.key === 'hotels' && hotelsObj?.breakdown && (
-                  <span className="ml-2 text-xs text-fg-subtle">
-                    ({hotelsObj.basis ?? 'calculated'}
-                    {hotelsObj.breakdown.total_nights > 0
-                      ? ` · ${hotelsObj.breakdown.total_nights} nights · ${hotelsObj.breakdown.cluster_count} cluster${hotelsObj.breakdown.cluster_count === 1 ? '' : 's'} · ${hotelsObj.breakdown.properties_requiring_overnight} prop${hotelsObj.breakdown.properties_requiring_overnight === 1 ? '' : 's'} @ $${hotelsObj.breakdown.cost_per_night}/night`
-                      : ` · 0 overnight trips found — verify branches + overnight_trigger_one_way_hours`}
-                    )
+          {buildupRows.map((r) => {
+            const isOpen = expandedRow === r.key
+            const inlineMeta = (() => {
+              if (r.key === 'hotels' && hotelsObj?.breakdown) {
+                return hotelsObj.breakdown.total_nights > 0
+                  ? `${hotelsObj.breakdown.total_nights} nights · ${hotelsObj.breakdown.cluster_count} cluster${hotelsObj.breakdown.cluster_count === 1 ? '' : 's'} · $${hotelsObj.breakdown.cost_per_night}/night`
+                  : `0 overnight trips found`
+              }
+              if (r.key === 'branch_overhead' && branchOverheadObj?.breakdown) {
+                return `${branchOverheadObj.breakdown.main_count} main · ${branchOverheadObj.breakdown.satellite_count} satellite`
+              }
+              if (r.key === 'insurance' && insuranceObj?.breakdown) {
+                return insuranceObj.breakdown.method === 'percentage_of_revenue'
+                  ? `${insuranceObj.breakdown.applied_percentage}% × revenue${insuranceObj.breakdown.hit_minimum ? ' · hit minimum' : ''}`
+                  : 'flat amount'
+              }
+              if (r.key === 'vehicle_lease' && vehicleCostsObj?.breakdown) {
+                return `${vehicleCostsObj.breakdown.per_crew?.length ?? 0} crews${
+                  vehicleCostsObj.breakdown.fuel_excluded_crew_labels?.length
+                    ? ` · ${vehicleCostsObj.breakdown.fuel_excluded_crew_labels.length} personal vehicle`
+                    : ''
+                }`
+              }
+              return null
+            })()
+            return (
+              <li key={r.key}>
+                <button
+                  type="button"
+                  onClick={() => setExpandedRow(isOpen ? null : r.key)}
+                  className="w-full flex items-center justify-between gap-3 px-4 py-2 text-sm hover:bg-surface-subtle/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset"
+                >
+                  <span className="flex items-center gap-2 text-fg-muted text-left">
+                    <ChevronDown
+                      className={cn(
+                        'h-3 w-3 text-fg-subtle transition-transform',
+                        isOpen && 'rotate-180'
+                      )}
+                    />
+                    {ROW_LABELS[r.key]}
+                    {inlineMeta && (
+                      <span className="text-xs text-fg-subtle">({inlineMeta})</span>
+                    )}
                   </span>
-                )}
-                {r.key === 'branch_overhead' && branchOverheadObj?.breakdown && (
-                  <span className="ml-2 text-xs text-fg-subtle">
-                    ({branchOverheadObj.basis ?? 'calculated'} · {branchOverheadObj.breakdown.main_count} main · {branchOverheadObj.breakdown.satellite_count} satellite)
+                  <span className="font-mono tabular-nums text-fg">
+                    ${r.value.toLocaleString()}
                   </span>
+                </button>
+                {isOpen && (
+                  <BidLineDetail
+                    rowKey={r.key}
+                    rowValue={r.value}
+                    accountId={accountId}
+                    clientId={clientId}
+                    onOpenHotels={() => setHotelsOpen(true)}
+                    onChanged={triggerReRun}
+                  />
                 )}
-                {r.key === 'insurance' && insuranceObj?.breakdown && (
-                  <span className="ml-2 text-xs text-fg-subtle">
-                    ({insuranceObj.breakdown.method === 'percentage_of_revenue'
-                      ? `${insuranceObj.breakdown.applied_percentage}% × $${insuranceObj.breakdown.basis_amount.toLocaleString()}${insuranceObj.breakdown.hit_minimum ? ' · hit minimum' : ''}`
-                      : 'flat amount'})
-                  </span>
-                )}
-                {r.key === 'vehicle_lease' && vehicleCostsObj?.breakdown && (
-                  <span className="ml-2 text-xs text-fg-subtle">
-                    ({vehicleCostsObj.basis ?? 'calculated'} · {vehicleCostsObj.breakdown.per_crew?.length ?? 0} crews
-                    {vehicleCostsObj.breakdown.fuel_excluded_crew_labels && vehicleCostsObj.breakdown.fuel_excluded_crew_labels.length > 0 && (
-                      <> · {vehicleCostsObj.breakdown.fuel_excluded_crew_labels.length} on personal vehicle</>
-                    )})
-                  </span>
-                )}
-                {r.key === 'hotels' && accountId && clientId && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setHotelsOpen(true)}
-                    className="ml-2"
-                  >
-                    View calculation
-                  </Button>
-                )}
-              </span>
-              <span className="font-mono tabular-nums text-fg">
-                ${r.value.toLocaleString()}
-              </span>
-            </li>
-          ))}
+              </li>
+            )
+          })}
           <li className="flex items-center justify-between border-t-2 border-border-strong px-4 py-2.5 text-sm">
             <span className="font-semibold text-fg">Total bid</span>
             <span className="font-mono text-base font-semibold tabular-nums text-fg">
@@ -619,4 +639,526 @@ function CompCard({ label, pct, color }: { label: string; pct: number; color: st
       </div>
     </div>
   )
+}
+
+// Phase 4.2 — per-row expanded calculation panel. Shows the formula
+// inputs with editable rate fields, locked indicators (with their
+// source module + a scroll/anchor link), and drawer launchers for
+// structured breakdowns. All saves PATCH /operational-constraints
+// then call onChanged so the parent re-runs the bid pricing module.
+type EditableSpec = {
+  field: string                  // operational-constraints column
+  jsonbContainer?: string         // for fields nested inside a jsonb column
+  jsonbKey?: string
+  label: string
+  unit: 'currency' | 'currency-per-mile' | 'percent-decimal' | 'percent-whole'
+  step?: string
+}
+type LockedSpec = {
+  label: string
+  source: string
+  link: { href: string; label: string }
+}
+
+function BidLineDetail({
+  rowKey,
+  rowValue,
+  accountId,
+  clientId,
+  onOpenHotels,
+  onChanged,
+}: {
+  rowKey: string
+  rowValue: number
+  accountId?: string
+  clientId?: string
+  onOpenHotels: () => void
+  onChanged?: () => void
+}) {
+  const { getToken } = useAuth()
+  const [constraints, setConstraints] = useState<Record<string, any> | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!accountId || !clientId) return
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    ;(async () => {
+      try {
+        const token = await getToken()
+        const res = await fetch(
+          `/api/accounts/${accountId}/clients/${clientId}/operational-constraints`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        )
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const j = await res.json()
+        if (!cancelled) setConstraints(j)
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [accountId, clientId, getToken])
+
+  const saveField = async (body: Record<string, unknown>) => {
+    if (!accountId || !clientId) return
+    const token = await getToken()
+    const res = await fetch(
+      `/api/accounts/${accountId}/clients/${clientId}/operational-constraints`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(body),
+      }
+    )
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}))
+      throw new Error((j as any).error ?? `HTTP ${res.status}`)
+    }
+    setConstraints(await res.json())
+    onChanged?.()
+  }
+
+  if (loading) {
+    return (
+      <div className="px-4 pb-3 pt-1 text-xs text-fg-muted flex items-center gap-1">
+        <Loader2 className="h-3 w-3 animate-spin" /> Loading…
+      </div>
+    )
+  }
+  if (error || !constraints) {
+    return (
+      <div className="px-4 pb-3 pt-1 text-xs text-danger">
+        {error ?? 'Could not load cost assumptions'}
+      </div>
+    )
+  }
+
+  const rows = renderRowDetail(rowKey, constraints)
+  return (
+    <div className="bg-surface-subtle/40 border-t border-border px-4 py-3 space-y-2">
+      {rows.formulaText && (
+        <p className="text-[11px] text-fg-subtle italic">{rows.formulaText}</p>
+      )}
+      <div className="space-y-1.5">
+        {rows.locked.map((l, i) => (
+          <LockedFieldRow key={`l-${i}`} spec={l} />
+        ))}
+        {rows.editable.map((e, i) => (
+          <InlineEditableRow
+            key={`e-${i}`}
+            spec={e}
+            constraints={constraints}
+            onSave={saveField}
+          />
+        ))}
+      </div>
+      {rows.actions.length > 0 && (
+        <div className="flex flex-wrap gap-2 pt-1">
+          {rows.actions.map((a, i) =>
+            a.kind === 'open-hotels' ? (
+              <Button
+                key={`a-${i}`}
+                size="sm"
+                variant="secondary"
+                onClick={onOpenHotels}
+              >
+                {a.label}
+              </Button>
+            ) : (
+              <Button
+                key={`a-${i}`}
+                size="sm"
+                variant="secondary"
+                onClick={() => a.href && navigateToAnchor(a.href)}
+              >
+                {a.label}
+              </Button>
+            )
+          )}
+        </div>
+      )}
+      <p className="text-[10px] text-fg-subtle pt-1">
+        Total: <span className="font-mono">${rowValue.toLocaleString()}</span>
+        {' · '}Saved edits trigger a bid recalculation.
+      </p>
+    </div>
+  )
+}
+
+function navigateToAnchor(href: string) {
+  if (href.startsWith('#')) {
+    const id = href.slice(1)
+    const el = document.getElementById(id)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      return
+    }
+  }
+  window.location.hash = href.replace(/^#/, '')
+}
+
+function LockedFieldRow({ spec }: { spec: LockedSpec }) {
+  return (
+    <div className="flex items-center justify-between gap-2 text-xs">
+      <span className="flex items-center gap-1.5 text-fg-muted">
+        <Lock className="h-3 w-3 text-fg-subtle" />
+        {spec.label}
+        <span className="text-fg-subtle">— from {spec.source}</span>
+      </span>
+      <button
+        type="button"
+        onClick={() => navigateToAnchor(spec.link.href)}
+        className="text-accent text-[11px] hover:underline"
+      >
+        {spec.link.label} →
+      </button>
+    </div>
+  )
+}
+
+function InlineEditableRow({
+  spec,
+  constraints,
+  onSave,
+}: {
+  spec: EditableSpec
+  constraints: Record<string, any>
+  onSave: (body: Record<string, unknown>) => Promise<void>
+}) {
+  // Read current value (raw storage form). For jsonb-nested fields,
+  // walk the container.
+  const rawCurrent = spec.jsonbContainer
+    ? (constraints[spec.jsonbContainer] ?? {})[spec.jsonbKey ?? '']
+    : constraints[spec.field]
+  const rawDefault = spec.jsonbContainer
+    ? (constraints.system_defaults?.[spec.jsonbContainer] ?? {})[spec.jsonbKey ?? '']
+    : constraints.system_defaults?.[spec.field]
+
+  // Convert raw storage → display value.
+  const toDisplay = (v: number | null | undefined): string => {
+    if (v == null) return ''
+    if (spec.unit === 'percent-decimal') return String(Math.round(v * 1000) / 10) // 0.18 → 18
+    return String(v)
+  }
+  const fromDisplay = (s: string): number | null => {
+    if (s.trim() === '') return null
+    const n = Number(s)
+    if (!Number.isFinite(n)) return null
+    if (spec.unit === 'percent-decimal') return n / 100
+    return n
+  }
+  const formatDisplay = (v: number | null | undefined): string => {
+    if (v == null) return '—'
+    if (spec.unit === 'currency') return `$${Number(v).toFixed(2)}`
+    if (spec.unit === 'currency-per-mile') return `$${Number(v).toFixed(3)}/mi`
+    if (spec.unit === 'percent-decimal') return `${(Number(v) * 100).toFixed(1)}%`
+    if (spec.unit === 'percent-whole') return `${Number(v).toFixed(1)}%`
+    return String(v)
+  }
+
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(toDisplay(rawCurrent))
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const isOverridden =
+    typeof rawCurrent === 'number' &&
+    typeof rawDefault === 'number' &&
+    Math.abs(rawCurrent - rawDefault) > 1e-9
+
+  const submit = async (value: number | null) => {
+    setSaving(true)
+    setErr(null)
+    try {
+      const body: Record<string, unknown> = {}
+      if (spec.jsonbContainer && spec.jsonbKey) {
+        const merged = { ...(constraints[spec.jsonbContainer] ?? {}) }
+        if (value == null) delete merged[spec.jsonbKey]
+        else merged[spec.jsonbKey] = value
+        body[spec.jsonbContainer] = merged
+      } else {
+        body[spec.field] = value
+      }
+      await onSave(body)
+      setEditing(false)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-2 text-xs">
+      <span className="text-fg-muted">{spec.label}</span>
+      {editing ? (
+        <div className="flex items-center gap-1.5">
+          <Input
+            type="number"
+            step={spec.step ?? 'any'}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            disabled={saving}
+            autoFocus
+            className="w-24 h-7 text-xs font-mono"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') submit(fromDisplay(draft))
+              if (e.key === 'Escape') {
+                setDraft(toDisplay(rawCurrent))
+                setEditing(false)
+              }
+            }}
+          />
+          <Button
+            size="sm"
+            onClick={() => submit(fromDisplay(draft))}
+            disabled={saving}
+          >
+            {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setDraft(toDisplay(rawCurrent))
+              setEditing(false)
+              setErr(null)
+            }}
+            disabled={saving}
+          >
+            Cancel
+          </Button>
+          {err && <span className="text-danger text-[10px]">{err}</span>}
+        </div>
+      ) : (
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-fg tabular-nums">{formatDisplay(rawCurrent)}</span>
+          {isOverridden && (
+            <button
+              type="button"
+              onClick={() => submit(null)}
+              className="text-fg-subtle hover:text-danger inline-flex items-center gap-0.5 text-[10px]"
+              title={`Reset to default (${formatDisplay(rawDefault)})`}
+              disabled={saving}
+            >
+              <RotateCcw className="h-3 w-3" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setDraft(toDisplay(rawCurrent))
+              setEditing(true)
+            }}
+            className="text-accent hover:text-accent-strong inline-flex items-center gap-0.5 text-[10px]"
+          >
+            <Pencil className="h-3 w-3" />
+            Edit
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function renderRowDetail(
+  rowKey: string,
+  _constraints: Record<string, any>
+): {
+  formulaText: string | null
+  locked: LockedSpec[]
+  editable: EditableSpec[]
+  actions: Array<{ kind: 'open-hotels' | 'navigate'; label: string; href?: string }>
+} {
+  const HOURS_LINK: LockedSpec['link'] = {
+    href: '#cost-group-productivity-rules',
+    label: 'Edit hours-per-visit defaults',
+  }
+  const CREW_LINK: LockedSpec['link'] = {
+    href: '#cost-group-crew-economics',
+    label: 'Edit crew economics',
+  }
+  const REVENUE_NOTE = 'cascades from service line pricing'
+  switch (rowKey) {
+    case 'direct_labor':
+      return {
+        formulaText: 'Hours × crew size × hourly loaded labor cost',
+        locked: [
+          { label: 'Total work hours', source: 'Cost Assumptions', link: HOURS_LINK },
+          { label: 'Crew size', source: 'Crew Strategy', link: CREW_LINK },
+        ],
+        editable: [
+          {
+            field: 'hourly_loaded_labor_cost',
+            label: 'Hourly loaded labor cost',
+            unit: 'currency',
+            step: '0.01',
+          },
+        ],
+        actions: [],
+      }
+    case 'vehicle_fuel':
+      return {
+        formulaText: 'Drive miles × fuel cost per mile',
+        locked: [
+          {
+            label: 'Drive miles',
+            source: 'routing template',
+            link: { href: '#crew-strategy', label: 'Open Crew Strategy' },
+          },
+        ],
+        editable: [
+          {
+            field: 'fuel_cost_per_mile',
+            label: 'Fuel cost per mile',
+            unit: 'currency-per-mile',
+            step: '0.001',
+          },
+        ],
+        actions: [],
+      }
+    case 'vehicle_lease':
+      return {
+        formulaText: 'Per-crew vehicle config (lease, purchase, or personal reimbursement)',
+        locked: [],
+        editable: [],
+        actions: [
+          {
+            kind: 'navigate',
+            label: 'Edit per-crew vehicle config',
+            href: '#cost-group-vehicle--fuel',
+          },
+        ],
+      }
+    case 'hotels':
+      return {
+        formulaText: 'Per-cluster overnight cost from the Phase 4.1 cluster breakdown',
+        locked: [],
+        editable: [],
+        actions: [{ kind: 'open-hotels', label: 'View / edit cluster breakdown' }],
+      }
+    case 'supplies':
+      return {
+        formulaText: 'Direct labor × supplies % of labor',
+        locked: [{ label: 'Direct labor', source: 'cascades from labor' } as any].map(
+          (l) =>
+            ({
+              ...l,
+              link: HOURS_LINK,
+            }) as LockedSpec
+        ),
+        editable: [
+          {
+            field: 'supplies_pct_of_labor',
+            label: 'Supplies (% of labor)',
+            unit: 'percent-decimal',
+            step: '0.1',
+          },
+        ],
+        actions: [],
+      }
+    case 'branch_overhead':
+      return {
+        formulaText: 'Sum of per-branch overhead (main / satellite breakdown)',
+        locked: [
+          {
+            label: 'Selected branches',
+            source: 'Branch Decision',
+            link: { href: '#branch-decision', label: 'Edit branch selection' },
+          },
+        ],
+        editable: [],
+        actions: [
+          {
+            kind: 'navigate',
+            label: 'Edit per-branch overhead config',
+            href: '#cost-group-branch--operational-costs',
+          },
+        ],
+      }
+    case 'insurance':
+      return {
+        formulaText: 'Bid revenue × insurance % (subject to minimum premium)',
+        locked: [
+          { label: 'Bid revenue', source: REVENUE_NOTE, link: HOURS_LINK },
+        ],
+        editable: [
+          {
+            field: 'insurance_config',
+            jsonbContainer: 'insurance_config',
+            jsonbKey: 'percentage_of_revenue',
+            label: 'Insurance (% of revenue)',
+            unit: 'percent-whole',
+            step: '0.1',
+          },
+          {
+            field: 'insurance_config',
+            jsonbContainer: 'insurance_config',
+            jsonbKey: 'minimum_annual_premium',
+            label: 'Minimum annual premium',
+            unit: 'currency',
+            step: '100',
+          },
+        ],
+        actions: [],
+      }
+    case 'corporate_overhead':
+      return {
+        formulaText: 'Direct cost × corporate overhead %',
+        locked: [
+          {
+            label: 'Direct cost',
+            source: 'cascades',
+            link: HOURS_LINK,
+          },
+        ],
+        editable: [
+          {
+            field: 'corporate_overhead_pct',
+            label: 'Corporate overhead (% of direct cost)',
+            unit: 'percent-decimal',
+            step: '0.1',
+          },
+        ],
+        actions: [],
+      }
+    case 'margin':
+      return {
+        formulaText: 'cost × margin_pct ÷ (1 − margin_pct)',
+        locked: [
+          {
+            label: 'Total cost (pre-margin)',
+            source: 'cascades',
+            link: HOURS_LINK,
+          },
+        ],
+        editable: [
+          {
+            field: 'target_gross_margin_pct',
+            label: 'Target gross margin (account default)',
+            unit: 'percent-decimal',
+            step: '0.5',
+          },
+        ],
+        actions: [
+          {
+            kind: 'navigate',
+            label: 'Edit per-line margins (Service Line Pricing)',
+            href: '#cost-group-branch--operational-costs',
+          },
+        ],
+      }
+    default:
+      return { formulaText: null, locked: [], editable: [], actions: [] }
+  }
 }

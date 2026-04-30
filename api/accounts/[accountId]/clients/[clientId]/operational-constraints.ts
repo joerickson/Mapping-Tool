@@ -2,6 +2,10 @@
 //   GET — returns the saved constraints merged with system defaults
 //   PUT — upserts the saved row. Branches without lat/lng get geocoded
 //         server-side using the existing google-address helper.
+//   PATCH — Phase 4.2 partial update. Only the fields present in the
+//           body are written; everything else is left untouched. Used
+//           by inline-edit affordances on the Bid Pricing card so a
+//           single-field edit doesn't blow away other overrides.
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createAdminClient } from '../../../../_lib/supabase.js'
 import { authenticateRequest } from '../../../../_lib/auth.js'
@@ -218,6 +222,102 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (error) {
       return res.status(500).json({ error: `Failed to save: ${error.message}` })
+    }
+
+    await triggerSynthesisRefresh(db, accountId, clientId)
+    const merged = await loadConstraints(db, accountId, clientId)
+    return res.status(200).json({ ...merged, system_defaults: SYSTEM_DEFAULTS })
+  }
+
+  if (req.method === 'PATCH') {
+    const body = (req.body ?? {}) as Record<string, unknown>
+
+    const ALLOWED_NUMERIC = new Set<string>([
+      'crew_size',
+      'hours_per_day',
+      'hourly_loaded_labor_cost',
+      'project_clean_base_hours',
+      'project_clean_hours_per_sqft',
+      'upholstery_solo_hours',
+      'upholstery_combo_hours_pct',
+      'recurring_productivity_sqft_per_hour',
+      'fuel_cost_per_mile',
+      'vehicles_per_crew',
+      'surge_weeks_per_year',
+      'surge_crew_count',
+      'surge_premium_multiplier',
+      'branch_overhead_annual',
+      'hotels_annual',
+      'vehicle_lease_annual_per_crew',
+      'supplies_pct_of_labor',
+      'insurance_annual',
+      'corporate_overhead_pct',
+      'target_gross_margin_pct',
+      'drive_speed_mph',
+      'max_one_way_drive_minutes',
+      'working_days_per_year',
+      'visits_per_year_default',
+      'hotels_annual_override',
+      'branch_overhead_annual_override',
+      'insurance_annual_override',
+      'vehicle_lease_annual_per_crew_override',
+    ])
+    const ALLOWED_JSONB = new Set<string>([
+      'hotel_cost_config',
+      'branch_overhead_config',
+      'branch_overhead_overrides',
+      'insurance_config',
+      'vehicle_config',
+      'labor_burden_breakdown',
+      'population_constraint',
+      'utilization_constraint',
+    ])
+
+    const patch: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+      updated_by: ctx.userId ?? null,
+    }
+    for (const [k, v] of Object.entries(body)) {
+      if (ALLOWED_NUMERIC.has(k)) {
+        if (v === null || v === '' || v === undefined) {
+          patch[k] = null
+        } else {
+          const n = typeof v === 'string' ? parseFloat(v) : (v as number)
+          patch[k] = Number.isFinite(n) ? n : null
+        }
+      } else if (ALLOWED_JSONB.has(k)) {
+        if (v == null || typeof v === 'object') patch[k] = v
+      }
+    }
+
+    // Only update if a row already exists. If not, fall through to a
+    // minimal upsert so first-time PATCH still works.
+    const { data: existing } = await db
+      .from('account_operational_constraints')
+      .select('account_id')
+      .eq('account_id', accountId)
+      .eq('client_id', clientId)
+      .maybeSingle()
+
+    if (existing) {
+      const { error } = await db
+        .from('account_operational_constraints')
+        .update(patch)
+        .eq('account_id', accountId)
+        .eq('client_id', clientId)
+      if (error) {
+        return res.status(500).json({ error: `Failed to save: ${error.message}` })
+      }
+    } else {
+      const { error } = await db
+        .from('account_operational_constraints')
+        .upsert(
+          { account_id: accountId, client_id: clientId, ...patch },
+          { onConflict: 'account_id,client_id' }
+        )
+      if (error) {
+        return res.status(500).json({ error: `Failed to save: ${error.message}` })
+      }
     }
 
     await triggerSynthesisRefresh(db, accountId, clientId)

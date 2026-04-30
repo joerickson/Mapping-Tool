@@ -744,6 +744,7 @@ export default function AccountAnalysisPage() {
           accountId={accountId!}
           clientId={clientId!}
           onHotelsOverridden={() => runModule('bid_pricing_structure', 'bid-pricing-structure')}
+          onChanged={() => runModule('bid_pricing_structure', 'bid-pricing-structure')}
         />
       )
     return null
