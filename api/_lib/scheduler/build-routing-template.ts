@@ -286,6 +286,38 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
     target.total_drive_hours += cluster.estimated_drive_hours
   }
 
+  // Branch-prefixed crew labels: pick each crew's dominant branch
+  // (most work hours among assigned clusters) and number per-branch so
+  // labels read "Frisco TX Crew 1", "Frisco TX Crew 2", "Sugarland Crew 1".
+  if (input.branches.length > 0) {
+    const branchCounters = new Map<number, number>()
+    for (const crew of crews) {
+      const workByBranch = new Map<number, number>()
+      for (const clusterId of crew.cluster_ids) {
+        const cluster = clusters.find((c) => c.cluster_id === clusterId)
+        if (!cluster) continue
+        workByBranch.set(
+          cluster.base_branch_index,
+          (workByBranch.get(cluster.base_branch_index) ?? 0) + cluster.total_work_hours
+        )
+      }
+      let dominantBranchIdx = -1
+      let dominantHours = -1
+      for (const [idx, hours] of workByBranch) {
+        if (hours > dominantHours) {
+          dominantHours = hours
+          dominantBranchIdx = idx
+        }
+      }
+      if (dominantBranchIdx >= 0) {
+        const branchName = input.branches[dominantBranchIdx]?.name ?? `Branch ${dominantBranchIdx + 1}`
+        const counter = (branchCounters.get(dominantBranchIdx) ?? 0) + 1
+        branchCounters.set(dominantBranchIdx, counter)
+        crew.label = `${branchName} Crew ${counter}`
+      }
+    }
+  }
+
   // ── 5. Sequence trips on cycle calendar ───────────────────────────
   const trips: any[] = []
   const unplaced: any[] = []

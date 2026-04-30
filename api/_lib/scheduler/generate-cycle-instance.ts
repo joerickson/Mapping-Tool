@@ -130,6 +130,16 @@ export async function generateCycleInstance(
   const scheduledVisits: any[] = []
   let addonsDropped = 0
 
+  // Look up branch-prefixed crew labels (e.g. "Frisco TX Crew 1") from
+  // the template; fall back to generic "Crew N" for older templates that
+  // pre-date the labeling pass.
+  const crewLabelByIndex = new Map<number, string>()
+  for (const ca of (template.crew_assignments ?? []) as any[]) {
+    if (typeof ca?.crew_index === 'number' && typeof ca?.crew_label === 'string') {
+      crewLabelByIndex.set(ca.crew_index, ca.crew_label)
+    }
+  }
+
   for (const trip of trips) {
     for (const day of trip.days ?? []) {
       const dayOffset = (trip.relative_start_day ?? 0) + ((day.trip_day_number ?? 1) - 1)
@@ -144,7 +154,7 @@ export async function generateCycleInstance(
         trip_id: trip.trip_id,
         trip_label: trip.trip_label ?? trip.trip_id,
         crew_index: trip.crew_index ?? 0,
-        crew_label: `Crew ${(trip.crew_index ?? 0) + 1}`,
+        crew_label: crewLabelByIndex.get(trip.crew_index ?? 0) ?? `Crew ${(trip.crew_index ?? 0) + 1}`,
         scheduled_date: scheduledDate,
         day_type: trip.trip_type === 'overnight' ? 'overnight' : 'local',
         start_location: trip.start_location ?? {},
