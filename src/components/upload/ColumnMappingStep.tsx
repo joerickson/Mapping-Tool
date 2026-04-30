@@ -44,7 +44,11 @@ function slugify(s: string): string {
 function isMappingValid(mappings: Record<string, string>): boolean {
   const targets = new Set(Object.values(mappings).filter((v) => v && v !== ''))
   if (!targets.has('address_line1') || !targets.has('city')) return false
-  return (targets.has('state') && targets.has('postal_code')) || targets.has('country')
+  // At least one of state / postal_code / country — that's enough for
+  // Google Address Validation to canonicalize the rest. We deliberately
+  // don't require postal_code because GAV fills in missing zips for
+  // US addresses given street + city + state.
+  return targets.has('state') || targets.has('postal_code') || targets.has('country')
 }
 
 interface NewFieldForm {
@@ -177,7 +181,7 @@ export default function ColumnMappingStep({
 
             {!valid && (
               <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-                Required: address_line1 + city + (state & postal_code, or country)
+                Required: address_line1 + city + at least one of (state, postal_code, country). Missing zips will be filled in by Google Address Validation during enrichment.
               </div>
             )}
 
