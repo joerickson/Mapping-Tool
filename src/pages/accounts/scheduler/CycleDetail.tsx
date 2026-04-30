@@ -45,6 +45,7 @@ interface Visit {
 interface CrewDay {
   id: string
   trip_id: string
+  trip_label: string | null
   crew_index: number
   scheduled_date: string
   day_type: string
@@ -190,8 +191,11 @@ export default function CycleDetailPage() {
                   <TableRow key={cd.id}>
                     <TableCell className="text-xs font-tabular">{cd.scheduled_date}</TableCell>
                     <TableCell numeric>{cd.crew_index + 1}</TableCell>
-                    <TableCell className="text-xs font-mono">
-                      {cd.trip_id} {cd.trip_total_days && cd.trip_total_days > 1 ? `(d${cd.trip_day_number}/${cd.trip_total_days})` : ''}
+                    <TableCell className="text-sm">
+                      {cd.trip_label ?? cd.trip_id}
+                      {cd.trip_total_days && cd.trip_total_days > 1
+                        ? <span className="text-fg-subtle text-xs ml-1">(day {cd.trip_day_number}/{cd.trip_total_days})</span>
+                        : null}
                     </TableCell>
                     <TableCell>
                       <Badge variant={cd.day_type === 'overnight' ? 'warning' : 'outline'}>

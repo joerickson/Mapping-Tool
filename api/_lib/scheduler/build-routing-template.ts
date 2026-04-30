@@ -18,6 +18,7 @@ import {
   evaluateConstraint,
   type StoredConstraint,
 } from './constraint-evaluator.js'
+import { nearestCity } from '../analysis/constrained-kmeans.js'
 
 export interface PropertyForBuild {
   service_location_id: string
@@ -97,6 +98,7 @@ interface VisitSpec {
 
 interface ClusterSpec {
   cluster_id: string
+  cluster_label: string
   cluster_type: 'local' | 'remote'
   base_branch_index: number
   centroid_lat: number
@@ -421,10 +423,17 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
         }
 
         if (days.length > 0) {
+          const tripId = `${cluster.cluster_id}-v${visitIdx + 1}`
+          const tripLabel =
+            cluster.trips_per_cycle > 1
+              ? `${cluster.cluster_label} – Visit ${visitIdx + 1}`
+              : cluster.cluster_label
           trips.push({
-            trip_id: `${cluster.cluster_id}-v${visitIdx + 1}`,
+            trip_id: tripId,
+            trip_label: tripLabel,
             crew_index: crew.index,
             cluster_id: cluster.cluster_id,
+            cluster_label: cluster.cluster_label,
             trip_type: cluster.cluster_type === 'remote' ? 'overnight' : 'local',
             relative_start_day: tripStart,
             duration_days: days.length,
@@ -491,6 +500,7 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
     cycle_length_label: cycleResult.cycle_length_label,
     geographic_clusters: clusters.map((c) => ({
       cluster_id: c.cluster_id,
+      cluster_label: c.cluster_label,
       cluster_type: c.cluster_type,
       centroid_lat: c.centroid_lat,
       centroid_lng: c.centroid_lng,
@@ -552,6 +562,7 @@ function makeCluster(
 
   return {
     cluster_id,
+    cluster_label: makeClusterLabel(cluster_type, c, branch),
     cluster_type,
     base_branch_index,
     centroid_lat: c.lat,
@@ -562,6 +573,22 @@ function makeCluster(
     trips_per_cycle: tripsPerCycle,
     days_on_site_per_trip: daysOnSite,
   }
+}
+
+// Human-readable cluster label. For local clusters we use the branch
+// name (this is the crew's home base — most familiar to the user). For
+// remote clusters we use the nearest city to the centroid.
+function makeClusterLabel(
+  cluster_type: 'local' | 'remote',
+  c: { lat: number; lng: number },
+  branch: { name: string; lat: number; lng: number } | undefined
+): string {
+  if (cluster_type === 'local' && branch) {
+    return `${branch.name} (local)`
+  }
+  const city = nearestCity(c.lat, c.lng)
+  if (city) return `${city.city}, ${city.state_id}`
+  return `(${c.lat.toFixed(2)}, ${c.lng.toFixed(2)})`
 }
 
 function minutesFromStart(iso: string, startHHMM: string): number {

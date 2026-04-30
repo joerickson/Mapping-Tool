@@ -139,6 +139,7 @@ export async function generateCycleInstance(
           cycle_instance_id: cycleInstanceId,
           template_id: templateId,
           trip_id: trip.trip_id,
+          trip_label: trip.trip_label ?? trip.trip_id,
           crew_index: trip.crew_index ?? 0,
           crew_label: `Crew ${(trip.crew_index ?? 0) + 1}`,
           scheduled_date: scheduledDate,
