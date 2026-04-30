@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   ListChecks,
   Map as MapIcon,
+  Pencil,
   Sparkles,
 } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
@@ -759,12 +760,25 @@ export default function AccountAnalysisPage() {
             the TopBar so we don't repeat it inline. */}
         <header className="flex items-start justify-between gap-6">
           <div className="space-y-2 min-w-0">
-            <h1 className="text-2xl font-semibold tracking-tight text-fg">
-              Smart Analysis
+            <h1 className="text-2xl font-semibold tracking-tight text-fg flex items-center gap-2 flex-wrap">
+              <span>
+                Smart Analysis
+                {client && (
+                  <span className="text-fg-muted font-normal">
+                    {' · '}{client.display_name ?? client.name}
+                  </span>
+                )}
+              </span>
               {client && (
-                <span className="text-fg-muted font-normal">
-                  {' · '}{client.display_name ?? client.name}
-                </span>
+                <Link
+                  to={`/clients/${client.id}`}
+                  title="Edit client (name, contact, status, brand color)"
+                  aria-label="Edit client"
+                  className="inline-flex items-center gap-1 text-xs font-normal text-fg-subtle hover:text-accent transition-colors border border-border rounded px-1.5 py-0.5"
+                >
+                  <Pencil className="h-3 w-3" />
+                  Edit client
+                </Link>
               )}
             </h1>
             <p className="text-sm text-fg-muted">
