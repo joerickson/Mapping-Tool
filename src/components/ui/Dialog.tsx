@@ -56,8 +56,12 @@ export const DialogContent = forwardRef<
         opacity: 1,
         ...style,
       }}
+      // flex flex-col (not grid) so consumers can mark a child as
+      // flex-1 min-h-0 overflow-y-auto and have the list scroll inside
+      // the dialog. grid + a min-content child grows the dialog to fit
+      // the content (the bug behind 1000-item lists overflowing).
       className={cn(
-        'fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%]',
+        'fixed left-[50%] top-[50%] z-50 flex flex-col w-full max-w-lg max-h-[90vh] translate-x-[-50%] translate-y-[-50%]',
         'gap-4 border border-border p-6 shadow-2xl rounded-lg',
         'data-[state=open]:animate-in data-[state=closed]:animate-out',
         'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
