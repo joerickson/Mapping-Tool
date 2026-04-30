@@ -22,6 +22,7 @@ import AdminHubPage from './pages/admin/AdminHub'
 import AdminUsersPage from './pages/admin/Users'
 import AdminBootstrapPage from './pages/admin/Bootstrap'
 import InviteAcceptPage from './pages/InviteAccept'
+import AuthCallbackPage from './pages/AuthCallback'
 import AdminGuard from './components/auth/AdminGuard'
 import AccountsListPage from './pages/accounts/AccountsList'
 import NewAccountPage from './pages/accounts/NewAccount'
@@ -187,6 +188,7 @@ export default function App() {
           <Route path="/admin/parcels/counties" element={<AuthGuard><AdminGuard><CountiesPage /></AdminGuard></AuthGuard>} />
           <Route path="/admin/parcels/fallbacks" element={<AuthGuard><AdminGuard><FallbacksPage /></AdminGuard></AuthGuard>} />
           <Route path="/invite/:token" element={<InviteAcceptPage />} />
+          <Route path="/auth/callback" element={<AuthCallbackPage />} />
 
           {/* Design system reference (Phase B). Public for now — no AuthGuard
               so designers can hit the URL directly during review. */}
