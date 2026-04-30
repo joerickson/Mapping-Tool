@@ -209,7 +209,18 @@ export default function GanttView({
         <table className="border-collapse min-w-full">
           <thead>
             <tr className="bg-surface-subtle">
-              <th className="sticky left-0 z-10 bg-surface-subtle border-b border-r border-border px-3 py-2 text-left text-[10px] uppercase tracking-wider text-fg-subtle font-semibold">
+              <th
+                // Inline opaque background + bumped z-index so cells
+                // can't scroll through. border-collapse + sticky + rowSpan
+                // produces a known browser bug where Tailwind's bg-* on
+                // a sticky table cell paints transparently in some
+                // engines; the inline style guarantees a solid color.
+                style={{
+                  backgroundColor: 'var(--color-bg-subtle, #fafafa)',
+                  backgroundClip: 'padding-box',
+                }}
+                className="sticky left-0 z-20 border-b border-r border-border px-3 py-2 text-left text-[10px] uppercase tracking-wider text-fg-subtle font-semibold"
+              >
                 Crew
               </th>
               {allDates.map((d) => {
@@ -279,8 +290,16 @@ export default function GanttView({
                 <tr>
                   <th
                     rowSpan={2}
-                    className="sticky left-0 z-10 bg-surface border-b border-r border-border px-3 py-2 text-left whitespace-nowrap align-top"
-                    style={{ minWidth: 180 }}
+                    className="sticky left-0 z-20 border-b border-r border-border px-3 py-2 text-left whitespace-nowrap align-top"
+                    // Inline opaque background — see Crew header note.
+                    // Without this, the rowSpan'd sticky cell's bg-surface
+                    // class doesn't paint reliably and the day cells in
+                    // row 2 visibly scroll under the crew label.
+                    style={{
+                      minWidth: 180,
+                      backgroundColor: 'var(--color-bg, #ffffff)',
+                      backgroundClip: 'padding-box',
+                    }}
                   >
                     <div className="flex items-center gap-2">
                       <span
