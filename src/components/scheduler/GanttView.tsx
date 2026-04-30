@@ -1,6 +1,12 @@
-// Phase 4f-1 MVP Gantt view — color-coded crew × day grid.
-// Drag-drop, multi-select, keyboard shortcuts ship in 4f-2.
-import { useMemo } from 'react'
+// Phase 4f-2 Gantt view — color-coded crew × day grid with drag-drop
+// (cell → cell moves the day's visits) + multi-select (Cmd/Ctrl click)
+// + keyboard shortcuts (T jumps to today; L/U lock/unlock selected;
+// Esc clears; Cmd+A selects all visible).
+//
+// Each cell represents one (crew, day). Dragging a cell moves all
+// visits scheduled to that day to the target's date and crew. Per-
+// visit drag would need an expanded interaction; ships in 4f-3.
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { stateClass, StateIcon, type CrewDayStateKind } from './CrewUtilizationChip'
 import { cn } from '../../lib/cn'
 
@@ -16,9 +22,17 @@ export interface UtilDay {
   trip_label: string | null
 }
 
+export interface DropTarget {
+  source: { crew_index: number; date: string }
+  target: { crew_index: number; date: string }
+}
+
 interface Props {
   days: UtilDay[]
   onCellClick?: (day: UtilDay) => void
+  onCellDrop?: (drop: DropTarget) => void
+  onBulkAction?: (action: 'lock' | 'unlock', cells: Array<{ crew_index: number; date: string }>) => void
+  scrollToToday?: number // a counter; when it changes, scroll to today
 }
 
 const CREW_COLORS = [
@@ -31,9 +45,25 @@ const CREW_COLORS = [
   'bg-slate-500',
 ]
 
-export default function GanttView({ days, onCellClick }: Props) {
-  // Group by crew, sort dates ascending. Build a sparse 2D grid keyed
-  // by crew_index → { date → day }.
+type CellKey = string
+const cellKey = (c: number, d: string): CellKey => `${c}|${d}`
+const parseCellKey = (k: CellKey): { crew_index: number; date: string } => {
+  const [c, d] = k.split('|')
+  return { crew_index: Number(c), date: d }
+}
+
+export default function GanttView({
+  days,
+  onCellClick,
+  onCellDrop,
+  onBulkAction,
+  scrollToToday,
+}: Props) {
+  const [selected, setSelected] = useState<Set<CellKey>>(new Set())
+  const [dragOver, setDragOver] = useState<CellKey | null>(null)
+  const dragSource = useRef<CellKey | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
   const { crews, allDates } = useMemo(() => {
     const crewMap = new Map<number, { label: string; cells: Map<string, UtilDay> }>()
     const dateSet = new Set<string>()
@@ -50,7 +80,6 @@ export default function GanttView({ days, onCellClick }: Props) {
     return { crews, allDates }
   }, [days])
 
-  // Per-crew totals
   const crewSummaries = useMemo(() => {
     return crews.map((c) => {
       const arr = Array.from(c.cells.values())
@@ -65,6 +94,55 @@ export default function GanttView({ days, onCellClick }: Props) {
     })
   }, [crews])
 
+  // Scroll to today when triggered.
+  useEffect(() => {
+    if (!scrollToToday || !containerRef.current) return
+    const today = new Date().toISOString().slice(0, 10)
+    const idx = allDates.findIndex((d) => d >= today)
+    if (idx === -1) return
+    const cellEl = containerRef.current.querySelector<HTMLElement>(
+      `[data-date="${allDates[idx]}"]`
+    )
+    if (cellEl) cellEl.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+  }, [scrollToToday, allDates])
+
+  // Keyboard: Esc clears, Cmd+A selects all "with-work" cells, L/U bulk.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tgt = e.target as HTMLElement
+      if (tgt?.tagName === 'INPUT' || tgt?.tagName === 'TEXTAREA' || tgt?.isContentEditable) return
+      const meta = e.metaKey || e.ctrlKey
+      if (e.key === 'Escape') {
+        setSelected(new Set())
+        return
+      }
+      if (meta && e.key === 'a') {
+        e.preventDefault()
+        const next = new Set<CellKey>()
+        for (const crew of crews) {
+          for (const [date, d] of crew.cells) {
+            if (d.state.kind !== 'idle' && d.state.kind !== 'between_trips') {
+              next.add(cellKey(crew.index, date))
+            }
+          }
+        }
+        setSelected(next)
+        return
+      }
+      if (selected.size > 0 && (e.key === 'l' || e.key === 'L')) {
+        e.preventDefault()
+        onBulkAction?.('lock', Array.from(selected).map(parseCellKey))
+        setSelected(new Set())
+      } else if (selected.size > 0 && (e.key === 'u' || e.key === 'U')) {
+        e.preventDefault()
+        onBulkAction?.('unlock', Array.from(selected).map(parseCellKey))
+        setSelected(new Set())
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [crews, selected, onBulkAction])
+
   if (crews.length === 0) {
     return (
       <div className="rounded-md border border-border bg-surface p-6 text-sm text-fg-muted">
@@ -75,7 +153,43 @@ export default function GanttView({ days, onCellClick }: Props) {
 
   return (
     <div className="rounded-md border border-border bg-surface overflow-hidden">
-      <div className="overflow-x-auto">
+      {selected.size > 0 && (
+        <div className="flex items-center justify-between gap-3 border-b border-accent/40 bg-accent/10 px-4 py-2 text-sm">
+          <span>
+            <span className="font-tabular font-medium">{selected.size}</span> day{selected.size === 1 ? '' : 's'} selected
+          </span>
+          <div className="flex items-center gap-2 text-xs">
+            <button
+              type="button"
+              onClick={() => {
+                onBulkAction?.('lock', Array.from(selected).map(parseCellKey))
+                setSelected(new Set())
+              }}
+              className="rounded border border-border bg-surface px-2 py-1 hover:bg-surface-subtle"
+            >
+              Lock (L)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onBulkAction?.('unlock', Array.from(selected).map(parseCellKey))
+                setSelected(new Set())
+              }}
+              className="rounded border border-border bg-surface px-2 py-1 hover:bg-surface-subtle"
+            >
+              Unlock (U)
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelected(new Set())}
+              className="text-fg-muted hover:text-fg"
+            >
+              Clear (Esc)
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="overflow-x-auto" ref={containerRef}>
         <table className="border-collapse min-w-full">
           <thead>
             <tr className="bg-surface-subtle">
@@ -130,21 +244,71 @@ export default function GanttView({ days, onCellClick }: Props) {
                       return (
                         <td
                           key={d}
+                          data-date={d}
                           className="border-b border-border bg-surface-subtle/30"
                           style={{ minWidth: 28, height: 36 }}
                         />
                       )
                     }
+                    const key = cellKey(crew.index, d)
+                    const isSelected = selected.has(key)
+                    const draggable = cell.state.kind !== 'idle' && cell.state.kind !== 'between_trips'
+                    const isDragOver = dragOver === key
                     return (
                       <td
                         key={d}
+                        data-date={d}
+                        draggable={draggable}
+                        onDragStart={(e) => {
+                          if (!draggable) return
+                          dragSource.current = key
+                          e.dataTransfer.effectAllowed = 'move'
+                          e.dataTransfer.setData('text/plain', key)
+                        }}
+                        onDragOver={(e) => {
+                          if (dragSource.current && dragSource.current !== key) {
+                            e.preventDefault()
+                            e.dataTransfer.dropEffect = 'move'
+                            setDragOver(key)
+                          }
+                        }}
+                        onDragLeave={() => {
+                          if (dragOver === key) setDragOver(null)
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault()
+                          const src = dragSource.current
+                          dragSource.current = null
+                          setDragOver(null)
+                          if (!src || src === key) return
+                          onCellDrop?.({
+                            source: parseCellKey(src),
+                            target: parseCellKey(key),
+                          })
+                        }}
+                        onDragEnd={() => {
+                          dragSource.current = null
+                          setDragOver(null)
+                        }}
+                        onClick={(e) => {
+                          if (e.metaKey || e.ctrlKey) {
+                            const next = new Set(selected)
+                            if (next.has(key)) next.delete(key)
+                            else next.add(key)
+                            setSelected(next)
+                          } else {
+                            onCellClick?.(cell)
+                          }
+                        }}
                         className={cn(
-                          'border-b border-border cursor-pointer transition-opacity hover:opacity-80',
-                          stateClass(cell.state.kind)
+                          'border-b border-border cursor-pointer transition-all',
+                          stateClass(cell.state.kind),
+                          isSelected && 'ring-2 ring-accent ring-inset',
+                          isDragOver && 'ring-2 ring-warning ring-inset opacity-70',
+                          draggable && 'cursor-grab'
                         )}
                         style={{ minWidth: 28, height: 36 }}
-                        title={`${cell.crew_label} · ${cell.scheduled_date}\n${cell.work_hours_scheduled.toFixed(1)}h · ${cell.utilization_pct}%${cell.trip_label ? `\n${cell.trip_label}` : ''}`}
-                        onClick={() => onCellClick?.(cell)}
+                        title={`${cell.crew_label} · ${cell.scheduled_date}\n${cell.work_hours_scheduled.toFixed(1)}h · ${cell.utilization_pct}%${cell.trip_label ? `\n${cell.trip_label}` : ''}\nCmd+click to select; drag to move`}
                       >
                         <div className="flex items-center justify-center h-full">
                           <StateIcon kind={cell.state.kind} className="opacity-60" />
@@ -176,6 +340,9 @@ export default function GanttView({ days, onCellClick }: Props) {
         </span>
         <span className="flex items-center gap-1">
           <span className="inline-block h-3 w-3 rounded bg-accent/70" /> Overnight
+        </span>
+        <span className="ml-auto text-fg-subtle">
+          Cmd+click to select · drag to move · T jumps to today
         </span>
       </div>
     </div>
