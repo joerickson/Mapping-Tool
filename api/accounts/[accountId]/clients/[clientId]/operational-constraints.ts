@@ -274,6 +274,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       'labor_burden_breakdown',
       'population_constraint',
       'utilization_constraint',
+      'crew_count_per_branch_override',
     ])
 
     const patch: Record<string, unknown> = {

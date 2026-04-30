@@ -65,6 +65,10 @@ export interface BidInputs {
   // analysis's recommended_option). Falls back to recommended when
   // null.
   crew_strategy_selected_option?: 'A' | 'B' | 'C' | null
+  // Phase 4.2 — manual per-branch crew count override. When set with
+  // any non-zero values, bid pricing ignores A/B/C and uses these
+  // counts directly. Total crews = sum of values. Keyed by branch name.
+  crew_count_per_branch_override?: Record<string, number> | null
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -108,6 +112,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     crew_strategy_selected_option:
       ((constraints as any).crew_strategy_selected_option as
         | 'A' | 'B' | 'C' | null
+        | undefined) ?? null,
+    crew_count_per_branch_override:
+      ((constraints as any).crew_count_per_branch_override as
+        | Record<string, number>
+        | null
         | undefined) ?? null,
   }
 
@@ -391,12 +400,31 @@ export function computeBidPricing(
   let resolvedVehicleFuel = inputs.total_annual_vehicle_cost
   let resolvedCrewCount = inputs.crew_count
   let recommendedOption: string | null = null
+
+  // Phase 4.2 — manual per-branch crew override. When the user has
+  // entered explicit crew counts per branch, sum them for the total
+  // crew count and treat this as the highest-priority source. Labor
+  // is then recomputed proportionally from the override total using
+  // the original Option B (or A if A is selected) per-crew rate so
+  // working_days_per_year / hours_per_day / hourly_loaded_labor_cost
+  // assumptions remain consistent with the analysis.
+  const perBranchOverride = inputs.crew_count_per_branch_override
+  const overrideTotalCrews =
+    perBranchOverride && typeof perBranchOverride === 'object'
+      ? Object.values(perBranchOverride).reduce(
+          (s, v) => s + (Number.isFinite(Number(v)) ? Math.max(0, Math.floor(Number(v))) : 0),
+          0
+        )
+      : 0
+  const hasOverride = overrideTotalCrews > 0
+
   // Phase 3.8 — track where each number actually came from. Manual
   // overrides win, then scheduler template, then crew_strategy estimate.
   const manualOverride =
     inputs.crew_count != null ||
     inputs.total_annual_labor_cost != null ||
-    inputs.total_annual_vehicle_cost != null
+    inputs.total_annual_vehicle_cost != null ||
+    hasOverride
   let source: BidPricingSource = manualOverride
     ? 'manual_override'
     : schedulerTemplate
@@ -426,6 +454,22 @@ export function computeBidPricing(
           (opt.crew_count ?? 0) +
           (recommendedOption === 'C' ? opt.surge_crew_count ?? 0 : 0)
       }
+    }
+
+    // If the user supplied a per-branch override, replace crew count
+    // and rescale labor + vehicle from the option's per-crew unit cost.
+    // We use option B (the dedicated-per-branch option) as the unit
+    // basis since it's the most apples-to-apples for "N crews".
+    if (hasOverride) {
+      const baseOpt = crewStrategyOutputs.options?.B ?? opt
+      const baseCrews = Number(baseOpt?.crew_count ?? 0)
+      const perCrewLabor =
+        baseCrews > 0 ? Number(baseOpt?.annual_labor_cost ?? 0) / baseCrews : 0
+      const perCrewVehicle =
+        baseCrews > 0 ? Number(baseOpt?.annual_vehicle_cost ?? 0) / baseCrews : 0
+      resolvedCrewCount = overrideTotalCrews
+      resolvedLabor = Math.round(perCrewLabor * overrideTotalCrews)
+      resolvedVehicleFuel = Math.round(perCrewVehicle * overrideTotalCrews)
     }
   }
 
