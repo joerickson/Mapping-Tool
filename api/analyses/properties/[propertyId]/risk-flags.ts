@@ -56,8 +56,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     accountId = (client as any)?.account_id ?? null
   }
 
-  if (accountId) {
-    const branchSet = await fetchLatestBranchSet(db, accountId)
+  if (accountId && firstClientId) {
+    const branchSet = await fetchLatestBranchSet(db, accountId, firstClientId)
     if (branchSet) branches = branchSet.map((b) => ({ lat: b.lat, lng: b.lng }))
 
     // Build portfolio points for isolation check

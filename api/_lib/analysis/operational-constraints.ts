@@ -28,7 +28,7 @@ export interface SelectedBranch {
 
 export interface OperationalConstraints {
   account_id: string
-  client_id: string | null
+  client_id: string
   existing_branches: ExistingBranch[]
   excluded_property_ids: string[]
   excluded_property_reason: string | null
@@ -153,19 +153,21 @@ function pickNumeric(row: any, key: keyof SystemDefaults): number {
 
 export async function loadConstraints(
   db: SupabaseClient,
-  accountId: string
+  accountId: string,
+  clientId: string
 ): Promise<OperationalConstraints> {
   const { data: row } = await db
     .from('account_operational_constraints')
     .select('*')
     .eq('account_id', accountId)
+    .eq('client_id', clientId)
     .maybeSingle()
 
   const r = (row ?? null) as any
 
   const merged: OperationalConstraints = {
     account_id: accountId,
-    client_id: r?.client_id ?? null,
+    client_id: clientId,
     existing_branches: (r?.existing_branches ?? []) as ExistingBranch[],
     excluded_property_ids: (r?.excluded_property_ids ?? []) as string[],
     excluded_property_reason: r?.excluded_property_reason ?? null,

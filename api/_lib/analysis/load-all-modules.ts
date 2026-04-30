@@ -28,12 +28,14 @@ export type ModuleSnapshots = Partial<Record<ModuleKey, ModuleSnapshot>>
 
 export async function loadLatestModuleSnapshots(
   db: SupabaseClient,
-  accountId: string
+  accountId: string,
+  clientId: string
 ): Promise<ModuleSnapshots> {
   const { data } = await db
     .from('portfolio_analyses')
     .select('id, module_key, status, outputs, summary_text, property_count, completed_at, created_at')
     .eq('account_id', accountId)
+    .eq('client_id', clientId)
     .in('module_key', ALL_MODULE_KEYS as unknown as string[])
     .order('created_at', { ascending: false })
     .limit(50)

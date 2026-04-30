@@ -17,7 +17,7 @@ const EXAMPLE_PROMPTS = [
   'Compare K=3 vs K=4 vs K=5 for cost and risk.',
 ]
 
-export default function ChatPanel({ accountId }: { accountId: string }) {
+export default function ChatPanel({ accountId, clientId }: { accountId: string; clientId: string }) {
   const { getToken } = useAuth()
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -34,7 +34,7 @@ export default function ChatPanel({ accountId }: { accountId: string }) {
     async function load() {
       try {
         const token = await getToken()
-        const res = await fetch(`/api/analyses/account/${accountId}/chat`, {
+        const res = await fetch(`/api/analyses/account/${accountId}/clients/${clientId}/chat`, {
           headers: { Authorization: `Bearer ${token}` },
         })
         if (!res.ok) return
@@ -51,7 +51,7 @@ export default function ChatPanel({ accountId }: { accountId: string }) {
     return () => {
       cancelled = true
     }
-  }, [open, loaded, accountId, getToken])
+  }, [open, loaded, accountId, clientId, getToken])
 
   // Scroll to bottom on new messages
   useEffect(() => {
@@ -70,7 +70,7 @@ export default function ChatPanel({ accountId }: { accountId: string }) {
     setMessages((cur) => [...cur, { role: 'user', content: trimmed }])
     try {
       const token = await getToken()
-      const res = await fetch(`/api/analyses/account/${accountId}/chat`, {
+      const res = await fetch(`/api/analyses/account/${accountId}/clients/${clientId}/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -97,7 +97,7 @@ export default function ChatPanel({ accountId }: { accountId: string }) {
   const clearHistory = async () => {
     if (!confirm('Clear chat history for this account?')) return
     const token = await getToken()
-    await fetch(`/api/analyses/account/${accountId}/chat`, {
+    await fetch(`/api/analyses/account/${accountId}/clients/${clientId}/chat`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     })

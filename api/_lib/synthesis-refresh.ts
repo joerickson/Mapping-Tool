@@ -20,12 +20,14 @@ const DEBOUNCE_MS = 5000
 
 export async function triggerSynthesisRefresh(
   db: SupabaseClient,
-  accountId: string
+  accountId: string,
+  clientId: string
 ): Promise<void> {
+  const key = `${accountId}:${clientId}`
   const now = Date.now()
-  const last = lastTriggered.get(accountId) ?? 0
+  const last = lastTriggered.get(key) ?? 0
   if (now - last < DEBOUNCE_MS) return
-  lastTriggered.set(accountId, now)
+  lastTriggered.set(key, now)
 
   // Find the most recent completed synthesis and flip it to 'stale'. The
   // dashboard's /synthesis-status poll will see this and trigger a fresh
@@ -34,6 +36,7 @@ export async function triggerSynthesisRefresh(
     .from('portfolio_analyses')
     .select('id')
     .eq('account_id', accountId)
+    .eq('client_id', clientId)
     .eq('module_key', 'synthesis')
     .eq('status', 'completed')
     .order('created_at', { ascending: false })

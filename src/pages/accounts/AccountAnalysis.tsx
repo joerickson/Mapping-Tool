@@ -120,11 +120,18 @@ interface AccountInfo {
   stats: { client_count: number; service_location_count: number }
 }
 
+interface ClientInfo {
+  id: string
+  name: string
+  display_name: string | null
+}
+
 export default function AccountAnalysisPage() {
-  const { accountId } = useParams<{ accountId: string }>()
+  const { accountId, clientId } = useParams<{ accountId: string; clientId: string }>()
   const { getToken } = useAuth()
 
   const [account, setAccount] = useState<AccountInfo | null>(null)
+  const [client, setClient] = useState<ClientInfo | null>(null)
   const [latestByModule, setLatestByModule] = useState<Record<string, AnalysisRow | null>>({})
   const [running, setRunning] = useState<Record<string, boolean>>({})
   const [pollIds, setPollIds] = useState<Record<string, string>>({})
@@ -179,7 +186,7 @@ export default function AccountAnalysisPage() {
     if (!accountId) return
     try {
       const token = await getToken()
-      const res = await fetch(`/api/accounts/${accountId}/operational-constraints`, {
+      const res = await fetch(`/api/accounts/${accountId}/clients/${clientId}/operational-constraints`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) return
@@ -218,13 +225,15 @@ export default function AccountAnalysisPage() {
       const token = await getToken()
       const headers = { Authorization: `Bearer ${token}` }
 
-      const [accRes, analysesRes, propsRes] = await Promise.all([
+      const [accRes, clientRes, analysesRes, propsRes] = await Promise.all([
         fetch(`/api/v1/accounts/${accountId}`, { headers }),
-        fetch(`/api/analyses/account/${accountId}/latest`, { headers }).catch(() => null),
-        loadAccountProperties(accountId, token),
+        fetch(`/api/v1/clients/${clientId}`, { headers }).catch(() => null),
+        fetch(`/api/analyses/account/${accountId}/clients/${clientId}/latest`, { headers }).catch(() => null),
+        loadAccountProperties(accountId, clientId!, token),
       ])
 
       if (accRes.ok) setAccount(await accRes.json())
+      if (clientRes && clientRes.ok) setClient(await clientRes.json())
 
       const byModule: Record<string, AnalysisRow | null> = {
         geographic_distribution: null,
@@ -331,7 +340,7 @@ export default function AccountAnalysisPage() {
     }) => {
       if (!accountId) return
       const token = await getToken()
-      const res = await fetch(`/api/accounts/${accountId}/select-branches`, {
+      const res = await fetch(`/api/accounts/${accountId}/clients/${clientId}/select-branches`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -356,7 +365,7 @@ export default function AccountAnalysisPage() {
   const handleClearSelection = useCallback(async () => {
     if (!accountId) return
     const token = await getToken()
-    const res = await fetch(`/api/accounts/${accountId}/select-branches`, {
+    const res = await fetch(`/api/accounts/${accountId}/clients/${clientId}/select-branches`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -459,7 +468,7 @@ export default function AccountAnalysisPage() {
 
       try {
         const token = await getToken()
-        const res = await fetch(`/api/analyses/account/${accountId}/${endpoint}`, {
+        const res = await fetch(`/api/analyses/account/${accountId}/clients/${clientId}/${endpoint}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -625,7 +634,7 @@ export default function AccountAnalysisPage() {
     setReassessMessage(null)
     try {
       const token = await getToken()
-      const res = await fetch(`/api/analyses/account/${accountId}/risk-flags-bulk`, {
+      const res = await fetch(`/api/analyses/account/${accountId}/clients/${clientId}/risk-flags-bulk`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({}),
@@ -637,7 +646,7 @@ export default function AccountAnalysisPage() {
         setReassessMessage(
           `Assessed ${data.total ?? 0} properties (${data.succeeded ?? 0} succeeded, ${data.failed ?? 0} failed).`
         )
-        const refreshed = await loadAccountProperties(accountId, token)
+        const refreshed = await loadAccountProperties(accountId!, clientId!, token)
         setMapPoints(refreshed.points)
       }
     } catch (err: any) {
@@ -697,19 +706,30 @@ export default function AccountAnalysisPage() {
           {/* Header */}
           <div className="flex items-start justify-between gap-4">
             <div>
+              {/* Breadcrumb */}
+              <div className="text-sm text-gray-400 mb-1 flex items-center gap-1.5 flex-wrap">
+                <Link to="/accounts" className="hover:text-gray-600">Accounts</Link>
+                <span>›</span>
+                <Link to={`/accounts/${accountId}`} className="hover:text-gray-600">
+                  {account?.display_name ?? account?.name ?? '…'}
+                </Link>
+                <span>›</span>
+                <span className="text-gray-700">{client?.display_name ?? client?.name ?? '…'}</span>
+                <span>›</span>
+                <span className="text-gray-700">Analysis</span>
+              </div>
               <Link to={`/accounts/${accountId}`} className="text-sm text-blue-600 hover:underline">
-                ← Back to account
+                ← Back to {account?.display_name ?? account?.name ?? 'account'}
               </Link>
               <h1 className="text-2xl font-bold text-gray-900 mt-1">
                 Smart Analysis
-                {account && <span className="text-gray-500 font-normal"> · {account.display_name ?? account.name}</span>}
+                {account && (
+                  <span className="text-gray-500 font-normal">
+                    {' · '}{account.display_name ?? account.name}
+                    {client && <> · {client.display_name ?? client.name}</>}
+                  </span>
+                )}
               </h1>
-              {account && (
-                <p className="text-sm text-gray-500 mt-1">
-                  {account.stats.service_location_count} service locations across{' '}
-                  {account.stats.client_count} clients
-                </p>
-              )}
             </div>
             <Button onClick={runAll} disabled={Object.values(running).some(Boolean)}>
               Run All Analyses
@@ -717,9 +737,10 @@ export default function AccountAnalysisPage() {
           </div>
 
           {/* Operational Constraints panel */}
-          {accountId && (
+          {accountId && clientId && (
             <OperationalConstraintsPanel
               accountId={accountId}
+              clientId={clientId!}
               onUpdatedAtChange={(iso) => {
                 setConstraintsUpdatedAt(iso)
                 refreshConstraints()
@@ -739,18 +760,20 @@ export default function AccountAnalysisPage() {
           )}
 
           {/* Cost assumptions panel — collapsible, sits above Synthesis */}
-          {accountId && (
+          {accountId && clientId && (
             <CostAssumptionsPanel
               accountId={accountId}
+              clientId={clientId!}
               highlightGroup={costPanelHighlight}
               onSaved={() => refreshConstraints()}
             />
           )}
 
           {/* Synthesis card */}
-          {accountId && (
+          {accountId && clientId && (
             <SynthesisCard
               accountId={accountId}
+              clientId={clientId!}
               hasSelection={hasSelection}
               latestModuleCompletedAts={MODULES.map(
                 (m) => latestByModule[m.key]?.completed_at ?? null
@@ -759,9 +782,10 @@ export default function AccountAnalysisPage() {
           )}
 
           {/* Scenario sliders panel */}
-          {accountId && (
+          {accountId && clientId && (
             <ScenarioPanel
               accountId={accountId}
+              clientId={clientId!}
               hasSelection={hasSelection}
               baselineLaborCost={baselineLaborCost}
               baselineFuelCost={baselineFuelCost}
@@ -935,7 +959,7 @@ export default function AccountAnalysisPage() {
           </div>
 
           {/* Chat panel — floating button, expands to drawer */}
-          {accountId && <ChatPanel accountId={accountId} />}
+          {accountId && clientId && <ChatPanel accountId={accountId} clientId={clientId!} />}
 
           {/* Build-selection modal */}
           {modalOpen && (
@@ -1050,24 +1074,21 @@ function nearestBranchIdx(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helper: load account properties via the existing /api/v1/properties endpoint,
-// using the account's clients as the filter. Pulls risk_score for color coding.
+// Helper: load (account, client) properties via the existing /api/v1/properties
+// endpoint, scoped to the chosen client. Pulls risk_score for color coding.
 // ─────────────────────────────────────────────────────────────────────────────
 async function loadAccountProperties(
   accountId: string,
+  clientId: string,
   token: string | null
 ): Promise<{ points: AnalysisMapPoint[]; branches: AnalysisMapBranch[] }> {
   const headers = { Authorization: `Bearer ${token ?? ''}` }
 
-  // Get the account's clients
-  const clientsRes = await fetch(`/api/v1/clients?account_id=${accountId}`, { headers })
-  if (!clientsRes.ok) return { points: [], branches: [] }
-  const clients = (await clientsRes.json()) as Array<{ id: string }>
-  if (!clients.length) return { points: [], branches: [] }
+  if (!clientId) return { points: [], branches: [] }
+  void accountId
 
-  const clientIdParam = clients.map((c) => c.id).join(',')
   const propsRes = await fetch(
-    `/api/v1/properties?client_id=${encodeURIComponent(clientIdParam)}&limit=2000`,
+    `/api/v1/properties?client_id=${encodeURIComponent(clientId)}&limit=2000`,
     { headers }
   )
   if (!propsRes.ok) return { points: [], branches: [] }

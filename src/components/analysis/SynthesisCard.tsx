@@ -19,6 +19,7 @@ interface SynthesisRow {
 
 interface Props {
   accountId: string
+  clientId: string
   hasSelection: boolean
   // ISO timestamps of the most recent module runs — used to flag the synthesis
   // as stale if any of them is newer than the synthesis row's completed_at.
@@ -27,6 +28,7 @@ interface Props {
 
 export default function SynthesisCard({
   accountId,
+  clientId,
   hasSelection,
   latestModuleCompletedAts,
 }: Props) {
@@ -42,7 +44,7 @@ export default function SynthesisCard({
     try {
       const token = await getToken()
       const res = await fetch(
-        `/api/analyses/account/${accountId}/latest`,
+        `/api/analyses/account/${accountId}/clients/${clientId}/latest`,
         { headers: { Authorization: `Bearer ${token}` } }
       )
       if (!res.ok) return
@@ -57,7 +59,7 @@ export default function SynthesisCard({
   useEffect(() => {
     refresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accountId])
+  }, [accountId, clientId])
 
   // Phase 3.5 — poll /synthesis-status every 5s. Auto-trigger a fresh
   // synthesize when the row goes stale (any upstream change marks it). If
@@ -70,7 +72,7 @@ export default function SynthesisCard({
       try {
         const token = await getToken()
         const res = await fetch(
-          `/api/accounts/${accountId}/synthesis-status`,
+          `/api/accounts/${accountId}/clients/${clientId}/synthesis-status`,
           { headers: { Authorization: `Bearer ${token}` } }
         )
         if (!res.ok || cancelled) return
@@ -103,14 +105,14 @@ export default function SynthesisCard({
       clearInterval(interval)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accountId, row?.completed_at, running, hasSelection])
+  }, [accountId, clientId, row?.completed_at, running, hasSelection])
 
   const synthesize = async () => {
     setRunning(true)
     setError(null)
     try {
       const token = await getToken()
-      const res = await fetch(`/api/analyses/account/${accountId}/synthesize`, {
+      const res = await fetch(`/api/analyses/account/${accountId}/clients/${clientId}/synthesize`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -136,7 +138,7 @@ export default function SynthesisCard({
     const token = await getToken()
     // Use a manual fetch + blob to attach the auth header (cannot use plain href)
     const res = await fetch(
-      `/api/analyses/account/${accountId}/synthesis-download`,
+      `/api/analyses/account/${accountId}/clients/${clientId}/synthesis-download`,
       { headers: { Authorization: `Bearer ${token}` } }
     )
     if (!res.ok) {

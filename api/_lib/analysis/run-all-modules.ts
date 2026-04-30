@@ -19,31 +19,31 @@ import {
 } from './operational-constraints.js'
 import {
   computeGeographicDistribution,
-} from '../../analyses/account/[accountId]/geographic-distribution.js'
+} from '../../analyses/account/[accountId]/clients/[clientId]/geographic-distribution.js'
 import {
   computeBranchOptimization,
   type BranchOptInputs,
-} from '../../analyses/account/[accountId]/branch-optimization.js'
+} from '../../analyses/account/[accountId]/clients/[clientId]/branch-optimization.js'
 import {
   computeDriveTimeLogistics,
   type DriveInputs,
-} from '../../analyses/account/[accountId]/drive-time-logistics.js'
+} from '../../analyses/account/[accountId]/clients/[clientId]/drive-time-logistics.js'
 import {
   computeCrewStrategy,
   type CrewStrategyInputs,
-} from '../../analyses/account/[accountId]/crew-strategy.js'
+} from '../../analyses/account/[accountId]/clients/[clientId]/crew-strategy.js'
 import {
   computeWorkforceSizing,
   type WorkforceInputs,
-} from '../../analyses/account/[accountId]/workforce-sizing.js'
+} from '../../analyses/account/[accountId]/clients/[clientId]/workforce-sizing.js'
 import {
   computeSeasonality,
   type SeasonalityInputs,
-} from '../../analyses/account/[accountId]/seasonality-capacity.js'
+} from '../../analyses/account/[accountId]/clients/[clientId]/seasonality-capacity.js'
 import {
   computeBidPricing,
   type BidInputs,
-} from '../../analyses/account/[accountId]/bid-pricing-structure.js'
+} from '../../analyses/account/[accountId]/clients/[clientId]/bid-pricing-structure.js'
 
 export type ScenarioModuleResults = Partial<{
   geographic_distribution: { outputs: any; summary_text: string }
@@ -87,6 +87,7 @@ export interface RunScenarioInputs {
 export async function runAllModules(
   db: SupabaseClient,
   accountId: string,
+  clientId: string,
   inputs: RunScenarioInputs
 ): Promise<ScenarioModuleResults> {
   const { baselineConstraints, overrides = {}, modulesToRun } = inputs
@@ -118,9 +119,9 @@ export async function runAllModules(
   ]
 
   // ── Load shared data once ──────────────────────────────────────────────
-  const allProps = await loadAccountProperties(db, accountId, c.client_id)
+  const allProps = await loadAccountProperties(db, accountId, clientId)
   const properties = applyExclusions(allProps, effectiveExclusions)
-  const offerings = await loadAccountOfferings(db, accountId)
+  const offerings = await loadAccountOfferings(db, accountId, clientId)
 
   // ── Resolve branches for this scenario ────────────────────────────────
   // Priority: explicit override > drop indices > k_override (re-runs branch

@@ -143,12 +143,14 @@ export function computeRiskFlags(
 // Returns null if no completed run exists.
 export async function fetchLatestBranchSet(
   db: SupabaseClient,
-  accountId: string
+  accountId: string,
+  clientId: string
 ): Promise<Array<{ lat: number; lng: number; name: string }> | null> {
   const { data } = await db
     .from('portfolio_analyses')
     .select('outputs')
     .eq('account_id', accountId)
+    .eq('client_id', clientId)
     .eq('module_key', 'branch_optimization')
     .eq('status', 'completed')
     .order('created_at', { ascending: false })
