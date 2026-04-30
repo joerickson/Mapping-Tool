@@ -212,7 +212,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return {
         service_location_id: r.sl.id,
         property_id: r.sl.property_id,
-        address: propRow?.address_line1 ?? '',
+        address: formatAddress(propRow),
         lat: Number(propRow?.latitude ?? NaN),
         lng: Number(propRow?.longitude ?? NaN),
         parent_offering_id: r.offering.id,
@@ -332,4 +332,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   return res.status(405).json({ error: 'Method not allowed' })
+}
+
+// Compose "123 Main St, Plano, TX" from a properties row. Falls back
+// gracefully when city/state are missing so unplaced rows still
+// surface something useful.
+function formatAddress(row: any): string {
+  if (!row) return ''
+  const parts: string[] = []
+  if (row.address_line1) parts.push(String(row.address_line1))
+  const cityState = [row.city, row.state].filter(Boolean).join(', ')
+  if (cityState) parts.push(cityState)
+  return parts.join(', ')
 }
