@@ -445,15 +445,25 @@ export default function CycleDetailPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {crewDays.map((cd) => (
+                {crewDays.map((cd) => {
+                  const route = Array.isArray((cd as any).route) ? (cd as any).route as any[] : []
+                  const stopsLabel = route.length === 0
+                    ? null
+                    : route.length === 1
+                      ? (route[0]?.address ?? '').split(',')[0]
+                      : `${(route[0]?.address ?? '').split(',')[0]} +${route.length - 1} more`
+                  return (
                   <TableRow key={cd.id}>
                     <TableCell className="text-xs font-tabular">{cd.scheduled_date}</TableCell>
                     <TableCell numeric>{cd.crew_index + 1}</TableCell>
                     <TableCell className="text-sm">
-                      <div>
+                      <div className="font-medium text-fg">
+                        {stopsLabel ?? '—'}
+                      </div>
+                      <div className="text-[11px] text-fg-subtle">
                         {cd.trip_label ?? cd.trip_id}
                         {cd.trip_total_days && cd.trip_total_days > 1
-                          ? <span className="text-fg-subtle text-xs ml-1">(day {cd.trip_day_number}/{cd.trip_total_days})</span>
+                          ? <span className="ml-1">(day {cd.trip_day_number}/{cd.trip_total_days})</span>
                           : null}
                       </div>
                       {cd.day_type === 'overnight' && cd.start_location?.name && cd.start_location?.type === 'branch' && (
@@ -471,7 +481,8 @@ export default function CycleDetailPage() {
                     <TableCell numeric className="text-xs">{formatMin(cd.total_work_minutes ?? 0)}</TableCell>
                     <TableCell numeric className="text-xs">{formatMin(cd.total_day_minutes ?? 0)}</TableCell>
                   </TableRow>
-                ))}
+                  )
+                })}
               </TableBody>
             </Table>
           )}
@@ -574,7 +585,7 @@ export default function CycleDetailPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-xs">
-                      {v.attached_addons.length === 0 ? (
+                      {!v.attached_addons || v.attached_addons.length === 0 ? (
                         <span className="text-fg-subtle">—</span>
                       ) : (
                         <div className="flex flex-wrap gap-1">
