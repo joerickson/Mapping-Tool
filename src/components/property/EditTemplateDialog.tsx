@@ -154,15 +154,15 @@ export default function EditTemplateDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose() }}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col gap-4 p-0">
+        <DialogHeader className="px-6 pt-6">
           <DialogTitle>{template ? 'Edit template' : 'New template'}</DialogTitle>
           <DialogDescription>
             Bundle constraints into a template, then apply it to many service locations in one go.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-5">
+        <div className="space-y-5 overflow-y-auto px-6 flex-1 min-h-0">
           <FormField label="Name" htmlFor="tpl-name">
             <Input
               id="tpl-name"
@@ -279,10 +279,14 @@ export default function EditTemplateDialog({
             </Button>
           </div>
 
-          {error && <p className="text-xs text-danger">{error}</p>}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="px-6 pb-6 pt-3 border-t border-border">
+          {error && (
+            <p className="text-xs text-danger flex-1 sm:text-left text-center">
+              {error}
+            </p>
+          )}
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button onClick={handleSave} loading={submitting}>
             {template ? 'Save changes' : 'Create template'}
