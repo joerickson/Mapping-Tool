@@ -52,37 +52,58 @@ export default function MapPage() {
   }, [clients])
 
   useEffect(() => {
+    let cancelled = false
     async function load() {
       setLoading(true)
       try {
         const token = await getToken()
-        const params = new URLSearchParams()
-
-        // Apply nav-level client switcher as a filter baseline
-        const effectiveClients = filter.clients.length
-          ? filter.clients
-          : selectedClientId
-          ? [selectedClientId]
-          : []
-
-        if (effectiveClients.length) params.set('client_id', effectiveClients.join(','))
-        if (filter.statuses.length) params.set('status', filter.statuses.join(','))
-        if (filter.portfolios.length) params.set('portfolio_id', filter.portfolios.join(','))
-        if (filter.cityState) params.set('city_state', filter.cityState)
-        params.set('limit', '2000')
-
-        const res = await fetch(`/api/v1/properties?${params}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        if (res.ok) {
-          const data = await res.json()
-          setPropertiesWithLocations(data.properties ?? [])
+        const buildParams = (offset: number) => {
+          const params = new URLSearchParams()
+          // Apply nav-level client switcher as a filter baseline
+          const effectiveClients = filter.clients.length
+            ? filter.clients
+            : selectedClientId
+            ? [selectedClientId]
+            : []
+          if (effectiveClients.length) params.set('client_id', effectiveClients.join(','))
+          if (filter.statuses.length) params.set('status', filter.statuses.join(','))
+          if (filter.portfolios.length) params.set('portfolio_id', filter.portfolios.join(','))
+          if (filter.cityState) params.set('city_state', filter.cityState)
+          params.set('limit', '2000')
+          params.set('offset', String(offset))
+          return params
         }
+
+        // Paginate until has_more=false. PostgREST silently caps page size
+        // (typically at ~1000 rows even when limit=2000 is requested), so
+        // for portfolios over the cap we MUST loop pages — otherwise the
+        // map silently drops properties (the IFS Utah bug).
+        const all: PropertyWithLocations[] = []
+        let offset = 0
+        // Hard ceiling on requests so a runaway server response doesn't
+        // turn into a 50-page client loop.
+        const MAX_PAGES = 25
+        for (let page = 0; page < MAX_PAGES; page++) {
+          if (cancelled) return
+          const res = await fetch(`/api/v1/properties?${buildParams(offset)}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          })
+          if (!res.ok) break
+          const data = await res.json()
+          const batch: PropertyWithLocations[] = data.properties ?? []
+          all.push(...batch)
+          if (!data.has_more || batch.length === 0) break
+          offset += batch.length
+        }
+        if (!cancelled) setPropertiesWithLocations(all)
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
     }
     load()
+    return () => {
+      cancelled = true
+    }
   }, [filter, getToken, selectedClientId])
 
   const pins = useMemo(
