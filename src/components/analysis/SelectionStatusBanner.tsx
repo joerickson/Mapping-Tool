@@ -9,6 +9,13 @@ interface Props {
   selectedAt: string | null
   selectedFromAnalysisId: string | null
   onChangeSelection: () => Promise<void>
+  // Phase 3.9 — toggle a branch between main and satellite without
+  // re-doing the whole selection. Optional; if not provided, the
+  // toggles render as read-only badges.
+  onToggleBranchType?: (
+    branchName: string,
+    nextType: 'main' | 'satellite'
+  ) => Promise<void>
 }
 
 export default function SelectionStatusBanner({
@@ -16,9 +23,11 @@ export default function SelectionStatusBanner({
   selectedAt,
   selectedFromAnalysisId,
   onChangeSelection,
+  onToggleBranchType,
 }: Props) {
   const [confirming, setConfirming] = useState(false)
   const [working, setWorking] = useState(false)
+  const [savingBranch, setSavingBranch] = useState<string | null>(null)
 
   const handleChange = async () => {
     if (!confirming) {
@@ -47,9 +56,71 @@ export default function SelectionStatusBanner({
               K = <span className="font-tabular">{branches.length}</span>
             </Badge>
           </div>
-          <p className="text-sm text-fg break-words">
-            {branches.map((b) => preferCityState(b)).join(' · ')}
-          </p>
+          <ul className="flex flex-wrap gap-2">
+            {branches.map((b) => {
+              const type = b.branch_type ?? 'main'
+              const label = preferCityState(b)
+              const isSaving = savingBranch === b.name
+              return (
+                <li
+                  key={b.name}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 text-xs"
+                >
+                  <span className="text-fg font-medium">{label}</span>
+                  {onToggleBranchType ? (
+                    <div className="inline-flex rounded-md border border-border overflow-hidden text-[10px]">
+                      <button
+                        type="button"
+                        disabled={isSaving}
+                        onClick={async () => {
+                          if (type === 'main') return
+                          setSavingBranch(b.name)
+                          try {
+                            await onToggleBranchType(b.name, 'main')
+                          } finally {
+                            setSavingBranch(null)
+                          }
+                        }}
+                        className={
+                          'px-1.5 py-0.5 transition ' +
+                          (type === 'main'
+                            ? 'bg-accent text-white'
+                            : 'text-fg-muted hover:bg-surface-subtle')
+                        }
+                      >
+                        Main
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isSaving}
+                        onClick={async () => {
+                          if (type === 'satellite') return
+                          setSavingBranch(b.name)
+                          try {
+                            await onToggleBranchType(b.name, 'satellite')
+                          } finally {
+                            setSavingBranch(null)
+                          }
+                        }}
+                        className={
+                          'px-1.5 py-0.5 transition ' +
+                          (type === 'satellite'
+                            ? 'bg-accent text-white'
+                            : 'text-fg-muted hover:bg-surface-subtle')
+                        }
+                      >
+                        Satellite
+                      </button>
+                    </div>
+                  ) : (
+                    <Badge variant="outline" className="text-[10px] capitalize">
+                      {type}
+                    </Badge>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
           {selectedAt && (
             <p className="text-xs text-fg-muted">
               Selected {relativeTime(selectedAt)}

@@ -450,6 +450,39 @@ export default function AccountAnalysisPage() {
     setConstraintsUpdatedAt(json.updated_at ?? null)
   }, [accountId, getToken])
 
+  // Flip a single branch between main and satellite without clearing
+  // the rest of the selection. Re-POSTs to /select-branches with the
+  // updated branches array.
+  const handleToggleBranchType = useCallback(
+    async (branchName: string, nextType: 'main' | 'satellite') => {
+      if (!accountId || !clientId || !selectedBranches) return
+      const next = selectedBranches.map((b) =>
+        b.name === branchName ? { ...b, branch_type: nextType } : b
+      )
+      const token = await getToken()
+      const res = await fetch(
+        `/api/accounts/${accountId}/clients/${clientId}/select-branches`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            k: next.length,
+            branches: next,
+            source_analysis_id: selectedFromAnalysisId,
+          }),
+        }
+      )
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`)
+      setSelectedBranches(json.selected_branches ?? next)
+      setConstraintsUpdatedAt(json.updated_at ?? null)
+    },
+    [accountId, clientId, getToken, selectedBranches, selectedFromAnalysisId]
+  )
+
   const hasSelection = !!selectedBranches && selectedBranches.length > 0
 
   // ─── Tick every 1s so elapsed-time displays + stuck-state derivation refresh
@@ -844,6 +877,7 @@ export default function AccountAnalysisPage() {
               selectedAt={selectedAt}
               selectedFromAnalysisId={selectedFromAnalysisId}
               onChangeSelection={handleClearSelection}
+              onToggleBranchType={handleToggleBranchType}
             />
           )}
 
