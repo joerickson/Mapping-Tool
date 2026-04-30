@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
-import Navbar from '../../components/ui/Navbar'
+import AppShell from '../../components/layout/AppShell'
 import Button from '../../components/ui/Button'
 
 type AccountType = 'self_managed' | 'property_manager'
@@ -62,10 +62,8 @@ export default function NewAccountPage() {
   }
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
-      <Navbar />
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-2xl mx-auto px-6 py-8">
+    <AppShell breadcrumb={[{ label: 'Accounts', to: '/accounts' }, { label: 'New' }]}>
+      <div className="mx-auto max-w-2xl px-6 py-10">
           <div className="flex items-center gap-3 mb-6">
             <Link to="/accounts" className="text-gray-400 hover:text-gray-600 text-sm">← Accounts</Link>
             <h1 className="text-2xl font-bold text-gray-900">New Account</h1>
@@ -210,8 +208,7 @@ export default function NewAccountPage() {
               </div>
             </form>
           )}
-        </div>
       </div>
-    </div>
+    </AppShell>
   )
 }

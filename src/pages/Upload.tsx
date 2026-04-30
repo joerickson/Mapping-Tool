@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useClient } from '../context/ClientContext'
 import { apiFetch } from '../lib/api'
-import Navbar from '../components/ui/Navbar'
+import AppShell from '../components/layout/AppShell'
 import UploadDropzone from '../components/upload/UploadDropzone'
 import SheetMappingStep from '../components/upload/SheetMappingStep'
 import ColumnMappingStep from '../components/upload/ColumnMappingStep'
@@ -298,11 +298,11 @@ export default function UploadPage() {
   const stepIndex = STEP_LABELS.indexOf(step)
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
-      <Navbar />
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-6 py-8">
-          <h1 className="text-2xl font-bold text-gray-900 mb-6">Upload Service Locations</h1>
+    <AppShell breadcrumb={[{ label: 'Upload' }]}>
+      <div className="mx-auto max-w-4xl px-6 py-10">
+        <h1 className="mb-6 text-2xl font-semibold tracking-tight text-fg">
+          Upload service locations
+        </h1>
 
           {/* Step indicator */}
           <div className="flex items-center gap-1 mb-8 overflow-x-auto pb-1">
@@ -525,8 +525,7 @@ export default function UploadPage() {
               getToken={getToken}
             />
           )}
-        </div>
       </div>
-    </div>
+    </AppShell>
   )
 }

@@ -1,13 +1,25 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
+import { Search, Users } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
-import Navbar from '../../components/ui/Navbar'
+import AppShell from '../../components/layout/AppShell'
+import Button from '../../components/ui/Button'
+import { Badge } from '../../components/ui/Badge'
+import { Card } from '../../components/ui/Card'
+import { EmptyState } from '../../components/ui/EmptyState'
+import { ErrorState } from '../../components/ui/ErrorState'
+import { Input } from '../../components/ui/Input'
+import { Skeleton } from '../../components/ui/Skeleton'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../components/ui/Table'
 import type { Account } from '../../types'
 
-const TYPE_BADGE: Record<string, string> = {
-  self_managed: 'bg-blue-100 text-blue-700',
-  property_manager: 'bg-purple-100 text-purple-700',
-}
 const TYPE_LABEL: Record<string, string> = {
   self_managed: 'Self-Managed',
   property_manager: 'Property Manager',
@@ -50,7 +62,9 @@ export default function AccountsListPage() {
           setError(
             isTimeout
               ? 'Request timed out — the server is taking too long to respond.'
-              : err instanceof Error ? err.message : 'Failed to load accounts'
+              : err instanceof Error
+                ? err.message
+                : 'Failed to load accounts'
           )
         }
       } finally {
@@ -69,97 +83,131 @@ export default function AccountsListPage() {
   }, [search, getToken, retryCount])
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
-      <Navbar />
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-6xl mx-auto px-6 py-8">
-          <div className="flex items-center justify-between mb-6">
-            <h1 className="text-2xl font-bold text-gray-900">Accounts</h1>
-            <Link
-              to="/accounts/new"
-              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              + New Account
-            </Link>
+    <AppShell breadcrumb={[{ label: 'Accounts' }]}>
+      <div className="mx-auto max-w-6xl px-6 py-10 space-y-8">
+        <header className="flex items-start justify-between gap-6 flex-wrap">
+          <div className="space-y-1">
+            <h1 className="text-2xl font-semibold tracking-tight text-fg">
+              Accounts
+            </h1>
+            <p className="text-sm text-fg-muted">
+              {accounts.length > 0 && (
+                <>
+                  <span className="font-tabular">{accounts.length}</span>{' '}
+                  {accounts.length === 1 ? 'account' : 'accounts'}
+                </>
+              )}
+            </p>
           </div>
+          <Button asChild>
+            <Link to="/accounts/new">+ New account</Link>
+          </Button>
+        </header>
 
-          <div className="flex gap-3 mb-6">
-            <input
-              type="text"
-              placeholder="Search by name…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="flex-1 max-w-xs border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-            {loading ? (
-              <div className="flex items-center justify-center py-16 text-gray-400 text-sm">Loading…</div>
-            ) : error ? (
-              <div className="flex flex-col items-center justify-center py-16 gap-3">
-                <p className="text-red-600 text-sm">{error}</p>
-                <button
-                  onClick={() => setRetryCount((c) => c + 1)}
-                  className="text-blue-600 text-sm hover:underline"
-                >
-                  Retry
-                </button>
-              </div>
-            ) : accounts.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 gap-3">
-                <p className="text-gray-500">No accounts yet — create your first account</p>
-                <Link to="/accounts/new" className="text-blue-600 text-sm hover:underline">
-                  Create your first account →
-                </Link>
-              </div>
-            ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-gray-50">
-                    <th className="text-left px-4 py-3 font-semibold text-gray-600">Name</th>
-                    <th className="text-left px-4 py-3 font-semibold text-gray-600">Type</th>
-                    <th className="text-left px-4 py-3 font-semibold text-gray-600">Status</th>
-                    <th className="text-left px-4 py-3 font-semibold text-gray-600">Contact</th>
-                    <th className="text-left px-4 py-3 font-semibold text-gray-600">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {accounts.map((a) => (
-                    <tr key={a.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3">
-                        <Link to={`/accounts/${a.id}`} className="font-medium text-gray-900 hover:text-blue-600">
-                          {a.display_name ?? a.name}
-                        </Link>
-                        {a.display_name && <p className="text-xs text-gray-400">{a.name}</p>}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${TYPE_BADGE[a.account_type] ?? 'bg-gray-100 text-gray-500'}`}>
-                          {TYPE_LABEL[a.account_type] ?? a.account_type}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${a.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                          {a.status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-gray-500 text-xs">
-                        {a.primary_contact_name ?? '—'}
-                        {a.primary_contact_email && <div>{a.primary_contact_email}</div>}
-                      </td>
-                      <td className="px-4 py-3">
-                        <Link to={`/accounts/${a.id}`} className="text-blue-600 hover:underline text-xs">
-                          View
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
+        <div className="relative max-w-sm">
+          <Search
+            className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-fg-subtle pointer-events-none"
+            aria-hidden
+          />
+          <Input
+            type="search"
+            placeholder="Search accounts…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-8"
+          />
         </div>
+
+        {loading ? (
+          <Card padding="none">
+            <div className="space-y-2 p-6">
+              <Skeleton className="h-9" />
+              <Skeleton className="h-9" />
+              <Skeleton className="h-9" />
+            </div>
+          </Card>
+        ) : error ? (
+          <ErrorState
+            title="Couldn't load accounts"
+            description={error}
+            onRetry={() => setRetryCount((c) => c + 1)}
+          />
+        ) : accounts.length === 0 ? (
+          <Card padding="none">
+            <EmptyState
+              icon={Users}
+              title={search ? 'No accounts match your search' : 'No accounts yet'}
+              description={
+                search
+                  ? 'Try a different search term, or clear the filter.'
+                  : 'Create your first account to start managing portfolios.'
+              }
+              action={
+                !search && (
+                  <Button asChild>
+                    <Link to="/accounts/new">Create your first account →</Link>
+                  </Button>
+                )
+              }
+            />
+          </Card>
+        ) : (
+          <Card padding="none">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Contact</TableHead>
+                  <TableHead className="w-16" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {accounts.map((a) => (
+                  <TableRow key={a.id}>
+                    <TableCell>
+                      <Link
+                        to={`/accounts/${a.id}`}
+                        className="font-medium text-fg hover:text-accent transition-colors"
+                      >
+                        {a.display_name ?? a.name}
+                      </Link>
+                      {a.display_name && (
+                        <p className="text-xs text-fg-subtle">{a.name}</p>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={a.account_type === 'property_manager' ? 'accent' : 'default'}>
+                        {TYPE_LABEL[a.account_type] ?? a.account_type}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={a.status === 'active' ? 'success' : 'default'}>
+                        {a.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-xs text-fg-muted">
+                      {a.primary_contact_name ?? '—'}
+                      {a.primary_contact_email && (
+                        <div className="text-fg-subtle">{a.primary_contact_email}</div>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Link
+                        to={`/accounts/${a.id}`}
+                        className="text-xs text-accent hover:underline"
+                      >
+                        View →
+                      </Link>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+        )}
       </div>
-    </div>
+    </AppShell>
   )
 }

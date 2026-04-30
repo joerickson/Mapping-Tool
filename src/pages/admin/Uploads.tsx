@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
-import Navbar from '../../components/ui/Navbar'
+import AppShell from '../../components/layout/AppShell'
 import Button from '../../components/ui/Button'
 import Modal from '../../components/ui/Modal'
 
@@ -233,10 +233,8 @@ export default function AdminUploadsPage() {
   }
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
-      <Navbar />
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
+    <AppShell breadcrumb={[{ label: 'Admin', to: '/admin' }, { label: 'Upload batches' }]}>
+      <div className="mx-auto max-w-7xl px-6 py-10 space-y-6">
           <div className="flex items-center gap-3 mb-2">
             <Link to="/admin" className="text-gray-400 hover:text-gray-600 text-sm">← Admin</Link>
             <h1 className="text-2xl font-bold text-gray-900">Admin — Upload Batches</h1>
@@ -307,7 +305,6 @@ export default function AdminUploadsPage() {
               </div>
             </div>
           )}
-        </div>
       </div>
 
       <Modal
@@ -336,6 +333,6 @@ export default function AdminUploadsPage() {
           </div>
         )}
       </Modal>
-    </div>
+    </AppShell>
   )
 }

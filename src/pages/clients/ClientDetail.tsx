@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
-import Navbar from '../../components/ui/Navbar'
+import AppShell from '../../components/layout/AppShell'
 import Button from '../../components/ui/Button'
 import { useClient } from '../../context/ClientContext'
 import type { Client } from '../../types'
@@ -120,34 +120,30 @@ export default function ClientDetailPage() {
 
   if (loading) {
     return (
-      <div className="flex flex-col h-full bg-gray-50">
-        <Navbar />
-        <div className="flex-1 flex items-center justify-center text-gray-400">Loading…</div>
-      </div>
+      <AppShell>
+        <div className="flex h-full items-center justify-center text-fg-subtle">Loading…</div>
+      </AppShell>
     )
   }
 
   if (!client) {
     return (
-      <div className="flex flex-col h-full bg-gray-50">
-        <Navbar />
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center space-y-3">
-            <p className="text-gray-500">Client not found.</p>
-            <Link to="/clients" className="text-blue-600 text-sm hover:underline">← Back to clients</Link>
+      <AppShell>
+        <div className="flex h-full items-center justify-center">
+          <div className="space-y-3 text-center">
+            <p className="text-fg-muted">Client not found.</p>
+            <Link to="/clients" className="text-sm text-accent hover:underline">← Back to clients</Link>
           </div>
         </div>
-      </div>
+      </AppShell>
     )
   }
 
   const clientColor = client.brand_color ?? hashColor(client.id)
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
-      <Navbar />
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-6 py-8 space-y-6">
+    <AppShell breadcrumb={[{ label: 'Clients', to: '/clients' }, { label: client.display_name ?? client.name }]}>
+      <div className="mx-auto max-w-4xl px-6 py-10 space-y-6">
           {error && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>
           )}
@@ -319,7 +315,6 @@ export default function ClientDetailPage() {
             )}
           </div>
         </div>
-      </div>
 
       {/* Edit modal */}
       {editing && (
@@ -380,7 +375,7 @@ export default function ClientDetailPage() {
           </div>
         </div>
       )}
-    </div>
+    </AppShell>
   )
 }
 
