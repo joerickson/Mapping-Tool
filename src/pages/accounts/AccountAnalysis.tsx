@@ -4,6 +4,7 @@ import {
   Building2,
   FileText,
   LayoutDashboard,
+  ListChecks,
   Map as MapIcon,
   Sparkles,
 } from 'lucide-react'
@@ -1135,6 +1136,15 @@ function AnalysisSidebar({
         <li className="px-2 py-1 text-xs text-fg-subtle">
           Coming in Phase D
         </li>
+      </SidebarSection>
+
+      <SidebarSection title="Settings">
+        <SidebarItem
+          icon={ListChecks}
+          to={`/accounts/${accountId}/clients/${clientId}/admin/constraint-templates`}
+        >
+          Constraint templates
+        </SidebarItem>
       </SidebarSection>
     </Sidebar>
   )

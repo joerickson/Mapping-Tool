@@ -23,6 +23,7 @@ import AccountsListPage from './pages/accounts/AccountsList'
 import NewAccountPage from './pages/accounts/NewAccount'
 import AccountDetailPage from './pages/accounts/AccountDetail'
 import AccountAnalysisPage from './pages/accounts/AccountAnalysis'
+import ConstraintTemplatesPage from './pages/accounts/ConstraintTemplates'
 import NewAccountClientPage from './pages/accounts/NewAccountClient'
 import ClientsListPage from './pages/clients/ClientsList'
 import NewClientPage from './pages/clients/NewClient'
@@ -114,6 +115,10 @@ export default function App() {
           <Route
             path="/accounts/:accountId/clients/:clientId/analysis"
             element={<AuthGuard><AccountAnalysisPage /></AuthGuard>}
+          />
+          <Route
+            path="/accounts/:accountId/clients/:clientId/admin/constraint-templates"
+            element={<AuthGuard><ConstraintTemplatesPage /></AuthGuard>}
           />
           <Route path="/accounts/:id/clients/new" element={<AuthGuard><NewAccountClientPage /></AuthGuard>} />
 
