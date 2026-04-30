@@ -1,8 +1,8 @@
-// Phase 4f-1 MVP Calendar view — month grid with crew bars per day.
-// Drag-drop ships in 4f-2.
-import { useMemo } from 'react'
+// Phase 4f-3 Calendar view — month grid with crew bars per day +
+// drag-drop on individual crew bars. Drag a bar from one day to another
+// to move that crew's visits.
+import { useMemo, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react'
-import { useState } from 'react'
 import Button from '../ui/Button'
 import { cn } from '../../lib/cn'
 import type { UtilDay } from './GanttView'
@@ -25,9 +25,17 @@ const MONTH_NAMES = [
 interface Props {
   days: UtilDay[]
   onDayClick?: (date: string) => void
+  // Drag-drop a crew bar on day A onto day B → move that crew's visits.
+  // Same shape as Gantt's onCellDrop.
+  onCellDrop?: (drop: {
+    source: { crew_index: number; date: string }
+    target: { crew_index: number; date: string }
+  }) => void
 }
 
-export default function CalendarView({ days, onDayClick }: Props) {
+export default function CalendarView({ days, onDayClick, onCellDrop }: Props) {
+  const dragSource = useRef<{ crew_index: number; date: string } | null>(null)
+  const [dragOverDate, setDragOverDate] = useState<string | null>(null)
   const dates = useMemo(() => {
     const set = new Set(days.map((d) => d.scheduled_date))
     return Array.from(set).sort()
@@ -121,14 +129,36 @@ export default function CalendarView({ days, onDayClick }: Props) {
           }
           const cellDays = cellsByDate.get(c.date) ?? []
           const hasIdle = cellDays.some((d) => d.state.kind === 'idle')
+          const isDragOver = dragOverDate === c.date
           return (
-            <button
+            <div
               key={c.date}
-              type="button"
+              onDragOver={(e) => {
+                if (dragSource.current && dragSource.current.date !== c.date) {
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'move'
+                  setDragOverDate(c.date)
+                }
+              }}
+              onDragLeave={() => {
+                if (dragOverDate === c.date) setDragOverDate(null)
+              }}
+              onDrop={(e) => {
+                e.preventDefault()
+                const src = dragSource.current
+                dragSource.current = null
+                setDragOverDate(null)
+                if (!src || !c.date || src.date === c.date) return
+                onCellDrop?.({
+                  source: src,
+                  target: { crew_index: src.crew_index, date: c.date },
+                })
+              }}
               onClick={() => onDayClick?.(c.date!)}
               className={cn(
-                'border-r border-b border-border p-1.5 text-left flex flex-col gap-1 hover:bg-surface-subtle transition-colors',
-                hasIdle && 'bg-warning/5'
+                'border-r border-b border-border p-1.5 text-left flex flex-col gap-1 hover:bg-surface-subtle transition-colors cursor-pointer',
+                hasIdle && 'bg-warning/5',
+                isDragOver && 'ring-2 ring-warning ring-inset'
               )}
               style={{ minHeight: 96 }}
             >
@@ -136,16 +166,30 @@ export default function CalendarView({ days, onDayClick }: Props) {
               {cellDays.map((d) => {
                 const pct = d.utilization_pct
                 const isIdle = d.state.kind === 'idle' || d.state.kind === 'between_trips'
+                const draggable = !isIdle
                 return (
                   <div
                     key={d.crew_index}
+                    draggable={draggable}
+                    onDragStart={(e) => {
+                      if (!draggable) return
+                      e.stopPropagation()
+                      dragSource.current = { crew_index: d.crew_index, date: d.scheduled_date }
+                      e.dataTransfer.effectAllowed = 'move'
+                      e.dataTransfer.setData('text/plain', `${d.crew_index}|${d.scheduled_date}`)
+                    }}
+                    onDragEnd={() => {
+                      dragSource.current = null
+                      setDragOverDate(null)
+                    }}
                     className={cn(
                       'h-1.5 rounded-sm',
                       isIdle ? 'bg-fg-subtle/30' : CREW_COLORS[d.crew_index % CREW_COLORS.length],
-                      d.state.kind === 'partial' && 'opacity-50'
+                      d.state.kind === 'partial' && 'opacity-50',
+                      draggable && 'cursor-grab'
                     )}
                     style={{ width: `${Math.max(10, pct)}%` }}
-                    title={`${d.crew_label}: ${d.work_hours_scheduled.toFixed(1)}h · ${d.state.kind}`}
+                    title={`${d.crew_label}: ${d.work_hours_scheduled.toFixed(1)}h · ${d.state.kind}${draggable ? ' (drag to move)' : ''}`}
                   />
                 )
               })}
@@ -155,7 +199,7 @@ export default function CalendarView({ days, onDayClick }: Props) {
                   {cellDays.filter((d) => d.state.kind === 'idle').length} idle
                 </div>
               )}
-            </button>
+            </div>
           )
         })}
       </div>

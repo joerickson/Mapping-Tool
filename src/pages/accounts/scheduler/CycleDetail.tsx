@@ -19,6 +19,7 @@ import {
 import ViewSwitcher, { type CycleViewKind } from '../../../components/scheduler/ViewSwitcher'
 import GanttView, { type UtilDay } from '../../../components/scheduler/GanttView'
 import CalendarView from '../../../components/scheduler/CalendarView'
+import CycleMapView from '../../../components/scheduler/CycleMapView'
 import HistoryDrawer from '../../../components/scheduler/HistoryDrawer'
 import StatusBar, { type SaveState } from '../../../components/scheduler/StatusBar'
 
@@ -79,6 +80,7 @@ export default function CycleDetailPage() {
   const [view, setView] = useState<CycleViewKind>('gantt')
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [optimizationScore, setOptimizationScore] = useState<number | null>(null)
+  const [branches, setBranches] = useState<Array<{ name: string; lat: number; lng: number }>>([])
   const [selectedVisitIds, setSelectedVisitIds] = useState<Set<string>>(new Set())
 
   const load = useCallback(async () => {
@@ -99,7 +101,7 @@ export default function CycleDetailPage() {
         const u = await utilRes.json()
         setUtilDays(u.days ?? [])
       }
-      // Pull optimization score from the parent template for the status bar.
+      // Pull optimization score + branches from the parent template.
       if (data.cycle?.template_id) {
         const tplRes = await fetch(`/api/scheduler/templates/${data.cycle.template_id}`, {
           headers: { Authorization: `Bearer ${token}` },
@@ -107,6 +109,13 @@ export default function CycleDetailPage() {
         if (tplRes.ok) {
           const tpl = await tplRes.json()
           setOptimizationScore(tpl.template?.optimization_score ?? null)
+          setBranches(
+            (tpl.template?.branches ?? []).map((b: any) => ({
+              name: b.name,
+              lat: Number(b.lat),
+              lng: Number(b.lng),
+            }))
+          )
         }
       }
     } catch (err) {
@@ -374,15 +383,27 @@ export default function CycleDetailPage() {
             <h2 className="text-base font-semibold tracking-tight text-fg">Calendar</h2>
             <p className="text-xs text-fg-muted">
               Month grid showing per-day crew bars. Bar width ≈ utilization. Idle days highlighted yellow.
+              Drag a crew bar to a different day to move that crew's visits.
             </p>
-            <CalendarView days={utilDays} />
+            <CalendarView days={utilDays} onCellDrop={handleCellDrop} />
           </div>
         )}
 
         {view === 'map' && (
-          <div className="rounded-md border border-border bg-surface p-6 text-sm text-fg-muted">
-            Map view ships in 4f-3. Will plot all properties + branches on a Mapbox map with a
-            time scrubber to step through the cycle day-by-day.
+          <div className="space-y-2">
+            <h2 className="text-base font-semibold tracking-tight text-fg">Map</h2>
+            <p className="text-xs text-fg-muted">
+              Properties + branches plotted spatially. Drag the scrubber to step through each
+              workday in the cycle. Right panel shows per-crew status for the selected date.
+            </p>
+            <CycleMapView
+              visits={visits as any}
+              crewDays={crewDays as any}
+              utilDays={utilDays}
+              branches={branches}
+              cycleStart={cycle.start_date}
+              cycleEnd={cycle.end_date}
+            />
           </div>
         )}
 
@@ -605,9 +626,12 @@ export default function CycleDetailPage() {
       <BulkMoveConfirmDialog
         pending={pendingDrop}
         onClose={() => setPendingDrop(null)}
-        onConfirm={async () => {
+        onConfirm={async (propagate) => {
           if (!pendingDrop) return
-          await handleBulkAction('move', pendingDrop.sourceVisitIds, { to_date: pendingDrop.targetDate })
+          await handleBulkAction('move', pendingDrop.sourceVisitIds, {
+            to_date: pendingDrop.targetDate,
+            propagate_to_template: propagate,
+          })
           setPendingDrop(null)
         }}
       />
@@ -768,8 +792,10 @@ function BulkMoveConfirmDialog({
 }: {
   pending: { sourceVisitIds: string[]; targetDate: string; description: string } | null
   onClose: () => void
-  onConfirm: () => void
+  onConfirm: (propagate: boolean) => void
 }) {
+  const [propagate, setPropagate] = useState(true)
+  useEffect(() => { if (pending) setPropagate(true) }, [pending])
   if (!pending) return null
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose() }}>
@@ -777,16 +803,41 @@ function BulkMoveConfirmDialog({
         <DialogHeader>
           <DialogTitle>Confirm move</DialogTitle>
         </DialogHeader>
-        <div className="space-y-2 text-sm">
+        <div className="space-y-3 text-sm">
           <p>{pending.description}.</p>
-          <p className="text-xs text-fg-muted">
-            This applies to the cycle only — template propagation arrives in 4f-3.
-            Cmd+Z to undo.
-          </p>
+          <FormField label="Apply this change to:">
+            <div className="space-y-1">
+              <label className="flex items-start gap-2 text-xs">
+                <input
+                  type="radio"
+                  checked={propagate}
+                  onChange={() => setPropagate(true)}
+                  className="mt-0.5 border-border accent-accent"
+                />
+                <span>
+                  <span className="font-medium">This cycle and the template</span> — change repeats in future cycles (default)
+                </span>
+              </label>
+              <label className="flex items-start gap-2 text-xs">
+                <input
+                  type="radio"
+                  checked={!propagate}
+                  onChange={() => setPropagate(false)}
+                  className="mt-0.5 border-border accent-accent"
+                />
+                <span>
+                  <span className="font-medium">This cycle only</span> — one-time exception
+                </span>
+              </label>
+            </div>
+          </FormField>
+          <p className="text-xs text-fg-subtle">Cmd+Z to undo.</p>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={onConfirm}>Move {pending.sourceVisitIds.length}</Button>
+          <Button onClick={() => onConfirm(propagate)}>
+            Move {pending.sourceVisitIds.length}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
