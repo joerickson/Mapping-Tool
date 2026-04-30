@@ -19,6 +19,7 @@ import {
 import AppShell from '../components/layout/AppShell'
 import ComparablesPanel from '../components/analysis/ComparablesPanel'
 import ServiceMixPanel from '../components/analysis/ServiceMixPanel'
+import ConstraintsPanel from '../components/property/ConstraintsPanel'
 import { CATEGORY_COLORS, STATUS_LABELS } from '../lib/constants'
 import { cn } from '../lib/cn'
 import type { ServiceLocation } from '../types'
@@ -559,6 +560,9 @@ export default function PropertyDetailPage() {
                 )}
               </div>
             </Card>
+
+            {/* Service constraints */}
+            <ConstraintsPanel serviceLocations={property.service_locations} />
 
             {/* Comparable Properties */}
             <ComparablesPanel propertyId={property.property_id} />
