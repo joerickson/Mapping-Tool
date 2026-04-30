@@ -161,6 +161,12 @@ Phase 3.9 — structured cost calculations:
 - Insurance is calculated as % of bid revenue (default 1.5%) with a minimum premium. If \`hit_minimum\` is true, surface that in Risks: insurance was bumped to the minimum, so a small revenue change flips the value.
 - Vehicle costs are per-crew with three ownership types (lease, purchase, personal_vehicle_reimbursement). If any crew uses personal vehicle reimbursement, mention liability/coverage considerations and that fuel cost has already been removed for those crews (the IRS mileage rate already covers gas + depreciation + maintenance).
 
+Phase 4 — service line bid pricing structure:
+- Bid Pricing now emits a \`service_line_bid\` object alongside the rolled-up totals. Revenue is rate-driven per line: project services (Project Clean, S&I Project Clean, Upholstery) at \$/sqft/visit × billable sqft × visits/yr; recurring services (Recurring Janitorial, Mission Home Housekeeping, S&I Housekeeping) at \$/sqft/month × billable sqft × 12.
+- In the Bid Pricing section, list each service line with its annual revenue, total cost, actual margin %, and target margin. Call out any line where \`margin_below_target\` is true — that line is bidding below its target gross margin and needs either a rate increase or scope reduction.
+- \`billable_sqft_pct\` reflects what the contract actually pays for. If any line is below 100% (e.g. 92% because common areas are excluded), mention it under Risks — if measured sqft turns out to include un-billable area we didn't catch, revenue forecast is overstated.
+- Shared overhead (branch overhead, insurance, corporate) is allocated by revenue share — high-margin lines carry their proportional cost. Don't claim a line is "more profitable" than another without acknowledging this allocation choice.
+
 Output strictly as JSON with two string keys: dashboard_summary, full_report_markdown.
 Do NOT wrap the JSON in markdown code fences.`
 

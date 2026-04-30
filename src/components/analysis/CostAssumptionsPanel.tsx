@@ -12,6 +12,7 @@ import { Input } from '../ui/Input'
 import { cn } from '../../lib/cn'
 import OvernightLodgingSection from './OvernightLodgingSection'
 import StructuredCostsSection from './StructuredCostsSection'
+import ServiceLinePricingSection from './ServiceLinePricingSection'
 
 export interface CostAssumptionsConstraints {
   crew_size: number
@@ -481,6 +482,15 @@ export default function CostAssumptionsPanel({
             accountId={accountId}
             clientId={clientId}
             constraintsRow={data}
+            onSaved={() => {
+              refresh()
+              onSaved?.()
+            }}
+          />
+
+          <ServiceLinePricingSection
+            clientId={clientId}
+            accountTargetMarginPct={(data.target_gross_margin_pct ?? 0) * 100}
             onSaved={() => {
               refresh()
               onSaved?.()
