@@ -1,6 +1,14 @@
+// AnalysisCard — per-module shell on the dashboard. Phase D2 migration:
+// all chrome routed through design tokens; behavior unchanged so the
+// dashboard's polling/stuck-detection/cache-key flow still works exactly
+// the same. The caller still passes status / running / startedAt /
+// lastPolledAt / lastPollError; this file just renders them.
 import { ReactNode, useEffect, useState } from 'react'
-import { clsx } from 'clsx'
+import { CircleAlert, Loader2, TriangleAlert } from 'lucide-react'
 import Button from '../ui/Button'
+import { Badge } from '../ui/Badge'
+import { StatusDot, type StatusVariant } from '../ui/StatusDot'
+import { cn } from '../../lib/cn'
 
 export type AnalysisStatus = 'idle' | 'running' | 'completed' | 'failed' | 'stuck'
 
@@ -73,89 +81,78 @@ export default function AnalysisCard({
   const elapsedSec = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : null
   const sinceLastPollSec = lastPolledAt ? Math.floor((Date.now() - lastPolledAt) / 1000) : null
 
-  const statusBadge = (() => {
-    switch (status) {
-      case 'idle':
-        return <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600">Not run</span>
-      case 'running':
-        return (
-          <span className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700 inline-flex items-center gap-1.5">
-            <Spinner />
-            Running
-          </span>
-        )
-      case 'stuck':
-        return (
-          <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800 inline-flex items-center gap-1.5">
-            ⚠ Stuck
-          </span>
-        )
-      case 'completed':
-        return <span className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700">Completed</span>
-      case 'failed':
-        return <span className="text-xs px-2 py-0.5 rounded bg-red-100 text-red-700">Failed</span>
-    }
-  })()
-
   return (
     <div
-      className={clsx('bg-white rounded-xl border shadow-sm overflow-hidden', {
-        'border-amber-300': status === 'stuck',
-        'border-red-300': status === 'failed',
-        'opacity-60': !!disabledReason,
-      })}
+      className={cn(
+        'rounded-lg border border-border bg-surface overflow-hidden',
+        // Status-specific border emphasis. Subtle — keep the chrome quiet.
+        status === 'stuck' && 'border-warning/40',
+        status === 'failed' && 'border-danger/40',
+        // Tier 2 gate (no branches selected): dim the whole card so it reads
+        // as inert without losing readability.
+        disabledReason && 'opacity-70'
+      )}
     >
-      <div className="px-5 py-4 flex items-start justify-between gap-4">
-        <div className="flex-1 min-w-0">
+      <div className="px-6 py-5 flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0 space-y-1.5">
           <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="font-semibold text-gray-900">{title}</h3>
-            {statusBadge}
+            <h3 className="text-base font-semibold tracking-tight text-fg">
+              {title}
+            </h3>
+            <ModuleStatusBadge status={status} running={running} />
             {staleVsConstraints && status === 'completed' && (
-              <span className="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-800 border border-yellow-200">
-                Constraints changed since last run — re-run to update
-              </span>
+              <Badge variant="warning">
+                Constraints changed — re-run to update
+              </Badge>
             )}
           </div>
-          <p className="text-sm text-gray-500 mt-1">{description}</p>
+          <p className="text-sm text-fg-muted">{description}</p>
           {usingLine && (
-            <p className="text-xs text-gray-600 mt-1.5 flex items-center flex-wrap gap-x-1.5">
-              <span className="font-semibold text-gray-500 uppercase tracking-wide">Using:</span>
+            <p className="flex items-center flex-wrap gap-x-1.5 text-xs text-fg-muted pt-0.5">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+                Using:
+              </span>
               <span>{usingLine}</span>
               {onEditAssumptions && (
                 <button
                   type="button"
                   onClick={onEditAssumptions}
-                  className="text-blue-600 hover:underline ml-1"
+                  className="text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-sm px-0.5"
                 >
-                  [Edit assumptions]
+                  Edit assumptions
                 </button>
               )}
             </p>
           )}
           {completedAt && status === 'completed' && (
-            <p className="text-xs text-gray-400 mt-1">
-              Last run {relativeTime(completedAt)} · {new Date(completedAt).toLocaleString()}
+            <p className="text-xs text-fg-subtle pt-0.5">
+              Last run {relativeTime(completedAt)} ·{' '}
+              <span className="font-tabular">
+                {new Date(completedAt).toLocaleString()}
+              </span>
             </p>
           )}
         </div>
         <Button
-          variant={status === 'completed' ? 'secondary' : 'primary'}
           size="sm"
+          variant={status === 'completed' ? 'secondary' : 'primary'}
           onClick={onRun}
           loading={running && status !== 'stuck'}
           disabled={!!disabledReason || (running && status !== 'stuck')}
           title={disabledReason ?? undefined}
         >
-          {status === 'completed' ? 'Re-run' : status === 'stuck' || status === 'failed' ? 'Retry' : 'Run analysis'}
+          {status === 'completed'
+            ? 'Re-run'
+            : status === 'stuck' || status === 'failed'
+              ? 'Retry'
+              : 'Run analysis'}
         </Button>
       </div>
 
       {/* Tier-2 gate placeholder */}
       {disabledReason && (
-        <div className="px-5 py-3 border-t bg-gray-50 text-sm text-gray-600 flex items-center gap-2">
-          <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m0 0v2m0-2h0m6.364-3a9 9 0 11-12.728 0M12 3v9" />
-          </svg>
+        <div className="border-t border-border bg-surface-subtle px-6 py-3 text-sm text-fg-muted flex items-center gap-2">
+          <CircleAlert className="h-4 w-4 shrink-0 text-fg-subtle" />
           {disabledReason}
         </div>
       )}
@@ -163,24 +160,35 @@ export default function AnalysisCard({
       {/* Live progress strip while running */}
       {(status === 'running' || status === 'stuck') && (
         <div
-          className={clsx('px-5 py-2.5 border-t text-xs flex items-center gap-3 flex-wrap', {
-            'bg-blue-50 text-blue-800': status === 'running',
-            'bg-amber-50 text-amber-900': status === 'stuck',
-          })}
+          className={cn(
+            'border-t px-6 py-2.5 text-xs flex items-center gap-3 flex-wrap',
+            status === 'stuck'
+              ? 'border-warning/40 bg-warning-subtle text-warning'
+              : 'border-border bg-accent-subtle text-accent'
+          )}
         >
-          {status === 'running' && <Spinner />}
+          {status === 'running' && (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          )}
+          {status === 'stuck' && (
+            <TriangleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          )}
           <span>
             {status === 'stuck' ? (
               <>
-                No response for {elapsedSec}s. The work likely failed silently or is still running on
-                the server. Try <em>Check now</em>, or <em>Mark as failed</em> to clear it and retry.
+                No response for{' '}
+                <span className="font-tabular">{elapsedSec}s</span>. The work
+                likely failed silently or is still running on the server. Try{' '}
+                <em>Check now</em>, or <em>Mark as failed</em> to clear it and retry.
               </>
             ) : (
               <>
-                Running for <span className="font-mono">{elapsedSec ?? 0}s</span>
+                Running for{' '}
+                <span className="font-tabular">{elapsedSec ?? 0}s</span>
                 {sinceLastPollSec != null && (
                   <>
-                    {' · '}last checked <span className="font-mono">{sinceLastPollSec}s</span> ago
+                    {' · '}last checked{' '}
+                    <span className="font-tabular">{sinceLastPollSec}s</span> ago
                   </>
                 )}
               </>
@@ -188,15 +196,17 @@ export default function AnalysisCard({
           </span>
 
           {analysisId && (
-            <span className="font-mono text-[10px] opacity-60">id: {analysisId.slice(0, 8)}</span>
+            <span className="font-mono text-[10px] opacity-60">
+              id: {analysisId.slice(0, 8)}
+            </span>
           )}
 
-          <span className="ml-auto inline-flex gap-2">
+          <span className="ml-auto inline-flex gap-1.5">
             {onCheckNow && (
               <button
                 type="button"
                 onClick={onCheckNow}
-                className="px-2 py-0.5 rounded border border-current/30 hover:bg-white/40"
+                className="rounded-sm border border-current/30 px-2 py-0.5 hover:bg-surface/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current"
               >
                 Check now
               </button>
@@ -205,7 +215,7 @@ export default function AnalysisCard({
               <button
                 type="button"
                 onClick={onMarkFailed}
-                className="px-2 py-0.5 rounded border border-current/30 hover:bg-white/40"
+                className="rounded-sm border border-current/30 px-2 py-0.5 hover:bg-surface/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current"
               >
                 Mark as failed
               </button>
@@ -216,29 +226,66 @@ export default function AnalysisCard({
 
       {/* Surfaced poll error (transient, while running) */}
       {lastPollError && (status === 'running' || status === 'stuck') && (
-        <div className="px-5 py-2 border-t bg-red-50 text-xs text-red-700">
+        <div className="border-t border-danger/20 bg-danger-subtle px-6 py-2 text-xs text-danger">
           Poll error: {lastPollError}
         </div>
       )}
 
       {/* Summary, only when completed */}
       {summary && status === 'completed' && (
-        <div className="px-5 py-3 border-t bg-gray-50 text-sm text-gray-700">{summary}</div>
+        <div className="border-t border-border bg-surface-subtle px-6 py-3 text-sm text-fg leading-relaxed">
+          {summary}
+        </div>
       )}
 
       {/* Failure detail */}
       {errorMessage && status === 'failed' && (
-        <div className="px-5 py-3 border-t bg-red-50 text-sm text-red-700">
-          <div className="font-medium mb-0.5">Analysis failed</div>
-          <div className="font-mono text-xs whitespace-pre-wrap break-words">{errorMessage}</div>
+        <div className="border-t border-danger/20 bg-danger-subtle px-6 py-3 text-sm text-danger space-y-1">
+          <div className="font-medium">Analysis failed</div>
+          <div className="font-mono text-xs whitespace-pre-wrap break-words">
+            {errorMessage}
+          </div>
         </div>
       )}
 
       {children && status === 'completed' && !disabledReason && (
-        <div className="border-t px-5 py-4">{children}</div>
+        <div className="border-t border-border px-6 py-5">{children}</div>
       )}
     </div>
   )
+}
+
+// Status badge — uses the design Badge with the same color mapping the
+// rest of the dashboard uses (StatusDot semantics).
+function ModuleStatusBadge({
+  status,
+  running,
+}: {
+  status: AnalysisStatus
+  running?: boolean
+}) {
+  if (status === 'idle') {
+    return <Badge variant="default">Not run</Badge>
+  }
+  if (status === 'running' || running) {
+    return (
+      <Badge variant="accent" className="gap-1.5">
+        <StatusDot variant="running" label={false} size="sm" />
+        Running
+      </Badge>
+    )
+  }
+  if (status === 'stuck') {
+    return (
+      <Badge variant="warning" className="gap-1.5">
+        <TriangleAlert className="h-3 w-3" /> Stuck
+      </Badge>
+    )
+  }
+  if (status === 'completed') {
+    return <Badge variant="success">Completed</Badge>
+  }
+  return <Badge variant="danger">Failed</Badge>
 }
 
 function relativeTime(iso: string): string {
@@ -255,11 +302,6 @@ function relativeTime(iso: string): string {
   return `${Math.floor(day / 30)} mo ago`
 }
 
-function Spinner() {
-  return (
-    <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-    </svg>
-  )
-}
+// Quiet the unused-import warning for StatusVariant (re-exported for callers
+// that mirror the same status semantics without re-deriving the union).
+export type { StatusVariant }

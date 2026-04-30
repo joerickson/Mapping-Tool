@@ -16,6 +16,7 @@ import {
   SidebarSection,
 } from '../../components/layout/Sidebar'
 import { StatusDot, type StatusVariant } from '../../components/ui/StatusDot'
+import { cn } from '../../lib/cn'
 import AnalysisCard, {
   type AnalysisStatus,
   STUCK_AFTER_MS,
@@ -732,30 +733,32 @@ export default function AccountAnalysisPage() {
         />
       }
     >
-      <div className="mx-auto max-w-6xl px-6 py-8 space-y-6">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-4">
-          <div className="space-y-1">
-            <Link
-              to={`/accounts/${accountId}`}
-              className="text-sm text-accent hover:underline"
-            >
-              ← Back to {account?.display_name ?? account?.name ?? 'account'}
-            </Link>
+      <div className="mx-auto max-w-6xl px-6 py-10 space-y-10">
+        {/* Header — title + metadata row + run-all CTA. Breadcrumb is in
+            the TopBar so we don't repeat it inline. */}
+        <header className="flex items-start justify-between gap-6">
+          <div className="space-y-2 min-w-0">
             <h1 className="text-2xl font-semibold tracking-tight text-fg">
               Smart Analysis
-              {account && (
+              {client && (
                 <span className="text-fg-muted font-normal">
-                  {' · '}{account.display_name ?? account.name}
-                  {client && <> · {client.display_name ?? client.name}</>}
+                  {' · '}{client.display_name ?? client.name}
                 </span>
               )}
             </h1>
+            <p className="text-sm text-fg-muted">
+              <AnalysisHeaderMeta
+                propertyCount={mapPoints.length}
+                serviceLocationCount={account?.stats.service_location_count ?? null}
+                hasSelection={hasSelection}
+                selectedK={selectedK}
+              />
+            </p>
           </div>
-            <Button onClick={runAll} disabled={Object.values(running).some(Boolean)}>
-              Run All Analyses
-            </Button>
-          </div>
+          <Button onClick={runAll} disabled={Object.values(running).some(Boolean)}>
+            Run all analyses
+          </Button>
+        </header>
 
           {/* Operational Constraints panel */}
           {accountId && clientId && (
@@ -818,11 +821,13 @@ export default function AccountAnalysisPage() {
           )}
 
           {/* Map snippet */}
-          <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
-            <div className="px-5 py-3 border-b flex items-center justify-between">
-              <div>
-                <h3 className="font-semibold text-gray-900">Portfolio map</h3>
-                <p className="text-xs text-gray-500">
+          <div className="rounded-lg border border-border bg-surface overflow-hidden">
+            <div className="border-b border-border px-6 py-4 flex items-center justify-between gap-4">
+              <div className="space-y-1 min-w-0">
+                <h3 className="text-base font-semibold tracking-tight text-fg">
+                  Portfolio map
+                </h3>
+                <p className="text-xs text-fg-muted">
                   Pins color-coded by risk score · house icons mark recommended branches.
                 </p>
               </div>
@@ -838,20 +843,24 @@ export default function AccountAnalysisPage() {
             </div>
             {reassessMessage && (
               <div
-                className={`px-5 py-2 text-xs border-b ${
+                role="status"
+                className={cn(
+                  'border-b px-6 py-2 text-xs',
                   reassessMessage.startsWith('Failed') || reassessMessage.startsWith('Error')
-                    ? 'bg-red-50 text-red-700'
-                    : 'bg-green-50 text-green-700'
-                }`}
+                    ? 'border-danger/20 bg-danger-subtle text-danger'
+                    : 'border-success/20 bg-success-subtle text-success'
+                )}
               >
                 {reassessMessage}
               </div>
             )}
             <div className="p-4">
               {mapLoading ? (
-                <div className="text-sm text-gray-400 py-12 text-center">Loading map…</div>
+                <div className="py-12 text-center text-sm text-fg-subtle">
+                  Loading map…
+                </div>
               ) : mapPoints.length === 0 ? (
-                <div className="text-sm text-gray-400 py-12 text-center">
+                <div className="py-12 text-center text-sm text-fg-subtle">
                   No properties found for this account.
                 </div>
               ) : (
@@ -865,8 +874,8 @@ export default function AccountAnalysisPage() {
 
               {/* Color mode toggle (only meaningful when branches are selected) */}
               {hasSelection && mapBranches.length > 0 && (
-                <div className="flex items-center gap-3 text-xs text-gray-600 mt-3 flex-wrap">
-                  <span className="font-semibold uppercase tracking-wide text-gray-500">
+                <div className="mt-4 flex items-center gap-3 text-xs text-fg-muted flex-wrap">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
                     Color by:
                   </span>
                   {(
@@ -876,12 +885,16 @@ export default function AccountAnalysisPage() {
                       ['both', 'Both (fill = branch · border = risk)'],
                     ] as Array<[ColorMode, string]>
                   ).map(([mode, label]) => (
-                    <label key={mode} className="flex items-center gap-1.5 cursor-pointer">
+                    <label
+                      key={mode}
+                      className="flex items-center gap-1.5 cursor-pointer text-fg-muted hover:text-fg transition-colors"
+                    >
                       <input
                         type="radio"
                         name="map-color-mode"
                         checked={mapColorMode === mode}
                         onChange={() => setMapColorMode(mode)}
+                        className="accent-accent"
                       />
                       <span>{label}</span>
                     </label>
@@ -891,7 +904,7 @@ export default function AccountAnalysisPage() {
 
               {/* Legend — branch clusters when applicable, otherwise risk colors */}
               {hasSelection && mapBranches.length > 0 && mapColorMode !== 'risk' ? (
-                <div className="flex items-center gap-3 text-xs text-gray-600 mt-3 flex-wrap">
+                <div className="mt-3 flex items-center gap-3 text-xs text-fg-muted flex-wrap">
                   {mapBranches.map((b, i) => {
                     const count = mapPoints.length
                       ? mapPoints.filter((p) => nearestBranchIdx(p, mapBranches) === i).length
@@ -906,7 +919,7 @@ export default function AccountAnalysisPage() {
                   })}
                 </div>
               ) : (
-                <div className="flex items-center gap-3 text-xs text-gray-500 mt-3 flex-wrap">
+                <div className="mt-3 flex items-center gap-3 text-xs text-fg-subtle flex-wrap">
                   <LegendDot color="#22c55e" label="Low / no risk" />
                   <LegendDot color="#facc15" label="Mild" />
                   <LegendDot color="#f97316" label="Elevated" />
@@ -918,7 +931,11 @@ export default function AccountAnalysisPage() {
           </div>
 
           {/* Module cards */}
-          <div className="grid grid-cols-1 gap-4">
+          <section className="space-y-4">
+            <h2 className="text-xl font-semibold tracking-tight text-fg">
+              Analysis modules
+            </h2>
+            <div className="grid grid-cols-1 gap-4">
             {MODULES.map((m) => {
               const row = latestByModule[m.key]
               const status = statusFor(m.key)
@@ -979,7 +996,8 @@ export default function AccountAnalysisPage() {
                 </div>
               )
             })}
-          </div>
+            </div>
+          </section>
 
           {/* Chat panel — floating button, expands to drawer */}
           {accountId && clientId && <ChatPanel accountId={accountId} clientId={clientId!} />}
@@ -999,6 +1017,60 @@ export default function AccountAnalysisPage() {
 
       </div>
     </AppShell>
+  )
+}
+
+// Page metadata row: "521 properties · 993 SLs · K=3 branches" etc.
+// Shows what's known; falls back gracefully when fields aren't loaded yet
+// rather than rendering "— · — · —". Numbers wrapped in font-tabular so
+// they line up if the row wraps onto two lines.
+function AnalysisHeaderMeta({
+  propertyCount,
+  serviceLocationCount,
+  hasSelection,
+  selectedK,
+}: {
+  propertyCount: number
+  serviceLocationCount: number | null
+  hasSelection: boolean
+  selectedK: number | null
+}) {
+  const parts: React.ReactNode[] = []
+  if (propertyCount > 0) {
+    parts.push(
+      <span key="props">
+        <span className="font-tabular">{propertyCount}</span>{' '}
+        {propertyCount === 1 ? 'property' : 'properties'}
+      </span>
+    )
+  }
+  if (serviceLocationCount != null && serviceLocationCount > 0) {
+    parts.push(
+      <span key="sls">
+        <span className="font-tabular">{serviceLocationCount}</span>{' '}
+        service locations
+      </span>
+    )
+  }
+  if (hasSelection && selectedK) {
+    parts.push(
+      <span key="k">
+        <span className="font-tabular">K = {selectedK}</span> branches
+      </span>
+    )
+  }
+  if (parts.length === 0) {
+    return <span className="text-fg-subtle">Loading portfolio data…</span>
+  }
+  return (
+    <span>
+      {parts.map((p, i) => (
+        <span key={i}>
+          {i > 0 && <span className="text-fg-subtle"> · </span>}
+          {p}
+        </span>
+      ))}
+    </span>
   )
 }
 

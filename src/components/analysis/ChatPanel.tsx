@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import { Loader2, MessageCircle, X } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import Button from '../ui/Button'
+import { Input } from '../ui/Input'
+import { cn } from '../../lib/cn'
 
 interface ChatMessage {
   id?: string
@@ -106,35 +109,42 @@ export default function ChatPanel({ accountId, clientId }: { accountId: string; 
 
   return (
     <>
-      {/* Floating button */}
+      {/* Floating button. Round, accent fill, icon-only on small screens to
+          avoid colliding with bottom-right toasts. */}
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-6 right-6 z-30 bg-blue-600 hover:bg-blue-700 text-white rounded-full px-5 py-3 shadow-lg flex items-center gap-2 text-sm font-medium"
+        className={
+          'fixed bottom-6 right-6 z-30 inline-flex items-center gap-2 ' +
+          'rounded-full bg-accent text-accent-fg ' +
+          'h-12 px-5 text-sm font-medium ' +
+          'transition-colors duration-150 hover:bg-accent-hover ' +
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface'
+        }
         aria-label="Open analysis chat"
       >
-        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-        </svg>
-        Chat with Analysis
+        <MessageCircle className="h-4 w-4" aria-hidden />
+        <span className="hidden sm:inline">Chat</span>
       </button>
 
       {/* Drawer */}
       {open && (
         <>
           <div
-            className="fixed inset-0 z-40 bg-black/30"
+            className="fixed inset-0 z-40 bg-fg/30 backdrop-blur-sm"
             onClick={() => setOpen(false)}
           />
-          <div className="fixed right-0 top-0 bottom-0 z-50 w-full sm:w-[480px] bg-white shadow-2xl flex flex-col">
-            <div className="px-5 py-3 border-b flex items-center justify-between">
-              <h2 className="font-semibold text-gray-900">Analysis Chat</h2>
-              <div className="flex gap-2">
+          <div className="fixed right-0 top-0 bottom-0 z-50 flex w-full flex-col border-l border-border bg-surface shadow-lg sm:w-[480px]">
+            <div className="flex items-center justify-between border-b border-border px-5 py-3">
+              <h2 className="text-base font-semibold tracking-tight text-fg">
+                Analysis chat
+              </h2>
+              <div className="flex items-center gap-1">
                 {messages.length > 0 && (
                   <button
                     type="button"
                     onClick={clearHistory}
-                    className="text-xs text-gray-500 hover:text-red-600"
+                    className="rounded-sm px-2 py-1 text-xs text-fg-muted hover:text-danger transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                   >
                     Clear
                   </button>
@@ -142,28 +152,29 @@ export default function ChatPanel({ accountId, clientId }: { accountId: string; 
                 <button
                   type="button"
                   onClick={() => setOpen(false)}
-                  className="text-gray-400 hover:text-gray-600"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-muted hover:text-fg hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                   aria-label="Close"
                 >
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
+                  <X className="h-4 w-4" />
                 </button>
               </div>
             </div>
 
             {/* Messages */}
-            <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+            <div
+              ref={scrollRef}
+              className="flex-1 overflow-y-auto px-5 py-4 space-y-3"
+            >
               {messages.length === 0 && !sending && (
-                <div className="text-sm text-gray-600 space-y-2">
+                <div className="space-y-3 text-sm text-fg-muted">
                   <p>Ask anything about this portfolio analysis. Try:</p>
-                  <div className="grid grid-cols-1 gap-2 mt-2">
+                  <div className="grid grid-cols-1 gap-2">
                     {EXAMPLE_PROMPTS.map((p, i) => (
                       <button
                         key={i}
                         type="button"
                         onClick={() => send(p)}
-                        className="text-left text-xs px-3 py-2 rounded border hover:bg-gray-50 text-gray-700"
+                        className="rounded-md border border-border bg-surface px-3 py-2 text-left text-xs text-fg-muted transition-colors hover:bg-surface-muted hover:border-border-strong hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                       >
                         {p}
                       </button>
@@ -177,17 +188,17 @@ export default function ChatPanel({ accountId, clientId }: { accountId: string; 
               ))}
 
               {sending && (
-                <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
+                <div className="flex items-center gap-2 text-sm text-fg-muted">
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
                   Thinking…
                 </div>
               )}
 
               {error && (
-                <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">
+                <div
+                  role="alert"
+                  className="rounded-md border border-danger/20 bg-danger-subtle px-3 py-2 text-sm text-danger"
+                >
                   {error}
                 </div>
               )}
@@ -199,14 +210,14 @@ export default function ChatPanel({ accountId, clientId }: { accountId: string; 
                 e.preventDefault()
                 send(input)
               }}
-              className="border-t px-5 py-3 flex gap-2"
+              className="flex gap-2 border-t border-border px-5 py-3"
             >
-              <input
+              <Input
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Ask about your portfolio…"
-                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="flex-1"
                 disabled={sending}
                 autoFocus
               />
@@ -224,11 +235,14 @@ export default function ChatPanel({ accountId, clientId }: { accountId: string; 
 function ChatBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === 'user'
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+    <div className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
       <div
-        className={`max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap ${
-          isUser ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-900'
-        }`}
+        className={cn(
+          'max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap',
+          isUser
+            ? 'bg-accent text-accent-fg'
+            : 'bg-surface-muted text-fg'
+        )}
       >
         {message.content}
         {message.metadata?.tool_calls?.length > 0 && (
