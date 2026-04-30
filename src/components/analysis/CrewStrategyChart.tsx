@@ -210,7 +210,13 @@ export default function CrewStrategyChart({
   const saveSelection = async (opt: 'A' | 'B' | 'C') => {
     if (!accountId || !clientId) return
     setSavingSelection(opt)
-    // Optimistic update
+    // Optimistic update — keep this even after save completes so the
+    // ring stays on the chosen card. We deliberately do NOT call
+    // onAllocationsSaved here because that re-runs Crew Strategy,
+    // which remounts this chart and resets selectedOption to null
+    // while the GET races to refetch the saved value (the "flash"
+    // back to recommended). The selection only affects Bid Pricing,
+    // and Bid Pricing reads the value when it next runs.
     setSelectedOption(opt)
     try {
       const token = await getToken()
@@ -225,7 +231,6 @@ export default function CrewStrategyChart({
           body: JSON.stringify({ crew_strategy_selected_option: opt }),
         }
       )
-      onAllocationsSaved?.()
     } finally {
       setSavingSelection(null)
     }
