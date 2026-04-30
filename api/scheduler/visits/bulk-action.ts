@@ -124,6 +124,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 
+  // Phase 4e — refresh cycle completion stats after bulk mark_complete.
+  if (action === 'mark_complete' && cycleId) {
+    try {
+      const { refreshCycleCompletion } = await import(
+        '../../_lib/scheduler/cycle-completion.js'
+      )
+      await refreshCycleCompletion(db, cycleId)
+    } catch (err) {
+      console.error('[bulk-action] completion refresh failed:', err)
+    }
+  }
+
   return res.status(200).json({
     applied: forward.length,
     skipped: skipped.length,

@@ -14,12 +14,19 @@
     },
     "api/cron/cleanup-uploads.ts": {
       "maxDuration": 120
+    },
+    "api/cron/check-auto-generation.ts": {
+      "maxDuration": 300
     }
   },
   "crons": [
     {
       "path": "/api/cron/cleanup-uploads",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/check-auto-generation",
+      "schedule": "0 4 * * *"
     }
   ],
   "rewrites": [

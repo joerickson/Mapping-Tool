@@ -2,10 +2,11 @@
 // Calendar / List / Map), polished header summary, status bar, and
 // undo/redo history drawer. Drag-drop + multi-select ship in 4f-2.
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { Lock, Unlock, Check, MoveRight, Calendar } from 'lucide-react'
 import { useAuth } from '../../../hooks/useAuth'
 import AppShell from '../../../components/layout/AppShell'
+import PreflightIssuesBanner from '../../../components/scheduler/PreflightIssuesBanner'
 import Button from '../../../components/ui/Button'
 import { Badge } from '../../../components/ui/Badge'
 import { Card, CardTitle } from '../../../components/ui/Card'
@@ -315,12 +316,25 @@ export default function CycleDetailPage() {
                 <Calendar className="inline h-3.5 w-3.5 mr-1" />
                 {cycle.start_date} — {cycle.end_date}
               </p>
+              {cycle.cycle_number > 1 && (
+                <Link
+                  to={`/accounts/${accountId}/clients/${clientId}/scheduler/compare?template=${cycle.template_id}&right=${cycle.id}`}
+                  className="inline-flex items-center text-xs text-accent hover:underline mt-1"
+                >
+                  Compare to previous cycle ↗
+                </Link>
+              )}
             </div>
             <ViewSwitcher value={view} onChange={setView} />
           </div>
         </header>
 
         {error && <p className="text-sm text-danger">{error}</p>}
+
+        {/* Phase 4e — preflight issues banner. Hides itself when nothing
+            is open. Triggered automatically after auto-generation; can
+            be re-run on demand. */}
+        <PreflightIssuesBanner cycleId={cycle.id} />
 
         {/* Polished summary cards (4 across). Color-coded for at-a-
             glance status. */}

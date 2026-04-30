@@ -51,6 +51,11 @@ interface Cycle {
   start_date: string
   end_date: string
   status: string
+  completion_pct?: number | null
+  visits_completed_count?: number | null
+  visits_total_count?: number | null
+  next_cycle_id?: string | null
+  auto_generation_triggered_at?: string | null
 }
 
 export default function TemplateDetailPage() {
@@ -310,6 +315,8 @@ export default function TemplateDetailPage() {
                   <TableHead>Start</TableHead>
                   <TableHead>End</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Completion</TableHead>
+                  <TableHead>Auto-gen</TableHead>
                   <TableHead />
                 </TableRow>
               </TableHeader>
@@ -324,13 +331,47 @@ export default function TemplateDetailPage() {
                         {c.status}
                       </Badge>
                     </TableCell>
+                    <TableCell className="text-right text-xs font-tabular">
+                      {c.completion_pct != null ? (
+                        <>
+                          {Number(c.completion_pct).toFixed(0)}%
+                          {c.visits_total_count != null && c.visits_total_count > 0 && (
+                            <span className="text-fg-subtle">
+                              {' '}
+                              ({c.visits_completed_count ?? 0}/{c.visits_total_count})
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-fg-subtle">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      {c.auto_generation_triggered_at ? (
+                        <span className="text-success" title={c.auto_generation_triggered_at}>
+                          ✓ {new Date(c.auto_generation_triggered_at).toLocaleDateString()}
+                        </span>
+                      ) : (
+                        <span className="text-fg-subtle">—</span>
+                      )}
+                    </TableCell>
                     <TableCell>
-                      <Link
-                        to={`/accounts/${accountId}/clients/${clientId}/scheduler/cycles/${c.id}`}
-                        className="text-xs text-accent hover:underline"
-                      >
-                        View
-                      </Link>
+                      <div className="flex items-center gap-2 text-xs">
+                        <Link
+                          to={`/accounts/${accountId}/clients/${clientId}/scheduler/cycles/${c.id}`}
+                          className="text-accent hover:underline"
+                        >
+                          View
+                        </Link>
+                        {c.cycle_number > 1 && (
+                          <Link
+                            to={`/accounts/${accountId}/clients/${clientId}/scheduler/compare?template=${templateId}&right=${c.id}`}
+                            className="text-fg-muted hover:text-accent"
+                          >
+                            Compare
+                          </Link>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
