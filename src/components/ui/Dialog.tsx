@@ -22,7 +22,9 @@ export const DialogOverlay = forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      'fixed inset-0 z-50 bg-fg/30 backdrop-blur-sm',
+      // Stronger backdrop than before — at fg/30 the page bled through
+      // enough that the elevated surface looked translucent in dark mode.
+      'fixed inset-0 z-50 bg-fg/60 backdrop-blur-md',
       'data-[state=open]:animate-in data-[state=open]:fade-in-0',
       'data-[state=closed]:animate-out data-[state=closed]:fade-out-0',
       className
