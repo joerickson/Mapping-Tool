@@ -9,7 +9,21 @@ import {
   ResponsiveContainer,
   Cell,
   ReferenceLine,
+  CartesianGrid,
 } from 'recharts'
+import { ChevronDown } from 'lucide-react'
+import { Badge } from '../ui/Badge'
+import Button from '../ui/Button'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../ui/Table'
+import { tickStyle, tooltipStyle, useChartTheme } from '../../hooks/useChartTheme'
+import { cn } from '../../lib/cn'
 
 interface KResult {
   k: number
@@ -59,13 +73,8 @@ interface BranchOptOutputs {
 }
 
 interface SelectionTableProps {
-  // Render the per-K selection table that lets the user pick which K to
-  // build a manual selection for. Optional — when omitted, the chart skips
-  // the table (e.g. when a selection is already locked in).
   onBuild?: (k: number) => void
   showTable?: boolean
-  // Phase 3.5 — show a banner with both the optimization's recommended K
-  // and the user's confirmed selection so it's obvious when they diverge.
   selectedK?: number | null
   selectedBranchNames?: string[] | null
 }
@@ -77,116 +86,162 @@ export default function BranchOptimizationChart({
   selectedK,
   selectedBranchNames,
 }: { data: BranchOptOutputs } & SelectionTableProps) {
+  const theme = useChartTheme()
   const recommended = data.k_results.find((r) => r.k === data.recommended_k)
 
-  // Phase 3.5 — surface optimization-recommended K vs user-selected K when
-  // they differ so the card stops looking "frozen" on the original
-  // recommendation after a manual selection.
   const recommendedBranchNames = recommended
-    ? recommended.branches.slice().sort((a, b) => b.property_count - a.property_count).map((b) => b.city_state)
+    ? recommended.branches
+        .slice()
+        .sort((a, b) => b.property_count - a.property_count)
+        .map((b) => b.city_state)
     : []
   const selectionDiffers =
     selectedK != null &&
     (selectedK !== data.recommended_k ||
-      (selectedBranchNames && selectedBranchNames.join('|') !== recommendedBranchNames.join('|')))
+      (selectedBranchNames &&
+        selectedBranchNames.join('|') !== recommendedBranchNames.join('|')))
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {/* Recommended-vs-selected status banner */}
       {(selectedK != null || data.recommended_k > 0) && (
         <div
-          className={`rounded-lg border p-3 text-sm ${
+          className={cn(
+            'rounded-md border px-4 py-3 text-sm',
             selectionDiffers
-              ? 'bg-amber-50 border-amber-200'
-              : 'bg-blue-50 border-blue-200'
-          }`}
+              ? 'border-warning/20 bg-warning-subtle'
+              : 'border-accent/20 bg-accent-subtle'
+          )}
         >
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                🟢 Optimization recommends
-              </div>
-              <div className="font-semibold text-gray-900">
-                K = {data.recommended_k}
-              </div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+                Optimization recommends
+              </p>
+              <p className="mt-0.5 font-semibold text-fg">
+                K = <span className="font-tabular">{data.recommended_k}</span>
+              </p>
               {recommendedBranchNames.length > 0 && (
-                <div className="text-xs text-gray-600 mt-0.5">
+                <p className="mt-0.5 text-xs text-fg-muted">
                   {recommendedBranchNames.join(' · ')}
-                </div>
+                </p>
               )}
             </div>
             {selectedK != null && (
               <div>
-                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                  🔵 You selected
-                </div>
-                <div className="font-semibold text-gray-900">K = {selectedK}</div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+                  You selected
+                </p>
+                <p className="mt-0.5 font-semibold text-fg">
+                  K = <span className="font-tabular">{selectedK}</span>
+                </p>
                 {selectedBranchNames?.length ? (
-                  <div className="text-xs text-gray-600 mt-0.5">
+                  <p className="mt-0.5 text-xs text-fg-muted">
                     {selectedBranchNames.join(' · ')}
-                  </div>
+                  </p>
                 ) : null}
               </div>
             )}
           </div>
           {selectionDiffers && (
-            <div className="mt-2 pt-2 border-t border-amber-200 text-xs text-amber-900">
-              Selection differs from current optimization recommendation. Re-run optimization
-              to refresh the recommendation, or update your selection if the new analysis
-              suggests a better fit.
-            </div>
+            <p className="mt-3 border-t border-warning/20 pt-2 text-xs text-warning">
+              Selection differs from current optimization recommendation. Re-run
+              optimization to refresh, or update your selection if the new
+              analysis suggests a better fit.
+            </p>
           )}
         </div>
       )}
 
-      <div>
-        <h4 className="text-sm font-semibold text-gray-700 mb-2">
-          Annual cost by branch count (k) · recommended k = {data.recommended_k}
+      <section className="space-y-2">
+        <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+          Annual cost by branch count (k) · recommended k ={' '}
+          <span className="font-tabular">{data.recommended_k}</span>
         </h4>
         <div className="h-64 w-full">
           <ResponsiveContainer>
-            <ComposedChart data={data.k_results}>
-              <XAxis dataKey="k" tick={{ fontSize: 11 }} label={{ value: 'k (# branches)', position: 'insideBottom', offset: -2, fontSize: 11 }} />
+            <ComposedChart data={data.k_results} margin={{ top: 8, right: 8, left: -8, bottom: 8 }}>
+              <CartesianGrid stroke={theme.grid} strokeDasharray="3 3" vertical={false} />
+              <XAxis
+                dataKey="k"
+                tick={tickStyle(theme)}
+                axisLine={{ stroke: theme.grid }}
+                tickLine={false}
+                label={{
+                  value: 'k (# branches)',
+                  position: 'insideBottom',
+                  offset: -2,
+                  fontSize: 11,
+                  fill: theme.tick,
+                }}
+              />
               <YAxis
                 yAxisId="cost"
-                tick={{ fontSize: 11 }}
+                tick={tickStyle(theme)}
+                axisLine={false}
+                tickLine={false}
                 tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}k`}
               />
               <YAxis
                 yAxisId="drive"
                 orientation="right"
-                tick={{ fontSize: 11 }}
+                tick={tickStyle(theme)}
+                axisLine={false}
+                tickLine={false}
                 tickFormatter={(v: number) => `${v}mi`}
               />
               <Tooltip
+                cursor={{ fill: theme.grid, opacity: 0.4 }}
+                contentStyle={tooltipStyle(theme)}
                 formatter={(value: number, name: string) => {
-                  if (name === 'avg_drive_per_property') return [`${value.toFixed(1)} mi`, 'Avg drive/property']
+                  if (name === 'avg_drive_per_property')
+                    return [`${value.toFixed(1)} mi`, 'Avg drive/property']
                   return [`$${value.toLocaleString()}`, name]
                 }}
-                contentStyle={{ fontSize: 12 }}
               />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <ReferenceLine x={data.recommended_k} stroke="#16a34a" strokeDasharray="3 3" yAxisId="cost" />
+              <Legend wrapperStyle={{ fontSize: 12, color: theme.tick }} />
+              <ReferenceLine
+                x={data.recommended_k}
+                stroke={theme.success}
+                strokeDasharray="3 3"
+                yAxisId="cost"
+              />
               {data.floor_k && data.floor_k > 0 && (
                 <ReferenceLine
                   x={data.floor_k}
-                  stroke="#dc2626"
+                  stroke={theme.danger}
                   strokeDasharray="2 4"
                   yAxisId="cost"
-                  label={{ value: 'Floor (locked)', fontSize: 10, fill: '#dc2626' }}
+                  label={{
+                    value: 'Floor (locked)',
+                    fontSize: 10,
+                    fill: theme.danger,
+                  }}
                 />
               )}
-              <Bar yAxisId="cost" dataKey="drive_cost" stackId="a" fill="#3b82f6" name="Drive cost" />
-              <Bar yAxisId="cost" dataKey="branch_cost" stackId="a" fill="#a855f7" name="Branch cost">
+              <Bar
+                yAxisId="cost"
+                dataKey="drive_cost"
+                stackId="a"
+                fill={theme.accent}
+                name="Drive cost"
+              />
+              <Bar
+                yAxisId="cost"
+                dataKey="branch_cost"
+                stackId="a"
+                fill="#a855f7"
+                name="Branch cost"
+              >
                 {data.k_results.map((r, i) => (
-                  <Cell key={i} fill={r.is_elbow ? '#16a34a' : '#a855f7'} />
+                  <Cell key={i} fill={r.is_elbow ? theme.success : '#a855f7'} />
                 ))}
               </Bar>
               <Line
                 yAxisId="drive"
                 type="monotone"
                 dataKey="avg_drive_per_property"
-                stroke="#f97316"
+                stroke={theme.warning}
                 strokeWidth={2}
                 dot={{ r: 3 }}
                 name="Avg drive/property (mi)"
@@ -194,176 +249,187 @@ export default function BranchOptimizationChart({
             </ComposedChart>
           </ResponsiveContainer>
         </div>
-      </div>
+      </section>
 
       {recommended && (
-        <div>
-          <h4 className="text-sm font-semibold text-gray-700 mb-2">
+        <section className="space-y-2">
+          <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
             Recommended branches (k = {recommended.k})
           </h4>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-left text-xs uppercase tracking-wide text-gray-500">
-                  <th className="py-2 pr-4">Location</th>
-                  <th className="py-2 pr-4 text-right">Population</th>
-                  <th className="py-2 pr-4 text-right">Properties</th>
-                  <th className="py-2 pr-4 text-right">Total sqft</th>
-                  <th className="py-2 pr-4 text-right">Avg drive (mi)</th>
-                  <th className="py-2 text-right">Max drive (mi)</th>
-                </tr>
-              </thead>
-              <tbody>
+          <div className="rounded-md border border-border bg-surface overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Location</TableHead>
+                  <TableHead className="text-right">Population</TableHead>
+                  <TableHead className="text-right">Properties</TableHead>
+                  <TableHead className="text-right">Total sqft</TableHead>
+                  <TableHead className="text-right">Avg drive (mi)</TableHead>
+                  <TableHead className="text-right">Max drive (mi)</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {recommended.branches
                   .slice()
                   .sort((a, b) => b.property_count - a.property_count)
                   .map((b, i) => (
-                    <tr key={i} className="border-b last:border-0">
-                      <td className="py-2 pr-4 font-medium text-gray-900">
-                        {b.city_state}
-                        {b.locked && (
-                          <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 align-middle">
-                            locked
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2 pr-4 text-right text-gray-600">
+                    <TableRow key={i}>
+                      <TableCell className="font-medium text-fg">
+                        <span className="inline-flex items-center gap-2">
+                          {b.city_state}
+                          {b.locked && <Badge variant="accent">locked</Badge>}
+                        </span>
+                      </TableCell>
+                      <TableCell numeric className="text-fg-muted">
                         {formatPop(b.population)}
-                      </td>
-                      <td className="py-2 pr-4 text-right">{b.property_count}</td>
-                      <td className="py-2 pr-4 text-right">{b.total_sqft.toLocaleString()}</td>
-                      <td className="py-2 pr-4 text-right">{b.avg_drive_distance_miles}</td>
-                      <td className="py-2 text-right">{b.max_drive_distance_miles}</td>
-                    </tr>
+                      </TableCell>
+                      <TableCell numeric>{b.property_count}</TableCell>
+                      <TableCell numeric>{b.total_sqft.toLocaleString()}</TableCell>
+                      <TableCell numeric>{b.avg_drive_distance_miles}</TableCell>
+                      <TableCell numeric>{b.max_drive_distance_miles}</TableCell>
+                    </TableRow>
                   ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
-        </div>
+        </section>
       )}
 
-      {/* Per-K selection table — drives the Branch Selection workflow */}
+      {/* Per-K selection table */}
       {showTable && onBuild && (
-        <div>
-          <h4 className="text-sm font-semibold text-gray-700 mb-1">
-            Pick a branch count to build your selection
-          </h4>
-          <p className="text-xs text-gray-500 mb-2">
-            Each row shows the modeled cost at K branches. Click a row's button to start
-            building your selection — you'll specify the actual locations manually.
-          </p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-left text-xs uppercase tracking-wide text-gray-500">
-                  <th className="py-2 pr-3">K</th>
-                  <th className="py-2 pr-3 text-right">Total $/yr</th>
-                  <th className="py-2 pr-3 text-right">Drive</th>
-                  <th className="py-2 pr-3 text-right">Branch</th>
-                  <th className="py-2 pr-3 text-right">Avg drive (mi)</th>
-                  <th className="py-2 pr-3">Optimization-suggested centroids</th>
-                  <th className="py-2 text-right"></th>
-                </tr>
-              </thead>
-              <tbody>
+        <section className="space-y-2">
+          <div>
+            <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+              Pick a branch count to build your selection
+            </h4>
+            <p className="mt-1 text-xs text-fg-muted">
+              Each row shows the modeled cost at K branches. Click a row's button to
+              start building your selection — you'll specify the actual locations
+              manually.
+            </p>
+          </div>
+          <div className="rounded-md border border-border bg-surface overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>K</TableHead>
+                  <TableHead className="text-right">Total $/yr</TableHead>
+                  <TableHead className="text-right">Drive</TableHead>
+                  <TableHead className="text-right">Branch</TableHead>
+                  <TableHead className="text-right">Avg drive (mi)</TableHead>
+                  <TableHead>Optimization-suggested centroids</TableHead>
+                  <TableHead className="text-right" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {data.k_results.map((r) => {
                   const isRec = r.k === data.recommended_k
                   return (
-                    <tr
+                    <TableRow
                       key={r.k}
-                      className={`border-b last:border-0 ${
-                        isRec ? 'bg-green-50' : ''
-                      }`}
+                      className={isRec ? 'bg-success-subtle/40' : undefined}
                     >
-                      <td className="py-2 pr-3 font-mono font-semibold text-gray-900">
-                        {r.k}
-                        {isRec && (
-                          <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded bg-green-100 text-green-700 align-middle">
-                            Recommended
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2 pr-3 text-right font-mono">
+                      <TableCell className="font-mono font-semibold text-fg">
+                        <span className="inline-flex items-center gap-1.5">
+                          {r.k}
+                          {isRec && <Badge variant="success">Recommended</Badge>}
+                        </span>
+                      </TableCell>
+                      <TableCell numeric className="text-fg">
                         ${r.total_annual_cost.toLocaleString()}
-                      </td>
-                      <td className="py-2 pr-3 text-right text-gray-500">
+                      </TableCell>
+                      <TableCell numeric className="text-fg-muted">
                         ${r.drive_cost.toLocaleString()}
-                      </td>
-                      <td className="py-2 pr-3 text-right text-gray-500">
+                      </TableCell>
+                      <TableCell numeric className="text-fg-muted">
                         ${r.branch_cost.toLocaleString()}
-                      </td>
-                      <td className="py-2 pr-3 text-right text-gray-500">
+                      </TableCell>
+                      <TableCell numeric className="text-fg-muted">
                         {r.avg_drive_per_property}
-                      </td>
-                      <td className="py-2 pr-3 text-xs text-gray-600">
+                      </TableCell>
+                      <TableCell className="text-xs text-fg-muted">
                         {r.branches.map((b) => b.city_state).join(' · ')}
-                      </td>
-                      <td className="py-2 text-right whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={() => onBuild(r.k)}
-                          className="px-2.5 py-1 rounded-md text-xs font-medium bg-blue-600 text-white hover:bg-blue-700"
-                        >
-                          Build my K={r.k} selection →
-                        </button>
-                      </td>
-                    </tr>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button size="sm" onClick={() => onBuild(r.k)}>
+                          Build K={r.k} →
+                        </Button>
+                      </TableCell>
+                    </TableRow>
                   )
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
-        </div>
+        </section>
       )}
 
       {/* Population constraint info + unconstrained reference */}
       {data.population_constraint && (
-        <div className="border-t pt-3">
-          <div className="text-xs text-gray-600">
+        <section className="border-t border-border pt-4 space-y-2">
+          <p className="text-xs text-fg-muted">
             {data.population_constraint.enabled ? (
               <>
                 Population constraint:{' '}
-                <strong>min {data.population_constraint.min_population.toLocaleString()}</strong>
+                <span className="font-semibold text-fg">
+                  min{' '}
+                  <span className="font-tabular">
+                    {data.population_constraint.min_population.toLocaleString()}
+                  </span>
+                </span>
                 {data.population_constraint.state_filter?.length ? (
                   <> · states: {data.population_constraint.state_filter.join(', ')}</>
                 ) : null}
                 {' · '}
-                {data.population_constraint.eligible_city_count.toLocaleString()} eligible cities
-                in range
+                <span className="font-tabular">
+                  {data.population_constraint.eligible_city_count.toLocaleString()}
+                </span>{' '}
+                eligible cities in range
               </>
             ) : (
               <>Population constraint disabled — using unconstrained k-means.</>
             )}
-          </div>
+          </p>
 
           {data.unconstrained_reference && data.unconstrained_reference.length > 0 && (
-            <details className="mt-2 text-xs">
-              <summary className="cursor-pointer font-medium text-gray-700">
+            <details className="group">
+              <summary
+                className={cn(
+                  'flex cursor-pointer items-center gap-1.5 text-xs font-medium text-fg-muted',
+                  'hover:text-fg list-none [&::-webkit-details-marker]:hidden'
+                )}
+              >
+                <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-0 -rotate-90" />
                 View unconstrained reference (what pure k-means would have suggested)
               </summary>
-              <div className="mt-2 space-y-2">
+              <ul className="mt-2 space-y-2">
                 {data.unconstrained_reference.map((u) => (
-                  <div key={u.k} className="border rounded p-2 bg-gray-50">
-                    <div className="font-mono text-gray-700">
-                      k={u.k} — drive cost ${u.total_drive_cost.toLocaleString()}
-                    </div>
-                    <div className="text-gray-600 mt-0.5">
+                  <li
+                    key={u.k}
+                    className="rounded-md border border-border bg-surface-subtle px-3 py-2"
+                  >
+                    <p className="font-mono text-xs text-fg">
+                      k=<span className="font-tabular">{u.k}</span> — drive cost
+                      ${u.total_drive_cost.toLocaleString()}
+                    </p>
+                    <p className="mt-0.5 text-xs text-fg-muted">
                       Centroids near:{' '}
                       {u.centroids
                         .map(
                           (c) =>
-                            `${c.nearest_city_unconstrained ?? `${c.lat.toFixed(2)},${c.lng.toFixed(2)}`}${
-                              c.population != null ? ` (${formatPop(c.population)})` : ''
-                            }`
+                            `${
+                              c.nearest_city_unconstrained ??
+                              `${c.lat.toFixed(2)},${c.lng.toFixed(2)}`
+                            }${c.population != null ? ` (${formatPop(c.population)})` : ''}`
                         )
                         .join(' · ')}
-                    </div>
-                  </div>
+                    </p>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </details>
           )}
-        </div>
+        </section>
       )}
     </div>
   )

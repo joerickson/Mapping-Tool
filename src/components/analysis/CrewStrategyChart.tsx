@@ -1,4 +1,27 @@
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, Legend } from 'recharts'
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+  Legend,
+  CartesianGrid,
+} from 'recharts'
+import { TriangleAlert } from 'lucide-react'
+import { Badge } from '../ui/Badge'
+import { Card } from '../ui/Card'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../ui/Table'
+import { tickStyle, tooltipStyle, useChartTheme } from '../../hooks/useChartTheme'
+import { cn } from '../../lib/cn'
 
 type UtilStatus = 'ideal' | 'acceptable' | 'underutilized' | 'overcapacity'
 
@@ -76,17 +99,17 @@ interface CrewStrategyOutputs {
   }>
 }
 
-const STATUS_BADGE: Record<UtilStatus, string> = {
-  ideal: 'bg-green-100 text-green-700 border-green-200',
-  acceptable: 'bg-yellow-100 text-yellow-700 border-yellow-200',
-  underutilized: 'bg-red-100 text-red-700 border-red-200',
-  overcapacity: 'bg-red-100 text-red-700 border-red-200',
+const STATUS_VARIANT: Record<UtilStatus, 'success' | 'warning' | 'danger'> = {
+  ideal: 'success',
+  acceptable: 'warning',
+  underutilized: 'danger',
+  overcapacity: 'danger',
 }
 const STATUS_LABEL: Record<UtilStatus, string> = {
-  ideal: '🟢 Ideal',
-  acceptable: '🟡 Acceptable',
-  underutilized: '🔴 Underutilized',
-  overcapacity: '🔴 Overcapacity',
+  ideal: 'Ideal',
+  acceptable: 'Acceptable',
+  underutilized: 'Underutilized',
+  overcapacity: 'Overcapacity',
 }
 
 function formatPop(p: number | null | undefined): string {
@@ -96,13 +119,8 @@ function formatPop(p: number | null | undefined): string {
   return p.toString()
 }
 
-const RECOMMENDED_BG: Record<string, string> = {
-  A: 'border-blue-500 ring-1 ring-blue-200',
-  B: 'border-green-500 ring-1 ring-green-200',
-  C: 'border-purple-500 ring-1 ring-purple-200',
-}
-
 export default function CrewStrategyChart({ data }: { data: CrewStrategyOutputs }) {
+  const theme = useChartTheme()
   const opts = [
     { key: 'A' as const, ...data.options.A },
     { key: 'B' as const, ...data.options.B },
@@ -118,116 +136,110 @@ export default function CrewStrategyChart({ data }: { data: CrewStrategyOutputs 
   }))
 
   return (
-    <div className="space-y-5">
-      {/* Recommendation banner */}
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg px-4 py-3">
-        <div className="text-sm text-gray-500 font-semibold uppercase tracking-wide">
+    <div className="space-y-6">
+      {/* Recommendation banner — quiet accent-subtle, no gradient. */}
+      <div className="rounded-md border border-accent/20 bg-accent-subtle px-4 py-3">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
           Recommended
-        </div>
-        <div className="text-lg font-bold text-gray-900 mt-0.5">
+        </p>
+        <p className="mt-0.5 text-base font-semibold text-fg">
           Option {data.recommended_option}: {data.options[data.recommended_option].label}
-        </div>
-        <div className="text-sm text-gray-700 mt-1">{data.recommended_rationale}</div>
+        </p>
+        <p className="mt-1 text-sm text-fg-muted">{data.recommended_rationale}</p>
       </div>
 
       {/* Cost comparison bar chart */}
-      <div>
-        <h4 className="text-sm font-semibold text-gray-700 mb-2">Annual cost comparison</h4>
+      <section className="space-y-2">
+        <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+          Annual cost comparison
+        </h4>
         <div className="h-56 w-full">
           <ResponsiveContainer>
-            <BarChart data={chartData}>
-              <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+            <BarChart data={chartData} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
+              <CartesianGrid stroke={theme.grid} strokeDasharray="3 3" vertical={false} />
+              <XAxis
+                dataKey="name"
+                tick={tickStyle(theme)}
+                axisLine={{ stroke: theme.grid }}
+                tickLine={false}
+              />
               <YAxis
-                tick={{ fontSize: 11 }}
+                tick={tickStyle(theme)}
+                axisLine={false}
+                tickLine={false}
                 tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}k`}
               />
               <Tooltip
+                cursor={{ fill: theme.grid, opacity: 0.4 }}
+                contentStyle={tooltipStyle(theme)}
                 formatter={(v: number, name: string) => [`$${v.toLocaleString()}`, name]}
-                contentStyle={{ fontSize: 12 }}
               />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="labor" stackId="a" fill="#3b82f6" name="Labor" />
-              <Bar dataKey="vehicle" stackId="a" fill="#a855f7" name="Vehicle/fuel">
+              <Legend wrapperStyle={{ fontSize: 12, color: theme.tick }} />
+              <Bar dataKey="labor" stackId="a" fill={theme.accent} name="Labor" />
+              <Bar dataKey="vehicle" stackId="a" fill="#a855f7" name="Vehicle / fuel">
                 {chartData.map((d, i) => (
-                  <Cell key={i} fill={d.isRecommended ? '#16a34a' : '#a855f7'} />
+                  <Cell key={i} fill={d.isRecommended ? theme.success : '#a855f7'} />
                 ))}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
-      </div>
+      </section>
 
       {/* 3-card option comparison */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
         {opts.map((o) => (
-          <div
+          <Card
             key={o.key}
-            className={`bg-white rounded-lg border-2 p-4 ${
-              o.key === data.recommended_option
-                ? RECOMMENDED_BG[o.key]
-                : 'border-gray-200'
-            }`}
+            padding="md"
+            className={
+              o.key === data.recommended_option ? 'ring-1 ring-accent' : undefined
+            }
           >
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-start justify-between gap-2">
               <div>
-                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
                   Option {o.key}
-                </div>
-                <div className="font-semibold text-gray-900">{o.label}</div>
+                </p>
+                <p className="mt-0.5 font-semibold text-fg">{o.label}</p>
               </div>
               {o.key === data.recommended_option && (
-                <span className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700">
-                  Recommended
-                </span>
+                <Badge variant="success">Recommended</Badge>
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-2 text-sm border-t border-b py-2 my-2">
-              <div>
-                <div className="text-xs text-gray-500">Crews</div>
-                <div className="font-semibold">
-                  {o.crew_count}
-                  {o.surge_crew_count ? ` + ${o.surge_crew_count} surge` : ''}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-gray-500">Utilization</div>
-                <div className="font-semibold">{o.utilization_pct}%</div>
-              </div>
-              <div>
-                <div className="text-xs text-gray-500">Labor</div>
-                <div className="font-semibold">
+            <dl className="my-3 grid grid-cols-2 gap-3 border-y border-border py-3 text-sm">
+              <Stat label="Crews">
+                <span className="font-tabular">{o.crew_count}</span>
+                {o.surge_crew_count ? (
+                  <span className="text-fg-muted">
+                    {' + '}
+                    <span className="font-tabular">{o.surge_crew_count}</span> surge
+                  </span>
+                ) : null}
+              </Stat>
+              <Stat label="Utilization">
+                <span className="font-tabular">{o.utilization_pct}%</span>
+              </Stat>
+              <Stat label="Labor">
+                <span className="font-tabular">
                   ${(o.annual_labor_cost / 1000).toFixed(0)}k
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-gray-500">Total</div>
-                <div className="font-semibold">
+                </span>
+              </Stat>
+              <Stat label="Total">
+                <span className="font-tabular">
                   ${(o.total_annual_cost / 1000).toFixed(0)}k
-                </div>
-              </div>
-            </div>
+                </span>
+              </Stat>
+            </dl>
 
-            <div className="mt-2">
-              <div className="text-xs font-semibold text-gray-500 mb-1">Pros</div>
-              <ul className="text-xs space-y-0.5 text-gray-700 list-disc pl-4">
-                {o.pros.map((p, i) => (
-                  <li key={i}>{p}</li>
-                ))}
-              </ul>
-            </div>
-            <div className="mt-2">
-              <div className="text-xs font-semibold text-gray-500 mb-1">Cons</div>
-              <ul className="text-xs space-y-0.5 text-gray-700 list-disc pl-4">
-                {o.cons.map((p, i) => (
-                  <li key={i}>{p}</li>
-                ))}
-              </ul>
-            </div>
-            <div className="mt-2 pt-2 border-t text-xs italic text-gray-500">
+            <ProsCons label="Pros" items={o.pros} />
+            <ProsCons label="Cons" items={o.cons} className="mt-2" />
+
+            <p className="mt-3 border-t border-border pt-2 text-xs italic text-fg-subtle">
               Best for: {o.recommended_use_case}
-            </div>
-          </div>
+            </p>
+          </Card>
         ))}
       </div>
 
@@ -241,32 +253,83 @@ export default function CrewStrategyChart({ data }: { data: CrewStrategyOutputs 
 
       {/* Constraint violations */}
       {data.constraint_violations && data.constraint_violations.length > 0 && (
-        <div>
-          <h4 className="text-sm font-semibold text-gray-700 mb-2">⚠ Constraint violations</h4>
+        <section className="space-y-2">
+          <h4 className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+            <TriangleAlert className="h-3.5 w-3.5 text-warning" aria-hidden />
+            Constraint violations
+          </h4>
           <ul className="space-y-2">
             {data.constraint_violations.map((v, i) => (
               <li
                 key={i}
-                className={`border-l-4 px-3 py-2 text-sm rounded-r ${
+                className={cn(
+                  'rounded-md border-l-2 px-3 py-2 text-sm',
                   v.severity === 'flag'
-                    ? 'border-red-400 bg-red-50'
-                    : 'border-orange-400 bg-orange-50'
-                }`}
+                    ? 'border-danger bg-danger-subtle'
+                    : 'border-warning bg-warning-subtle'
+                )}
               >
-                <div className="font-medium text-gray-900">
+                <p className="font-medium text-fg">
                   {v.scope === 'branch' ? '' : `${v.scope.toUpperCase()} `}
                   {v.name}
-                </div>
-                <div className="text-xs text-gray-700">
-                  {v.metric === 'utilization_pct' ? `${v.actual}% utilization` : v.actual} —{' '}
+                </p>
+                <p className="text-xs text-fg-muted">
+                  {v.metric === 'utilization_pct' ? (
+                    <>
+                      <span className="font-tabular">{v.actual}%</span> utilization
+                    </>
+                  ) : (
+                    <span className="font-tabular">{v.actual}</span>
+                  )}
+                  {' — '}
                   {v.threshold_violated.replace('_', ' ')}
-                </div>
-                <div className="text-xs text-gray-600 mt-0.5 italic">{v.suggestion}</div>
+                </p>
+                <p className="mt-0.5 text-xs italic text-fg-subtle">{v.suggestion}</p>
               </li>
             ))}
           </ul>
-        </div>
+        </section>
       )}
+    </div>
+  )
+}
+
+function Stat({
+  label,
+  children,
+}: {
+  label: string
+  children: React.ReactNode
+}) {
+  return (
+    <div>
+      <dt className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+        {label}
+      </dt>
+      <dd className="mt-0.5 font-semibold text-fg">{children}</dd>
+    </div>
+  )
+}
+
+function ProsCons({
+  label,
+  items,
+  className,
+}: {
+  label: string
+  items: string[]
+  className?: string
+}) {
+  return (
+    <div className={className}>
+      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+        {label}
+      </p>
+      <ul className="list-disc space-y-0.5 pl-4 text-xs text-fg">
+        {items.map((p, i) => (
+          <li key={i}>{p}</li>
+        ))}
+      </ul>
     </div>
   )
 }
@@ -283,123 +346,132 @@ function UtilizationSection({
 
   if (scope === 'portfolio' && ub.portfolio) {
     return (
-      <div>
-        <h4 className="text-sm font-semibold text-gray-700 mb-2">
+      <section className="space-y-2">
+        <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
           Portfolio utilization (Option B)
         </h4>
-        <div className="border rounded-lg p-3 flex items-center justify-between gap-4">
+        <Card padding="md" className="flex items-center justify-between gap-4">
           <div>
-            <div className="text-2xl font-bold text-gray-900">
+            <p className="font-mono text-2xl font-semibold tabular-nums text-fg leading-none">
               {ub.portfolio.utilization_pct}%
-            </div>
-            <div className="text-xs text-gray-500">
-              {ub.portfolio.work_hours.toLocaleString()} work hrs ÷{' '}
-              {ub.portfolio.available_hours.toLocaleString()} available · {ub.portfolio.crew_count} crews
-            </div>
+            </p>
+            <p className="mt-1 text-xs text-fg-muted">
+              <span className="font-tabular">
+                {ub.portfolio.work_hours.toLocaleString()}
+              </span>{' '}
+              work hrs ÷{' '}
+              <span className="font-tabular">
+                {ub.portfolio.available_hours.toLocaleString()}
+              </span>{' '}
+              available ·{' '}
+              <span className="font-tabular">{ub.portfolio.crew_count}</span> crews
+            </p>
           </div>
-          <span
-            className={`text-xs px-2.5 py-1 rounded border font-medium ${STATUS_BADGE[ub.portfolio.status]}`}
-          >
+          <Badge variant={STATUS_VARIANT[ub.portfolio.status]}>
             {STATUS_LABEL[ub.portfolio.status]}
-          </span>
-        </div>
-      </div>
+          </Badge>
+        </Card>
+      </section>
     )
   }
 
   if (scope === 'per_region' && ub.per_region && ub.per_region.length > 0) {
     return (
-      <div>
-        <h4 className="text-sm font-semibold text-gray-700 mb-2">
+      <section className="space-y-2">
+        <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
           Per-region utilization (Option B)
         </h4>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b text-left text-xs uppercase tracking-wide text-gray-500">
-              <th className="py-2 pr-4">Region</th>
-              <th className="py-2 pr-4">Branches</th>
-              <th className="py-2 pr-4 text-right">Work hrs</th>
-              <th className="py-2 pr-4 text-right">Available</th>
-              <th className="py-2 pr-4 text-right">Util</th>
-              <th className="py-2 text-right">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {ub.per_region.map((r) => (
-              <tr key={r.region} className="border-b last:border-0">
-                <td className="py-2 pr-4 font-medium text-gray-900">{r.region}</td>
-                <td className="py-2 pr-4 text-xs text-gray-600">
-                  {r.branches_in_region.join(', ')}
-                </td>
-                <td className="py-2 pr-4 text-right">{r.work_hours.toLocaleString()}</td>
-                <td className="py-2 pr-4 text-right">{r.available_hours.toLocaleString()}</td>
-                <td className="py-2 pr-4 text-right">{r.aggregate_utilization_pct}%</td>
-                <td className="py-2 text-right">
-                  <span
-                    className={`text-xs px-2 py-0.5 rounded border ${STATUS_BADGE[r.status]}`}
-                  >
-                    {STATUS_LABEL[r.status]}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+        <div className="rounded-md border border-border bg-surface overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Region</TableHead>
+                <TableHead>Branches</TableHead>
+                <TableHead className="text-right">Work hrs</TableHead>
+                <TableHead className="text-right">Available</TableHead>
+                <TableHead className="text-right">Util</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {ub.per_region.map((r) => (
+                <TableRow key={r.region}>
+                  <TableCell className="font-medium text-fg">{r.region}</TableCell>
+                  <TableCell className="text-xs text-fg-muted">
+                    {r.branches_in_region.join(', ')}
+                  </TableCell>
+                  <TableCell numeric>{r.work_hours.toLocaleString()}</TableCell>
+                  <TableCell numeric>{r.available_hours.toLocaleString()}</TableCell>
+                  <TableCell numeric>{r.aggregate_utilization_pct}%</TableCell>
+                  <TableCell>
+                    <Badge variant={STATUS_VARIANT[r.status]}>{STATUS_LABEL[r.status]}</Badge>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </section>
     )
   }
 
   // per_branch (default)
   if (!ub.per_branch || ub.per_branch.length === 0) return null
   return (
-    <div>
-      <h4 className="text-sm font-semibold text-gray-700 mb-2">
+    <section className="space-y-2">
+      <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
         Per-branch utilization (Option B)
       </h4>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b text-left text-xs uppercase tracking-wide text-gray-500">
-              <th className="py-2 pr-3">Branch</th>
-              <th className="py-2 pr-3 text-right">Pop</th>
-              <th className="py-2 pr-3 text-right">Crews</th>
-              <th className="py-2 pr-3 text-right">Work hrs</th>
-              <th className="py-2 pr-3 text-right">Available</th>
-              <th className="py-2 pr-3 text-right">Util</th>
-              <th className="py-2 text-right">Status</th>
-            </tr>
-          </thead>
-          <tbody>
+      <div className="rounded-md border border-border bg-surface overflow-hidden">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Branch</TableHead>
+              <TableHead className="text-right">Pop</TableHead>
+              <TableHead className="text-right">Crews</TableHead>
+              <TableHead className="text-right">Work hrs</TableHead>
+              <TableHead className="text-right">Available</TableHead>
+              <TableHead className="text-right">Util</TableHead>
+              <TableHead>Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {ub.per_branch.map((b) => (
-              <tr key={b.branch_name} className="border-b last:border-0 align-top">
-                <td className="py-2 pr-3 font-medium text-gray-900">
+              <TableRow key={b.branch_name} className="align-top">
+                <TableCell className="font-medium text-fg">
                   {b.city_state ?? b.branch_name}
-                  {b.branch_name && b.city_state && b.branch_name !== b.city_state && (
-                    <div className="text-xs text-gray-400 font-normal italic">
-                      {b.branch_name}
-                    </div>
-                  )}
-                </td>
-                <td className="py-2 pr-3 text-right text-gray-600">{formatPop(b.population)}</td>
-                <td className="py-2 pr-3 text-right">{b.crew_count}</td>
-                <td className="py-2 pr-3 text-right">{b.work_hours.toLocaleString()}</td>
-                <td className="py-2 pr-3 text-right text-gray-500">
+                  {b.branch_name &&
+                    b.city_state &&
+                    b.branch_name !== b.city_state && (
+                      <p className="mt-0.5 text-xs italic text-fg-subtle">
+                        {b.branch_name}
+                      </p>
+                    )}
+                </TableCell>
+                <TableCell numeric className="text-fg-muted">
+                  {formatPop(b.population)}
+                </TableCell>
+                <TableCell numeric>{b.crew_count}</TableCell>
+                <TableCell numeric>{b.work_hours.toLocaleString()}</TableCell>
+                <TableCell numeric className="text-fg-muted">
                   {b.available_hours.toLocaleString()}
-                </td>
-                <td className="py-2 pr-3 text-right font-semibold">{b.utilization_pct}%</td>
-                <td className="py-2 text-right">
-                  <span className={`text-xs px-2 py-0.5 rounded border ${STATUS_BADGE[b.status]}`}>
-                    {STATUS_LABEL[b.status]}
-                  </span>
+                </TableCell>
+                <TableCell numeric className="font-semibold">
+                  {b.utilization_pct}%
+                </TableCell>
+                <TableCell>
+                  <Badge variant={STATUS_VARIANT[b.status]}>{STATUS_LABEL[b.status]}</Badge>
                   {b.warning && (
-                    <div className="text-xs text-gray-500 mt-1 italic max-w-xs">{b.warning}</div>
+                    <p className="mt-1 max-w-xs text-xs italic text-fg-subtle">
+                      {b.warning}
+                    </p>
                   )}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
-    </div>
+    </section>
   )
 }

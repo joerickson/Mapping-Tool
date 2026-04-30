@@ -1,4 +1,23 @@
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+  CartesianGrid,
+} from 'recharts'
+import { Badge } from '../ui/Badge'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../ui/Table'
+import { tickStyle, tooltipStyle, useChartTheme } from '../../hooks/useChartTheme'
 
 interface DriveTimeOutputs {
   drive_distribution: Record<string, number>
@@ -21,21 +40,20 @@ const BUCKET_LABELS: Record<string, string> = {
   over_120_min: '>120',
 }
 
+// Drive-time bucket palette — green→red gradient stays semantic so a user
+// can scan the bar chart left-to-right and read time-cost intuitively.
+// These hex values are deliberate (not theme-driven) so the gradient holds
+// in both light and dark.
 const BUCKET_COLORS: Record<string, string> = {
-  under_30_min: '#16a34a',
-  '30_to_60_min': '#65a30d',
-  '60_to_90_min': '#ca8a04',
-  '90_to_120_min': '#ea580c',
-  over_120_min: '#dc2626',
-}
-
-const EFFICIENCY_BADGE: Record<'high' | 'medium' | 'low', string> = {
-  high: 'bg-green-100 text-green-700',
-  medium: 'bg-yellow-100 text-yellow-700',
-  low: 'bg-red-100 text-red-700',
+  under_30_min: '#22c55e',
+  '30_to_60_min': '#84cc16',
+  '60_to_90_min': '#eab308',
+  '90_to_120_min': '#f97316',
+  over_120_min: '#ef4444',
 }
 
 export default function DriveTimeChart({ data }: { data: DriveTimeOutputs }) {
+  const theme = useChartTheme()
   const histogramData = Object.entries(data.drive_distribution).map(([key, count]) => ({
     key,
     label: BUCKET_LABELS[key] ?? key,
@@ -43,77 +61,102 @@ export default function DriveTimeChart({ data }: { data: DriveTimeOutputs }) {
   }))
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h4 className="text-sm font-semibold text-gray-700 mb-2">Drive time distribution</h4>
+    <div className="space-y-6">
+      <section className="space-y-2">
+        <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+          Drive time distribution
+        </h4>
         <div className="h-48 w-full">
           <ResponsiveContainer>
-            <BarChart data={histogramData}>
-              <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} />
-              <Tooltip
-                formatter={(v: number) => [`${v} properties`, 'Count']}
-                contentStyle={{ fontSize: 12 }}
+            <BarChart data={histogramData} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+              <CartesianGrid stroke={theme.grid} strokeDasharray="3 3" vertical={false} />
+              <XAxis
+                dataKey="label"
+                tick={tickStyle(theme)}
+                axisLine={{ stroke: theme.grid }}
+                tickLine={false}
               />
-              <Bar dataKey="count">
+              <YAxis tick={tickStyle(theme)} axisLine={false} tickLine={false} />
+              <Tooltip
+                cursor={{ fill: theme.grid, opacity: 0.4 }}
+                contentStyle={tooltipStyle(theme)}
+                formatter={(v: number) => [`${v} properties`, 'Count']}
+              />
+              <Bar dataKey="count" radius={[2, 2, 0, 0]}>
                 {histogramData.map((d, i) => (
-                  <Cell key={i} fill={BUCKET_COLORS[d.key] ?? '#6b7280'} />
+                  <Cell key={i} fill={BUCKET_COLORS[d.key] ?? theme.muted} />
                 ))}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
-      </div>
+      </section>
 
-      <div>
-        <h4 className="text-sm font-semibold text-gray-700 mb-2">Cluster efficiency</h4>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b text-left text-xs uppercase tracking-wide text-gray-500">
-                <th className="py-2 pr-4">Branch</th>
-                <th className="py-2 pr-4 text-right">Properties</th>
-                <th className="py-2 pr-4 text-right">Avg drive (min)</th>
-                <th className="py-2 pr-4 text-right">Within 60 min</th>
-                <th className="py-2">Efficiency</th>
-              </tr>
-            </thead>
-            <tbody>
+      <section className="space-y-2">
+        <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+          Cluster efficiency
+        </h4>
+        <div className="rounded-md border border-border bg-surface overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Branch</TableHead>
+                <TableHead className="text-right">Properties</TableHead>
+                <TableHead className="text-right">Avg drive (min)</TableHead>
+                <TableHead className="text-right">Within 60 min</TableHead>
+                <TableHead>Efficiency</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {data.cluster_efficiency.map((c) => (
-                <tr key={c.branch} className="border-b last:border-0">
-                  <td className="py-2 pr-4 font-medium text-gray-900">
+                <TableRow key={c.branch}>
+                  <TableCell className="font-medium text-fg">
                     {c.city_state ?? c.branch}
-                  </td>
-                  <td className="py-2 pr-4 text-right">{c.property_count}</td>
-                  <td className="py-2 pr-4 text-right">{c.avg_drive_minutes}</td>
-                  <td className="py-2 pr-4 text-right">{c.properties_within_60min_pct}%</td>
-                  <td className="py-2">
-                    <span className={`text-xs px-2 py-0.5 rounded ${EFFICIENCY_BADGE[c.efficiency_score]}`}>
+                  </TableCell>
+                  <TableCell numeric>{c.property_count}</TableCell>
+                  <TableCell numeric>{c.avg_drive_minutes}</TableCell>
+                  <TableCell numeric>{c.properties_within_60min_pct}%</TableCell>
+                  <TableCell>
+                    <Badge variant={efficiencyVariant(c.efficiency_score)}>
                       {c.efficiency_score}
-                    </span>
-                  </td>
-                </tr>
+                    </Badge>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
-      </div>
+      </section>
 
       {data.long_drive_properties.length > 0 && (
-        <div>
-          <h4 className="text-sm font-semibold text-gray-700 mb-2">
+        <section className="space-y-2">
+          <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
             Long-drive properties ({data.long_drive_properties.length})
           </h4>
-          <div className="space-y-1.5 max-h-48 overflow-y-auto">
+          <ul className="max-h-48 space-y-1.5 overflow-y-auto">
             {data.long_drive_properties.map((p) => (
-              <div key={p.property_id} className="border-l-4 border-red-400 bg-red-50 px-3 py-2 text-sm">
-                <div className="font-medium text-gray-900">{p.address}</div>
-                <div className="text-xs text-gray-600">{p.drive_minutes}-min one-way drive</div>
-              </div>
+              <li
+                key={p.property_id}
+                className="rounded-md border-l-2 border-danger bg-danger-subtle px-3 py-2 text-sm"
+              >
+                <p className="font-medium text-fg">{p.address}</p>
+                <p className="text-xs text-fg-muted">
+                  <span className="font-tabular">{p.drive_minutes}</span>
+                  -min one-way drive
+                </p>
+              </li>
             ))}
-          </div>
-        </div>
+          </ul>
+        </section>
       )}
     </div>
   )
+}
+
+function efficiencyVariant(
+  score: 'high' | 'medium' | 'low'
+): 'success' | 'warning' | 'danger' {
+  if (score === 'high') return 'success'
+  if (score === 'medium') return 'warning'
+  return 'danger'
 }
