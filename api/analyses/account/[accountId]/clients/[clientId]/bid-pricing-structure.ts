@@ -18,7 +18,7 @@ import {
   requireSelectedBranches,
   NO_SELECTION_ERROR,
 } from '../../../../../_lib/analysis/operational-constraints.js'
-import { loadAccountOfferings } from '../../../../../_lib/analysis/service-offerings.js'
+import { loadAccountOfferings, classifyOffering } from '../../../../../_lib/analysis/service-offerings.js'
 import { computePropertyVisitHours } from '../../../../../_lib/analysis/property-hours.js'
 import {
   calculateOvernights,
@@ -178,7 +178,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       branchOpt?.outputs,
       workforce?.outputs,
       hotelsResolved,
-      schedulerTemplate
+      schedulerTemplate,
+      offerings,
+      {
+        project_clean_base_hours: constraints.project_clean_base_hours,
+        project_clean_hours_per_sqft: constraints.project_clean_hours_per_sqft,
+        upholstery_solo_hours: constraints.upholstery_solo_hours,
+        upholstery_combo_hours_pct: constraints.upholstery_combo_hours_pct,
+        visits_per_year_default: constraints.visits_per_year_default ?? 2,
+      }
     )
 
     await completeAnalysisRecord(db, analysisId, {
@@ -214,7 +222,15 @@ export function computeBidPricing(
     total_drive_miles_per_cycle: number | null
     total_work_minutes_per_cycle: number | null
     total_overnight_nights_per_cycle: number | null
-  } | null
+  } | null,
+  offerings?: Map<string, { id: string; name: string }>,
+  hoursInputs?: {
+    project_clean_base_hours: number
+    project_clean_hours_per_sqft: number
+    upholstery_solo_hours: number
+    upholstery_combo_hours_pct: number
+    visits_per_year_default: number
+  }
 ) {
   let resolvedLabor = inputs.total_annual_labor_cost
   let resolvedVehicleFuel = inputs.total_annual_vehicle_cost
@@ -296,8 +312,15 @@ export function computeBidPricing(
   const margin_amount = bid_total - total_cost
 
   const bid_per_property = properties.length > 0 ? bid_total / properties.length : 0
-  const bid_per_sqft = totalSqft > 0 ? bid_total / totalSqft : 0
   const monthly_invoice_estimate = bid_total / 12
+
+  // ── Phase 3.9 — per-service-line $/sqft breakdown ───────────────────
+  // Walk every SL, classify by offering, and roll up sqft + work hours
+  // per category. Project lines (project_clean, upholstery) report
+  // $/sqft/visit (visit-weighted denominator); recurring janitorial
+  // reports $/sqft/year. Allocates bid_total proportional to work
+  // hours per line, which matches the labor-driven bid model.
+  const lines = computePerServiceLine(properties, offerings, hoursInputs, bid_total)
 
   const pct = (n: number) =>
     bid_total > 0 ? Math.round((n / bid_total) * 1000) / 10 : 0
@@ -382,10 +405,144 @@ export function computeBidPricing(
       },
       bid_total: Math.round(bid_total),
       bid_per_property: Math.round(bid_per_property),
-      bid_per_sqft: +bid_per_sqft.toFixed(2),
+      per_service_line: lines,
       monthly_invoice_estimate: Math.round(monthly_invoice_estimate),
       cost_breakdown_pct,
     },
     summary_text: summaryParts.join(' '),
   }
+}
+
+// Per-service-line $/sqft breakdown.
+//
+// For each service category present in the portfolio:
+//   - sqft        = sum of SL.serviceable_sqft
+//   - visit_sqft  = sum of (SL.sqft × visits_per_year)        [project only]
+//   - work_hours  = annual project-crew hours for the line     [project only]
+//   - alloc_share = work_hours / total_project_hours
+//   - alloc_cost  = bid_total × alloc_share                    [project only]
+//   - $/sqft/visit = alloc_cost / visit_sqft                   [project]
+//   - $/sqft/year  = (placeholder; recurring not currently in scope of
+//                    this bid total — surfaced as null with a note)
+function computePerServiceLine(
+  properties: Awaited<ReturnType<typeof loadAccountProperties>>,
+  offerings: Map<string, { id: string; name: string }> | undefined,
+  hoursInputs:
+    | {
+        project_clean_base_hours: number
+        project_clean_hours_per_sqft: number
+        upholstery_solo_hours: number
+        upholstery_combo_hours_pct: number
+        visits_per_year_default: number
+      }
+    | undefined,
+  bid_total: number
+): Array<{
+  service_line: 'project_clean' | 'upholstery' | 'recurring_janitorial' | 'other'
+  label: string
+  unit: 'visit' | 'year'
+  sl_count: number
+  sqft: number
+  visit_sqft: number | null
+  avg_visits_per_year: number | null
+  annual_work_hours: number | null
+  allocated_annual_cost: number | null
+  rate_per_sqft: number | null
+  in_scope: boolean
+  note: string | null
+}> {
+  if (!offerings || !hoursInputs) return []
+
+  type Bucket = {
+    label: string
+    sqft: number
+    visit_sqft: number
+    work_hours: number
+    sl_count: number
+    visit_weight_sum: number // for avg visits
+  }
+  const buckets: Record<string, Bucket> = {
+    project_clean: { label: 'Project Clean', sqft: 0, visit_sqft: 0, work_hours: 0, sl_count: 0, visit_weight_sum: 0 },
+    upholstery: { label: 'Upholstery', sqft: 0, visit_sqft: 0, work_hours: 0, sl_count: 0, visit_weight_sum: 0 },
+    recurring_janitorial: { label: 'Recurring Janitorial', sqft: 0, visit_sqft: 0, work_hours: 0, sl_count: 0, visit_weight_sum: 0 },
+    other: { label: 'Other', sqft: 0, visit_sqft: 0, work_hours: 0, sl_count: 0, visit_weight_sum: 0 },
+  }
+
+  for (const p of properties) {
+    // Detect combo for project_clean adjustment
+    let hasProjectClean = false
+    let hasUpholstery = false
+    for (const sl of p.service_locations) {
+      const off = sl.service_offering_id ? offerings.get(sl.service_offering_id) : null
+      const cat = off ? classifyOffering(off.name) : 'other'
+      if (cat === 'project_clean') hasProjectClean = true
+      if (cat === 'upholstery') hasUpholstery = true
+    }
+    for (const sl of p.service_locations) {
+      const off = sl.service_offering_id ? offerings.get(sl.service_offering_id) : null
+      const cat = off ? classifyOffering(off.name) : 'other'
+      const bucket = buckets[cat] ?? buckets.other
+      const sqft = sl.serviceable_sqft ?? 0
+      const visits = sl.visits_per_year_override ?? hoursInputs.visits_per_year_default
+
+      bucket.sl_count += 1
+      bucket.sqft += sqft
+      if (sqft > 0) bucket.visit_weight_sum += visits
+
+      if (cat === 'project_clean') {
+        let hpv =
+          hoursInputs.project_clean_base_hours +
+          sqft * hoursInputs.project_clean_hours_per_sqft
+        if (hasUpholstery) hpv *= 1 + hoursInputs.upholstery_combo_hours_pct
+        bucket.work_hours += hpv * visits
+        bucket.visit_sqft += sqft * visits
+      } else if (cat === 'upholstery') {
+        if (!hasProjectClean) {
+          bucket.work_hours += hoursInputs.upholstery_solo_hours * visits
+        }
+        bucket.visit_sqft += sqft * visits
+      }
+      // recurring_janitorial / other: hours not modeled by bid_pricing
+      // today, so we skip work_hours here (still record sqft for
+      // visibility).
+    }
+  }
+
+  const projectHours =
+    buckets.project_clean.work_hours + buckets.upholstery.work_hours
+
+  const out: Array<any> = []
+  for (const cat of ['project_clean', 'upholstery', 'recurring_janitorial', 'other'] as const) {
+    const b = buckets[cat]
+    if (b.sl_count === 0) continue
+    const inScope = cat === 'project_clean' || cat === 'upholstery'
+    const allocShare = inScope && projectHours > 0 ? b.work_hours / projectHours : 0
+    const allocCost = inScope ? bid_total * allocShare : null
+    const avgVisits = b.sl_count > 0 ? +(b.visit_weight_sum / b.sl_count).toFixed(2) : null
+    const unit = cat === 'recurring_janitorial' ? 'year' : 'visit'
+    let rate: number | null = null
+    if (inScope && allocCost != null) {
+      const denom = b.visit_sqft
+      rate = denom > 0 ? +(allocCost / denom).toFixed(2) : null
+    }
+    out.push({
+      service_line: cat,
+      label: b.label,
+      unit,
+      sl_count: b.sl_count,
+      sqft: Math.round(b.sqft),
+      visit_sqft: inScope ? Math.round(b.visit_sqft) : null,
+      avg_visits_per_year: avgVisits,
+      annual_work_hours: inScope ? Math.round(b.work_hours) : null,
+      allocated_annual_cost: allocCost != null ? Math.round(allocCost) : null,
+      rate_per_sqft: rate,
+      in_scope: inScope,
+      note: inScope
+        ? null
+        : cat === 'recurring_janitorial'
+          ? 'Recurring janitorial is not priced by this bid model; bid separately on $/sqft/year.'
+          : 'Not classified by the offering rules.',
+    })
+  }
+  return out
 }

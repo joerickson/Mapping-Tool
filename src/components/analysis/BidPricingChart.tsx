@@ -65,7 +65,24 @@ interface BidOutputs {
   margin: { target_pct: number; margin_amount: number }
   bid_total: number
   bid_per_property: number
-  bid_per_sqft: number
+  // Phase 3.9 — per-service-line $/sqft replaces the consolidated
+  // bid_per_sqft. Project lines (project_clean, upholstery) report
+  // unit='visit'; recurring janitorial reports unit='year' but is
+  // out of scope of this bid model and shows note + rate_per_sqft=null.
+  per_service_line?: Array<{
+    service_line: 'project_clean' | 'upholstery' | 'recurring_janitorial' | 'other'
+    label: string
+    unit: 'visit' | 'year'
+    sl_count: number
+    sqft: number
+    visit_sqft: number | null
+    avg_visits_per_year: number | null
+    annual_work_hours: number | null
+    allocated_annual_cost: number | null
+    rate_per_sqft: number | null
+    in_scope: boolean
+    note: string | null
+  }>
   monthly_invoice_estimate: number
   cost_breakdown_pct: {
     labor: number
@@ -185,17 +202,61 @@ export default function BidPricingChart({
           </span>
           <span className="ml-2 text-base text-fg-muted">/year</span>
         </p>
-        <div className="mt-4 grid grid-cols-3 gap-4 text-sm">
+        <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
           <BidStat
             label="Per property"
             value={`$${data.bid_per_property.toLocaleString()}`}
           />
-          <BidStat label="Per sqft" value={`$${data.bid_per_sqft.toFixed(2)}`} />
           <BidStat
             label="Monthly invoice"
             value={`$${data.monthly_invoice_estimate.toLocaleString()}`}
           />
         </div>
+
+        {/* Per-service-line $/sqft. Project lines = $/sqft/visit;
+            recurring janitorial = $/sqft/year (when scoped). */}
+        {data.per_service_line && data.per_service_line.length > 0 && (
+          <div className="mt-5 pt-4 border-t border-border space-y-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+              $/sqft by service line
+            </p>
+            <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {data.per_service_line.map((line) => (
+                <li
+                  key={line.service_line}
+                  className="rounded-md border border-border bg-surface-subtle/40 px-3 py-2"
+                >
+                  <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                    <span className="text-xs font-medium text-fg">{line.label}</span>
+                    {line.rate_per_sqft != null ? (
+                      <span className="font-mono text-base font-semibold tabular-nums text-fg">
+                        ${line.rate_per_sqft.toFixed(2)}
+                        <span className="text-xs text-fg-muted ml-1">
+                          /sqft/{line.unit}
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="text-xs text-fg-subtle italic">not priced</span>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-[11px] text-fg-muted">
+                    <span className="font-tabular">{line.sl_count}</span> SLs ·{' '}
+                    <span className="font-tabular">{line.sqft.toLocaleString()}</span> sqft
+                    {line.avg_visits_per_year != null && line.unit === 'visit' && (
+                      <>
+                        {' · '}
+                        <span className="font-tabular">{line.avg_visits_per_year}</span>×/yr avg
+                      </>
+                    )}
+                  </p>
+                  {line.note && (
+                    <p className="mt-1 text-[11px] text-fg-subtle italic">{line.note}</p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </Card>
 
       {/* Cost buildup bars */}
