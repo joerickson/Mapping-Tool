@@ -116,57 +116,95 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    let query = db
-      .from('properties')
-      .select('*, service_locations(*)', { count: 'exact' })
-      .range(offset, offset + limit - 1)
+    // Apply non-id filters via a builder so we can reuse them across
+    // chunked queries when propIdsFromServiceLocations is large.
+    const applyOtherFilters = <T extends { in: any; gte: any; lte: any; ilike: any; or: any; eq: any }>(
+      q: T
+    ): T => {
+      let qq: any = q
+      if (category) {
+        qq = qq.in('rbm_category', String(category).split(','))
+      }
+      if (bbox) {
+        const [lat1, lng1, lat2, lng2] = String(bbox).split(',').map(Number)
+        qq = qq
+          .gte('latitude', Math.min(lat1, lat2))
+          .lte('latitude', Math.max(lat1, lat2))
+          .gte('longitude', Math.min(lng1, lng2))
+          .lte('longitude', Math.max(lng1, lng2))
+      }
+      if (city_state) {
+        const cityStateStr = String(city_state).trim()
+        const parts = cityStateStr.includes(',')
+          ? cityStateStr.split(',').map((s) => s.trim())
+          : cityStateStr.split(/\s+/)
+        if (parts.length >= 2) {
+          const cityPart = parts.slice(0, -1).join(' ')
+          const statePart = parts[parts.length - 1]
+          qq = qq.ilike('city', `%${cityPart}%`).ilike('state', `%${statePart}%`)
+        } else {
+          qq = qq.or(`city.ilike.%${cityStateStr}%,state.ilike.%${cityStateStr}%`)
+        }
+      } else {
+        if (city) qq = qq.ilike('city', `%${String(city)}%`)
+        if (state) qq = qq.ilike('state', `%${String(state)}%`)
+      }
+      if (enrichment_status) qq = qq.eq('enrichment_status', enrichment_status)
+      return qq as T
+    }
+
+    let allProperties: any[] = []
+    let total_count = 0
 
     if (propIdsFromServiceLocations) {
-      query = query.in('id', propIdsFromServiceLocations)
-    }
-
-    if (category) {
-      query = query.in('rbm_category', String(category).split(','))
-    }
-    if (bbox) {
-      const [lat1, lng1, lat2, lng2] = String(bbox).split(',').map(Number)
-      query = query
-        .gte('latitude', Math.min(lat1, lat2))
-        .lte('latitude', Math.max(lat1, lat2))
-        .gte('longitude', Math.min(lng1, lng2))
-        .lte('longitude', Math.max(lng1, lng2))
-    }
-
-    // Handle city_state parameter (e.g., "Chicago, IL" or "Chicago IL")
-    if (city_state) {
-      const cityStateStr = String(city_state).trim()
-      // Try to split by comma first, then by space
-      const parts = cityStateStr.includes(',')
-        ? cityStateStr.split(',').map(s => s.trim())
-        : cityStateStr.split(/\s+/)
-
-      if (parts.length >= 2) {
-        const cityPart = parts.slice(0, -1).join(' ')
-        const statePart = parts[parts.length - 1]
-        query = query.ilike('city', `%${cityPart}%`).ilike('state', `%${statePart}%`)
-      } else {
-        // If only one part, search in both city and state
-        query = query.or(`city.ilike.%${cityStateStr}%,state.ilike.%${cityStateStr}%`)
+      // Chunk the .in('id', ...) so we never exceed PostgREST's URL
+      // limit (~32KB). 250 UUIDs ≈ 9KB of URL — safe headroom for
+      // other filters + headers. Selecting multiple clients with
+      // many combined properties used to push the .in() URL past the
+      // limit and return 400 Bad Request.
+      const PROP_ID_CHUNK = 250
+      const seen = new Set<string>()
+      for (let i = 0; i < propIdsFromServiceLocations.length; i += PROP_ID_CHUNK) {
+        const chunk = propIdsFromServiceLocations.slice(i, i + PROP_ID_CHUNK)
+        let chunkQuery = db
+          .from('properties')
+          .select('*, service_locations(*)')
+          .in('id', chunk)
+        chunkQuery = applyOtherFilters(chunkQuery)
+        const { data: chunkData, error: chunkErr } = await chunkQuery
+        if (chunkErr) {
+          return res.status(500).json({ error: chunkErr.message })
+        }
+        for (const row of chunkData ?? []) {
+          if (!seen.has((row as any).id)) {
+            seen.add((row as any).id)
+            allProperties.push(row)
+          }
+        }
       }
+      // Stable sort by id so pagination across chunks is deterministic.
+      allProperties.sort((a, b) =>
+        (a.id as string) < (b.id as string) ? -1 : (a.id as string) > (b.id as string) ? 1 : 0
+      )
+      total_count = allProperties.length
+      // Apply caller-requested page slice.
+      allProperties = allProperties.slice(offset, offset + limit)
     } else {
-      // Only apply individual city/state filters if city_state is not provided
-      if (city) query = query.ilike('city', `%${String(city)}%`)
-      if (state) query = query.ilike('state', `%${String(state)}%`)
+      // No SL-derived id filter — just paginate the properties table directly.
+      let query = db
+        .from('properties')
+        .select('*, service_locations(*)', { count: 'exact' })
+        .range(offset, offset + limit - 1)
+      query = applyOtherFilters(query)
+      const { data, error, count } = await query
+      if (error) return res.status(500).json({ error: error.message })
+      allProperties = data ?? []
+      total_count = count ?? 0
     }
-
-    if (enrichment_status) query = query.eq('enrichment_status', enrichment_status)
-
-    const { data, error, count } = await query
-    if (error) return res.status(500).json({ error: error.message })
 
     // properties.id and service_locations.id are the real PK columns; alias
     // them as property_id / service_location_id for frontend compatibility.
-    const properties = (data ?? []).map((p: any) => ({
+    const properties = allProperties.map((p: any) => ({
       ...p,
       property_id: p.id,
       service_locations: (p.service_locations ?? []).map((sl: any) => ({
@@ -175,13 +213,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       })),
     }))
 
-    const total_count = count ?? 0
     // has_more must compare against the *actual* returned length, not
     // the *requested* limit. PostgREST silently caps responses at ~1000
     // rows even when limit=2000 is requested, so using the requested
     // limit causes early termination of paginated callers when total
-    // is between cap and limit (e.g. 1000–2000 properties → only the
-    // first page would be returned).
+    // is between cap and limit.
     const has_more = offset + properties.length < total_count
     return res.status(200).json({
       properties,
