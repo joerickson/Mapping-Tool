@@ -3,7 +3,7 @@
 // trip/crew tabs. Map + rich Gantt deferred to 4f.
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { Plus, Play } from 'lucide-react'
+import { Plus, Play, RefreshCw, Trash2 } from 'lucide-react'
 import { useAuth } from '../../../hooks/useAuth'
 import AppShell from '../../../components/layout/AppShell'
 import Button from '../../../components/ui/Button'
@@ -24,6 +24,7 @@ interface Template {
   description: string | null
   status: string
   crew_count: number
+  is_custom_cycle_length: boolean
   cycle_length_days: number
   cycle_length_label: string
   total_visits_per_cycle: number | null
@@ -65,6 +66,12 @@ export default function TemplateDetailPage() {
   const [generateOpen, setGenerateOpen] = useState(false)
   const [genStartDate, setGenStartDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [generating, setGenerating] = useState(false)
+  const [regenOpen, setRegenOpen] = useState(false)
+  const [regenCrewCount, setRegenCrewCount] = useState<number>(1)
+  const [regenCycleDays, setRegenCycleDays] = useState<number | ''>('')
+  const [regenObjective, setRegenObjective] = useState<'minimize_drive' | 'maximize_utilization' | 'balanced'>('balanced')
+  const [regenerating, setRegenerating] = useState(false)
+  const [archiving, setArchiving] = useState(false)
 
   const load = useCallback(async () => {
     if (!templateId) return
@@ -94,6 +101,69 @@ export default function TemplateDetailPage() {
   }, [templateId, getToken])
 
   useEffect(() => { load() }, [load])
+
+  // Seed regen dialog defaults from current template values when opened
+  useEffect(() => {
+    if (template) {
+      setRegenCrewCount(template.crew_count)
+      setRegenCycleDays(template.is_custom_cycle_length ? template.cycle_length_days : '')
+    }
+  }, [template])
+
+  async function handleRegenerate() {
+    if (!templateId) return
+    setRegenerating(true)
+    setError(null)
+    try {
+      const token = await getToken()
+      const body: Record<string, unknown> = {
+        crew_count: regenCrewCount,
+        preferences: { objective: regenObjective },
+      }
+      if (regenCycleDays !== '' && Number.isFinite(regenCycleDays)) {
+        body.custom_cycle_length_days = regenCycleDays
+      } else {
+        body.custom_cycle_length_days = null
+      }
+      const res = await fetch(`/api/scheduler/templates/${templateId}/regenerate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}))
+        throw new Error(errBody.error ?? `Regenerate failed (${res.status})`)
+      }
+      setRegenOpen(false)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRegenerating(false)
+    }
+  }
+
+  async function handleArchive() {
+    if (!templateId) return
+    if (!confirm('Archive this template? Cycles already generated stay; the template won\'t show in the active list.')) return
+    setArchiving(true)
+    try {
+      const token = await getToken()
+      const res = await fetch(`/api/scheduler/templates/${templateId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error ?? `Archive failed (${res.status})`)
+      }
+      navigate(`/accounts/${accountId}/clients/${clientId}/scheduler/templates`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setArchiving(false)
+    }
+  }
 
   async function handleGenerate() {
     if (!templateId) return
@@ -155,6 +225,16 @@ export default function TemplateDetailPage() {
               <Play className="h-3.5 w-3.5" />
               Generate cycle
             </Button>
+            <Button variant="secondary" onClick={() => setRegenOpen(true)}>
+              <RefreshCw className="h-3.5 w-3.5" />
+              Regenerate
+            </Button>
+            {template.status !== 'archived' && (
+              <Button variant="ghost" onClick={handleArchive} loading={archiving}>
+                <Trash2 className="h-3.5 w-3.5" />
+                Archive
+              </Button>
+            )}
           </div>
         </header>
 
@@ -388,6 +468,55 @@ export default function TemplateDetailPage() {
           <DialogFooter>
             <Button variant="ghost" onClick={() => setGenerateOpen(false)}>Cancel</Button>
             <Button onClick={handleGenerate} loading={generating}>Generate</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={regenOpen} onOpenChange={(o) => { if (!o) setRegenOpen(false) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Regenerate template</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-fg-muted">
+              Re-runs the optimizer against the same property set with adjusted settings.
+              Cycles already generated stay intact; future cycles will use the new structure.
+            </p>
+            <FormField label="Crew count">
+              <Input
+                type="number"
+                min={1}
+                max={20}
+                value={regenCrewCount}
+                onChange={(e) => setRegenCrewCount(Math.max(1, Number(e.target.value) || 1))}
+              />
+            </FormField>
+            <FormField
+              label="Custom cycle length (days, optional)"
+              helper="Leave blank to auto-compute from parent visit intervals."
+            >
+              <Input
+                type="number"
+                value={regenCycleDays === '' ? '' : String(regenCycleDays)}
+                onChange={(e) => setRegenCycleDays(e.target.value === '' ? '' : Number(e.target.value))}
+                placeholder="auto"
+              />
+            </FormField>
+            <FormField label="Optimization objective">
+              <select
+                className="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm"
+                value={regenObjective}
+                onChange={(e) => setRegenObjective(e.target.value as any)}
+              >
+                <option value="minimize_drive">Minimize drive</option>
+                <option value="maximize_utilization">Maximize utilization</option>
+                <option value="balanced">Balanced</option>
+              </select>
+            </FormField>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setRegenOpen(false)}>Cancel</Button>
+            <Button onClick={handleRegenerate} loading={regenerating}>Regenerate</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
