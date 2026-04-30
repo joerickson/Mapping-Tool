@@ -205,13 +205,39 @@ export async function generateCycleInstance(
   }
 
   // Surface unplaced visits as scheduled_visits with status='unplaced'.
-  for (const u of (template.unplaced_visits ?? []) as any[]) {
+  // Older templates (pre-fix) may be missing property_id on unplaced
+  // entries; look them up from service_locations rather than fall back
+  // to the SL id (which violates the property_id FK and rolls back the
+  // entire batch insert via Postgres single-statement semantics).
+  const unplacedRaw = (template.unplaced_visits ?? []) as any[]
+  const slIdsNeedingPropId = unplacedRaw
+    .filter((u) => u.service_location_id && !u.property_id)
+    .map((u) => u.service_location_id as string)
+  let propIdBySlId = new Map<string, string>()
+  if (slIdsNeedingPropId.length > 0) {
+    const { data: slRows } = await db
+      .from('service_locations')
+      .select('id, property_id')
+      .in('id', slIdsNeedingPropId)
+    propIdBySlId = new Map(
+      (slRows ?? []).map((r) => [(r as any).id as string, (r as any).property_id as string])
+    )
+  }
+  for (const u of unplacedRaw) {
     if (!u.service_location_id) continue
+    const propertyId = u.property_id ?? propIdBySlId.get(u.service_location_id)
+    if (!propertyId) {
+      // Skip rather than break the whole batch with a bad FK.
+      console.warn(
+        `[generate-cycle] skipping unplaced visit for SL ${u.service_location_id}: no property_id resolvable`
+      )
+      continue
+    }
     scheduledVisits.push({
       cycle_instance_id: cycleInstanceId,
       template_id: templateId,
       service_location_id: u.service_location_id,
-      property_id: u.property_id ?? u.service_location_id,
+      property_id: propertyId,
       visit_number_in_cycle: 1,
       status: 'unplaced',
       unplaced_reason: u.detail ?? u.reason,
@@ -220,16 +246,20 @@ export async function generateCycleInstance(
     })
   }
 
-  // Bulk-insert in chunks.
+  // Bulk-insert in chunks. THROW on failure rather than swallow — a
+  // silent "generated cycle with 0 visits" is worse than a real error
+  // because the user sees the cycle as successful and only later
+  // notices the empty Gantt / map / list.
   let crewDaysCreated = 0
   for (let i = 0; i < crewDayRoutes.length; i += INSERT_BATCH_SIZE) {
     const chunk = crewDayRoutes.slice(i, i + INSERT_BATCH_SIZE)
     const { error } = await db.from('crew_day_routes').insert(chunk)
     if (error) {
-      console.error('[generate-cycle] crew_day_routes batch failed:', error.message)
-    } else {
-      crewDaysCreated += chunk.length
+      throw new Error(
+        `crew_day_routes insert failed at batch ${i}-${i + chunk.length}: ${error.message}`
+      )
     }
+    crewDaysCreated += chunk.length
   }
 
   let visitsCreated = 0
@@ -237,10 +267,11 @@ export async function generateCycleInstance(
     const chunk = scheduledVisits.slice(i, i + INSERT_BATCH_SIZE)
     const { error } = await db.from('scheduled_visits').insert(chunk)
     if (error) {
-      console.error('[generate-cycle] scheduled_visits batch failed:', error.message)
-    } else {
-      visitsCreated += chunk.length
+      throw new Error(
+        `scheduled_visits insert failed at batch ${i}-${i + chunk.length}: ${error.message}`
+      )
     }
+    visitsCreated += chunk.length
   }
 
   return {
