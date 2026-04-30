@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 import { useClient } from '../../context/ClientContext'
+import { Input } from '../ui/Input'
 import type { MapFilter, ServiceLocationStatus, Client } from '../../types'
 import { STATUS_LABELS } from '../../lib/constants'
 
@@ -53,100 +54,127 @@ export default function FilterSidebar({ filter, onChange }: FilterSidebarProps) 
     filter.portfolios.length > 0
 
   return (
-    <div className="w-72 bg-white border-r flex flex-col h-full overflow-hidden">
-      <div className="px-4 py-3 border-b flex items-center justify-between">
-        <h2 className="font-semibold text-gray-800">Filters</h2>
+    <div className="hidden md:flex w-64 shrink-0 flex-col h-full overflow-hidden border-r border-border bg-surface-subtle">
+      <div className="flex h-12 items-center justify-between border-b border-border px-4">
+        <h2 className="text-sm font-semibold tracking-tight text-fg">Filters</h2>
         {hasActive && (
-          <button onClick={clearAll} className="text-xs text-blue-600 hover:underline">
+          <button
+            onClick={clearAll}
+            className="text-xs text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-sm px-1"
+          >
             Clear all
           </button>
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-5">
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
         {/* City / State text filter */}
-        <section>
-          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-            City / State
-          </label>
-          <input
+        <FilterGroup label="City / State">
+          <Input
             type="text"
             placeholder="e.g. Chicago, IL"
             value={filter.cityState}
             onChange={(e) => onChange({ ...filter, cityState: e.target.value })}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
-        </section>
+        </FilterGroup>
 
         {/* Status */}
-        <section>
-          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-            Status
-          </label>
-          <div className="space-y-1.5">
+        <FilterGroup label="Status">
+          <ul className="space-y-1">
             {STATUSES.map((s) => (
-              <label key={s} className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={filter.statuses.includes(s)}
-                  onChange={() => toggleMulti('statuses', s)}
-                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                />
-                <span className="text-sm text-gray-700">{STATUS_LABELS[s]}</span>
-              </label>
+              <FilterOption
+                key={s}
+                checked={filter.statuses.includes(s)}
+                onToggle={() => toggleMulti('statuses', s)}
+                label={STATUS_LABELS[s]}
+              />
             ))}
-          </div>
-        </section>
+          </ul>
+        </FilterGroup>
 
         {/* Client */}
         {clients.length > 0 && (
-          <section>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-              Client
-            </label>
-            <div className="space-y-1.5 max-h-36 overflow-y-auto">
+          <FilterGroup label="Client">
+            <ul className="max-h-36 space-y-1 overflow-y-auto pr-1">
               {clients.map((c: Client) => (
-                <label key={c.id} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={filter.clients.includes(c.id)}
-                    onChange={() => toggleMulti('clients', c.id)}
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  />
-                  <span
-                    className="w-2.5 h-2.5 rounded-full shrink-0"
-                    style={{ backgroundColor: c.brand_color ?? hashColor(c.id) }}
-                  />
-                  <span className="text-sm text-gray-700 truncate">{c.display_name ?? c.name}</span>
-                </label>
+                <FilterOption
+                  key={c.id}
+                  checked={filter.clients.includes(c.id)}
+                  onToggle={() => toggleMulti('clients', c.id)}
+                  label={c.display_name ?? c.name}
+                  swatch={c.brand_color ?? hashColor(c.id)}
+                />
               ))}
-            </div>
-          </section>
+            </ul>
+          </FilterGroup>
         )}
 
         {/* Portfolio */}
         {portfolios.length > 0 && (
-          <section>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-              Portfolio
-            </label>
-            <div className="space-y-1.5 max-h-36 overflow-y-auto">
+          <FilterGroup label="Portfolio">
+            <ul className="max-h-36 space-y-1 overflow-y-auto pr-1">
               {portfolios.map((p) => (
-                <label key={p.portfolio_id} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={filter.portfolios.includes(p.portfolio_id)}
-                    onChange={() => toggleMulti('portfolios', p.portfolio_id)}
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  />
-                  <span className="text-sm text-gray-700 truncate">{p.name}</span>
-                </label>
+                <FilterOption
+                  key={p.portfolio_id}
+                  checked={filter.portfolios.includes(p.portfolio_id)}
+                  onToggle={() => toggleMulti('portfolios', p.portfolio_id)}
+                  label={p.name}
+                />
               ))}
-            </div>
-          </section>
+            </ul>
+          </FilterGroup>
         )}
       </div>
     </div>
+  )
+}
+
+function FilterGroup({
+  label,
+  children,
+}: {
+  label: string
+  children: React.ReactNode
+}) {
+  return (
+    <section className="space-y-2">
+      <h3 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+        {label}
+      </h3>
+      {children}
+    </section>
+  )
+}
+
+function FilterOption({
+  checked,
+  onToggle,
+  label,
+  swatch,
+}: {
+  checked: boolean
+  onToggle: () => void
+  label: string
+  swatch?: string
+}) {
+  return (
+    <li>
+      <label className="flex cursor-pointer items-center gap-2 rounded-md py-0.5 hover:bg-surface-muted">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={onToggle}
+          className="h-3.5 w-3.5 rounded-sm border-border-strong accent-accent"
+        />
+        {swatch && (
+          <span
+            className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-border"
+            style={{ backgroundColor: swatch }}
+          />
+        )}
+        <span className="truncate text-sm text-fg">{label}</span>
+      </label>
+    </li>
   )
 }
 

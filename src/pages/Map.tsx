@@ -1,13 +1,24 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { CheckCheck, Loader2 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { useClient } from '../context/ClientContext'
-import Navbar from '../components/ui/Navbar'
 import MapView from '../components/map/MapView'
 import FilterSidebar from '../components/map/FilterSidebar'
 import PropertyDetailPanel from '../components/map/PropertyDetailPanel'
 import BulkSelectMenu from '../components/map/BulkSelectMenu'
-import Modal from '../components/ui/Modal'
 import Button from '../components/ui/Button'
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../components/ui/Dialog'
+import { FormField, Input } from '../components/ui/Input'
+import AppShell from '../components/layout/AppShell'
+import { cn } from '../lib/cn'
 import type { Property, ServiceLocation, MapFilter, PropertyWithLocations } from '../types'
 
 const DEFAULT_FILTER: MapFilter = {
@@ -161,20 +172,20 @@ export default function MapPage() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-100">
-      <Navbar />
-      <div className="flex flex-1 overflow-hidden relative">
+    <AppShell fullBleed>
+      <div className="flex h-full overflow-hidden relative">
         <FilterSidebar filter={filter} onChange={setFilter} />
 
         <div className="flex-1 relative">
           {loading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-white/60 z-20">
-              <div className="flex items-center gap-2 text-gray-600">
-                <svg className="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-                Loading properties...
+            <div
+              role="status"
+              aria-live="polite"
+              className="absolute inset-0 z-20 flex items-center justify-center bg-surface/60 backdrop-blur-sm"
+            >
+              <div className="flex items-center gap-2 text-sm text-fg-muted">
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                Loading properties…
               </div>
             </div>
           )}
@@ -195,19 +206,30 @@ export default function MapPage() {
                 setBulkSelectMode((v) => !v)
                 setSelectedIds(new Set())
               }}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium shadow transition-colors
-                ${bulkSelectMode
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                }`}
+              className={cn(
+                'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors',
+                'border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
+                bulkSelectMode
+                  ? 'border-accent bg-accent text-accent-fg hover:bg-accent-hover'
+                  : 'border-border bg-surface text-fg hover:bg-surface-muted hover:border-border-strong'
+              )}
             >
-              {bulkSelectMode ? '✓ Bulk Select' : 'Bulk Select'}
+              {bulkSelectMode && <CheckCheck className="h-3.5 w-3.5" aria-hidden />}
+              Bulk select
             </button>
           </div>
 
           {/* Property count */}
-          <div className="absolute top-4 right-16 z-10 bg-white/90 rounded-lg px-3 py-1.5 text-sm text-gray-600 shadow">
-            {pins.length.toLocaleString()} properties
+          <div
+            className={cn(
+              'absolute top-4 right-16 z-10 inline-flex items-center rounded-md',
+              'border border-border bg-surface/90 px-3 py-1 text-xs text-fg-muted backdrop-blur-sm'
+            )}
+          >
+            <span className="font-tabular text-fg">
+              {pins.length.toLocaleString()}
+            </span>
+            <span className="ml-1">properties</span>
           </div>
 
           <BulkSelectMenu
@@ -227,32 +249,46 @@ export default function MapPage() {
         />
       </div>
 
-      <Modal
-        open={portfolioModalOpen}
-        onClose={() => setPortfolioModalOpen(false)}
-        title="Create Portfolio"
-        size="sm"
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-gray-600">
-            Create a portfolio with the {selectedIds.size} selected properties.
-          </p>
-          <input
-            type="text"
-            placeholder="Portfolio name"
-            value={portfolioName}
-            onChange={(e) => setPortfolioName(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <div className="flex justify-end gap-3">
-            <Button variant="secondary" size="sm" onClick={() => setPortfolioModalOpen(false)}>Cancel</Button>
-            <Button size="sm" onClick={handleCreatePortfolio} loading={savingPortfolio} disabled={!portfolioName.trim()}>
+      {/* Create Portfolio dialog. Migrated off the legacy <Modal> to the
+          design Dialog so focus trap + Esc-close come for free. */}
+      <Dialog open={portfolioModalOpen} onOpenChange={setPortfolioModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create portfolio</DialogTitle>
+            <DialogDescription>
+              Bundle the {selectedIds.size} selected{' '}
+              {selectedIds.size === 1 ? 'property' : 'properties'} into a named
+              portfolio you can revisit later.
+            </DialogDescription>
+          </DialogHeader>
+          <FormField label="Name" htmlFor="portfolio-name">
+            <Input
+              id="portfolio-name"
+              type="text"
+              placeholder="e.g. North Texas Q3"
+              value={portfolioName}
+              onChange={(e) => setPortfolioName(e.target.value)}
+              autoFocus
+            />
+          </FormField>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="ghost" size="sm">
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button
+              size="sm"
+              onClick={handleCreatePortfolio}
+              loading={savingPortfolio}
+              disabled={!portfolioName.trim()}
+            >
               Create
             </Button>
-          </div>
-        </div>
-      </Modal>
-    </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </AppShell>
   )
 }
 
