@@ -502,6 +502,11 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
         for (const v of remaining) {
           unplaced.push({
             service_location_id: v.service_location_id,
+            // Without property_id the cycle generator can't insert the
+            // row (scheduled_visits.property_id is NOT NULL with FK to
+            // properties.id) and the whole batch rolls back, eating the
+            // placed visits too.
+            property_id: v.property_id,
             address: v.address,
             reason: 'time_overflow',
             detail: hitCycleEnd
