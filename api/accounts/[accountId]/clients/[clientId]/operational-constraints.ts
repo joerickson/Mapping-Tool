@@ -162,6 +162,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         upsert.hotels_annual_override = Number.isFinite(n) ? n : null
       }
     }
+    // Phase 3.9 — structured costs.
+    if (body.branch_overhead_config && typeof body.branch_overhead_config === 'object') {
+      upsert.branch_overhead_config = body.branch_overhead_config
+    }
+    if (body.branch_overhead_overrides && typeof body.branch_overhead_overrides === 'object') {
+      upsert.branch_overhead_overrides = body.branch_overhead_overrides
+    }
+    if ('branch_overhead_annual_override' in body) {
+      const raw = body.branch_overhead_annual_override
+      if (raw === null || raw === '' || raw === undefined) {
+        upsert.branch_overhead_annual_override = null
+      } else {
+        const n = typeof raw === 'string' ? parseFloat(raw) : raw
+        upsert.branch_overhead_annual_override = Number.isFinite(n) ? n : null
+      }
+    }
+    if (body.insurance_config && typeof body.insurance_config === 'object') {
+      upsert.insurance_config = body.insurance_config
+    }
+    if ('insurance_annual_override' in body) {
+      const raw = body.insurance_annual_override
+      if (raw === null || raw === '' || raw === undefined) {
+        upsert.insurance_annual_override = null
+      } else {
+        const n = typeof raw === 'string' ? parseFloat(raw) : raw
+        upsert.insurance_annual_override = Number.isFinite(n) ? n : null
+      }
+    }
+    if (body.vehicle_config && typeof body.vehicle_config === 'object') {
+      upsert.vehicle_config = body.vehicle_config
+    }
+    if ('vehicle_lease_annual_per_crew_override' in body) {
+      const raw = body.vehicle_lease_annual_per_crew_override
+      if (raw === null || raw === '' || raw === undefined) {
+        upsert.vehicle_lease_annual_per_crew_override = null
+      } else {
+        const n = typeof raw === 'string' ? parseFloat(raw) : raw
+        upsert.vehicle_lease_annual_per_crew_override = Number.isFinite(n) ? n : null
+      }
+    }
     for (const k of numericFields) {
       const raw = body[k]
       if (raw === undefined || raw === null || raw === '') {

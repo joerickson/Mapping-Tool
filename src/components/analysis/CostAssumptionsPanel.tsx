@@ -11,6 +11,7 @@ import { Badge } from '../ui/Badge'
 import { Input } from '../ui/Input'
 import { cn } from '../../lib/cn'
 import OvernightLodgingSection from './OvernightLodgingSection'
+import StructuredCostsSection from './StructuredCostsSection'
 
 export interface CostAssumptionsConstraints {
   crew_size: number
@@ -469,6 +470,16 @@ export default function CostAssumptionsPanel({
             clientId={clientId}
             config={data.hotel_cost_config ?? HOTEL_CONFIG_DEFAULTS}
             override={data.hotels_annual_override}
+            constraintsRow={data}
+            onSaved={() => {
+              refresh()
+              onSaved?.()
+            }}
+          />
+
+          <StructuredCostsSection
+            accountId={accountId}
+            clientId={clientId}
             constraintsRow={data}
             onSaved={() => {
               refresh()
