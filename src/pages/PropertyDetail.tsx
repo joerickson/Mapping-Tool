@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { ChevronDown, ExternalLink } from 'lucide-react'
+import { ChevronDown, ExternalLink, Pencil } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { useCountUp } from '../hooks/useCountUp'
 import Button from '../components/ui/Button'
@@ -20,9 +20,16 @@ import AppShell from '../components/layout/AppShell'
 import ComparablesPanel from '../components/analysis/ComparablesPanel'
 import ServiceMixPanel from '../components/analysis/ServiceMixPanel'
 import ConstraintsPanel from '../components/property/ConstraintsPanel'
+import EditableField from '../components/property/EditableField'
+import AddressEditDialog from '../components/property/AddressEditDialog'
+import ServiceLocationEditDialog from '../components/property/ServiceLocationEditDialog'
+import EditHistoryPanel from '../components/property/EditHistoryPanel'
+import { PROPERTY_FIELDS } from '../lib/editable-fields'
 import { CATEGORY_COLORS, STATUS_LABELS } from '../lib/constants'
 import { cn } from '../lib/cn'
 import type { ServiceLocation } from '../types'
+
+const PROPERTY_FIELD_BY_KEY = Object.fromEntries(PROPERTY_FIELDS.map((f) => [f.key, f]))
 
 // Extends Property with DB fields that aren't in the base type + joined tables
 interface PropertyDetail {
@@ -70,6 +77,8 @@ interface PropertyDetail {
   }> | null
   risk_score?: number | null
   risk_assessed_at?: string | null
+  notes?: string | null
+  internal_tags?: string[] | null
   service_locations: ServiceLocation[]
 }
 
@@ -84,30 +93,34 @@ export default function PropertyDetailPage() {
   const [enriching, setEnriching] = useState(false)
   const [enrichMsg, setEnrichMsg] = useState<string | null>(null)
   const [reassessing, setReassessing] = useState(false)
+  const [addressDialogOpen, setAddressDialogOpen] = useState(false)
+  const [editingSL, setEditingSL] = useState<ServiceLocation | null>(null)
 
   // Phase E — risk score tweens 300ms on each re-assessment so the user
   // sees the number move rather than snap.
   const animatedRiskScore = useCountUp(property?.risk_score ?? null)
+
+  const reload = useCallback(async () => {
+    if (!id) return
+    const token = await getToken()
+    const res = await fetch(`/api/v1/properties/${id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (res.ok) setProperty(await res.json())
+  }, [id, getToken])
 
   useEffect(() => {
     async function load() {
       if (!id) return
       setLoading(true)
       try {
-        const token = await getToken()
-        const res = await fetch(`/api/v1/properties/${id}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        if (res.ok) {
-          const data = await res.json()
-          setProperty(data)
-        }
+        await reload()
       } finally {
         setLoading(false)
       }
     }
     load()
-  }, [id, getToken])
+  }, [id, reload])
 
   // Check Street View availability
   useEffect(() => {
@@ -296,9 +309,19 @@ export default function PropertyDetailPage() {
 
           <div className="flex items-start justify-between gap-6 flex-wrap">
             <div className="space-y-1 min-w-0">
-              <h1 className="text-2xl font-semibold tracking-tight text-fg">
-                {property.address_line1}
-              </h1>
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <h1 className="text-2xl font-semibold tracking-tight text-fg">
+                  {property.address_line1}
+                </h1>
+                <button
+                  type="button"
+                  onClick={() => setAddressDialogOpen(true)}
+                  className="text-fg-subtle hover:text-accent transition-colors"
+                  aria-label="Edit address"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+              </div>
               {property.address_line2 && (
                 <p className="text-sm text-fg-muted">{property.address_line2}</p>
               )}
@@ -446,6 +469,7 @@ export default function PropertyDetailPage() {
                       <TableHead>Suite / floor</TableHead>
                       <TableHead className="text-right">Sqft</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead className="w-8" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -472,6 +496,19 @@ export default function PropertyDetailPage() {
                           <Badge variant={statusBadgeVariant(loc.status)}>
                             {STATUS_LABELS[loc.status]}
                           </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setEditingSL(loc)
+                            }}
+                            className="text-fg-subtle hover:text-accent transition-colors"
+                            aria-label="Edit service location"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -569,16 +606,41 @@ export default function PropertyDetailPage() {
 
             {/* Service Mix Recommendation */}
             <ServiceMixPanel propertyId={property.property_id} />
+
+            {/* Edit history (collapsible, default closed) */}
+            <EditHistoryPanel propertyId={property.property_id} />
           </div>
 
           {/* Right metadata sidebar (40%) */}
           <aside className="space-y-6 lg:col-span-2">
-            {/* Business & classification — only when we have something */}
-            {(property.rbm_category || property.place_name) && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Business &amp; classification</CardTitle>
-                </CardHeader>
+            {/* Notes & tags — internal-only field for bid teams */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Notes &amp; tags</CardTitle>
+              </CardHeader>
+              <div className="mt-4 space-y-5">
+                <EditableField
+                  spec={PROPERTY_FIELD_BY_KEY.notes}
+                  value={property.notes}
+                  endpoint={`/api/v1/properties/${property.property_id}`}
+                  onSaved={reload}
+                />
+                <EditableField
+                  spec={PROPERTY_FIELD_BY_KEY.internal_tags}
+                  value={property.internal_tags ?? []}
+                  endpoint={`/api/v1/properties/${property.property_id}`}
+                  onSaved={reload}
+                />
+              </div>
+            </Card>
+
+            {/* Business & classification */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Business &amp; classification</CardTitle>
+              </CardHeader>
+              {(property.place_name || property.place_phone || property.place_website ||
+                property.rbm_category_confidence != null) && (
                 <DefList className="mt-4">
                   {property.place_name && (
                     <DefRow term="Place name">{property.place_name}</DefRow>
@@ -600,20 +662,6 @@ export default function PropertyDetailPage() {
                       </a>
                     </DefRow>
                   )}
-                  {property.rbm_category && (
-                    <DefRow term="RBM category">
-                      <span className="capitalize">
-                        {property.rbm_category.replace(/_/g, ' ')}
-                      </span>
-                    </DefRow>
-                  )}
-                  {property.rbm_subcategory && (
-                    <DefRow term="Subcategory">
-                      <span className="capitalize">
-                        {property.rbm_subcategory.replace(/_/g, ' ')}
-                      </span>
-                    </DefRow>
-                  )}
                   {property.rbm_category_confidence != null && (
                     <DefRow term="Confidence">
                       <span className="font-tabular">
@@ -627,8 +675,22 @@ export default function PropertyDetailPage() {
                     </DefRow>
                   )}
                 </DefList>
-              </Card>
-            )}
+              )}
+              <div className="mt-4 space-y-5 border-t border-border pt-4">
+                <EditableField
+                  spec={PROPERTY_FIELD_BY_KEY.rbm_category}
+                  value={property.rbm_category}
+                  endpoint={`/api/v1/properties/${property.property_id}`}
+                  onSaved={reload}
+                />
+                <EditableField
+                  spec={PROPERTY_FIELD_BY_KEY.rbm_subcategory}
+                  value={property.rbm_subcategory}
+                  endpoint={`/api/v1/properties/${property.property_id}`}
+                  onSaved={reload}
+                />
+              </div>
+            </Card>
 
             {/* Parcel data — hidden when nothing populated, per spec */}
             {hasParcelData && (
@@ -749,6 +811,33 @@ export default function PropertyDetailPage() {
           </aside>
         </div>
       </div>
+
+      <AddressEditDialog
+        open={addressDialogOpen}
+        onClose={() => setAddressDialogOpen(false)}
+        propertyId={property.property_id}
+        current={{
+          address_line1: property.address_line1,
+          address_line2: property.address_line2,
+          city: property.city,
+          state: property.state,
+          postal_code: property.postal_code,
+        }}
+        onSaved={() => {
+          setAddressDialogOpen(false)
+          reload()
+        }}
+      />
+
+      <ServiceLocationEditDialog
+        open={editingSL !== null}
+        onClose={() => setEditingSL(null)}
+        serviceLocation={editingSL}
+        onSaved={() => {
+          setEditingSL(null)
+          reload()
+        }}
+      />
     </AppShell>
   )
 }
