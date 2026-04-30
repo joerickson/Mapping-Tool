@@ -249,33 +249,37 @@ export default function EditTemplateDialog({
                 {(['hard', 'soft'] as const).map((opt) => {
                   const selected = draftEnforcement === opt
                   return (
-                    <label
+                    <button
                       key={opt}
-                      className={cn(
-                        'flex-1 rounded-md border-2 px-3 py-2 text-sm transition-colors cursor-pointer',
-                        selected
-                          ? 'border-accent bg-accent text-accent-fg'
-                          : 'border-border bg-surface text-fg-muted hover:border-border-strong hover:text-fg'
-                      )}
+                      type="button"
+                      onClick={() => setDraftEnforcement(opt)}
+                      style={{
+                        flex: 1,
+                        borderRadius: 6,
+                        borderWidth: 2,
+                        borderStyle: 'solid',
+                        padding: '8px 12px',
+                        fontSize: 14,
+                        cursor: 'pointer',
+                        backgroundColor: selected ? '#4f46e5' : '#ffffff',
+                        color: selected ? '#ffffff' : '#52525b',
+                        borderColor: selected ? '#4f46e5' : '#e4e4e7',
+                      }}
                     >
-                      <input
-                        type="radio"
-                        name="enforcement"
-                        value={opt}
-                        checked={selected}
-                        onChange={() => setDraftEnforcement(opt)}
-                        className="sr-only"
-                      />
-                      <span className="font-medium capitalize">{opt}</span>
+                      <span style={{ fontWeight: 500, textTransform: 'capitalize' }}>
+                        {opt}
+                      </span>
                       <span
-                        className={cn(
-                          'block text-[11px] mt-0.5',
-                          selected ? 'text-accent-fg/80' : 'text-fg-subtle'
-                        )}
+                        style={{
+                          display: 'block',
+                          fontSize: 11,
+                          marginTop: 2,
+                          color: selected ? 'rgba(255,255,255,0.85)' : '#71717a',
+                        }}
                       >
                         {opt === 'hard' ? 'Must satisfy' : 'Preference'}
                       </span>
-                    </label>
+                    </button>
                   )
                 })}
               </div>
