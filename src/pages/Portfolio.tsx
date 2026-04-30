@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
-import Navbar from '../components/ui/Navbar'
+import AppShell from '../components/layout/AppShell'
 import Button from '../components/ui/Button'
 import PortfolioStats from '../components/portfolio/PortfolioStats'
 import ShareLinkModal from '../components/portfolio/ShareLinkModal'
@@ -42,27 +42,23 @@ export default function PortfolioPage() {
 
   if (loading) {
     return (
-      <div className="flex flex-col h-full">
-        <Navbar />
-        <div className="flex-1 flex items-center justify-center text-gray-500">Loading...</div>
-      </div>
+      <AppShell>
+        <div className="flex h-full items-center justify-center text-fg-subtle">Loading…</div>
+      </AppShell>
     )
   }
 
   if (!portfolio) {
     return (
-      <div className="flex flex-col h-full">
-        <Navbar />
-        <div className="flex-1 flex items-center justify-center text-gray-500">Portfolio not found.</div>
-      </div>
+      <AppShell>
+        <div className="flex h-full items-center justify-center text-fg-subtle">Portfolio not found.</div>
+      </AppShell>
     )
   }
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
-      <Navbar />
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
+    <AppShell breadcrumb={[{ label: 'Portfolios' }, { label: portfolio.name }]}>
+      <div className="mx-auto max-w-5xl px-6 py-10 space-y-6">
           <div className="flex items-start justify-between">
             <div>
               <h1 className="text-2xl font-bold text-gray-900">{portfolio.name}</h1>
@@ -113,7 +109,6 @@ export default function PortfolioPage() {
               )}
             </div>
           </div>
-        </div>
       </div>
 
       <ShareLinkModal
@@ -122,6 +117,6 @@ export default function PortfolioPage() {
         portfolioId={portfolioId!}
         existingToken={portfolio.share_token}
       />
-    </div>
+    </AppShell>
   )
 }

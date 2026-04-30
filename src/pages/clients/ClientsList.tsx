@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
-import Navbar from '../../components/ui/Navbar'
+import AppShell from '../../components/layout/AppShell'
 import type { Client } from '../../types'
 
 const STATUS_BADGE: Record<string, string> = {
@@ -39,10 +39,8 @@ export default function ClientsListPage() {
   }, [statusFilter, search, getToken])
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
-      <Navbar />
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-6xl mx-auto px-6 py-8">
+    <AppShell breadcrumb={[{ label: 'Clients' }]}>
+      <div className="mx-auto max-w-6xl px-6 py-10">
           <div className="flex items-center justify-between mb-6">
             <h1 className="text-2xl font-bold text-gray-900">Clients</h1>
             <Link
@@ -136,9 +134,8 @@ export default function ClientsListPage() {
               </table>
             )}
           </div>
-        </div>
       </div>
-    </div>
+    </AppShell>
   )
 }
 

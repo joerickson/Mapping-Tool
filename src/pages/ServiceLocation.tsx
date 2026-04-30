@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
-import Navbar from '../components/ui/Navbar'
+import AppShell from '../components/layout/AppShell'
 import Button from '../components/ui/Button'
 import type { ServiceLocation, Property, PropertyChange } from '../types'
 import { STATUS_LABELS, STATUS_COLORS } from '../lib/constants'
@@ -98,31 +98,23 @@ export default function ServiceLocationPage() {
 
   if (loading) {
     return (
-      <div className="flex flex-col h-full">
-        <Navbar />
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-gray-500">Loading...</div>
-        </div>
-      </div>
+      <AppShell>
+        <div className="flex h-full items-center justify-center text-fg-subtle">Loading…</div>
+      </AppShell>
     )
   }
 
   if (!location || !property) {
     return (
-      <div className="flex flex-col h-full">
-        <Navbar />
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-gray-500">Location not found.</div>
-        </div>
-      </div>
+      <AppShell>
+        <div className="flex h-full items-center justify-center text-fg-subtle">Location not found.</div>
+      </AppShell>
     )
   }
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
-      <Navbar />
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-6 py-8 space-y-6">
+    <AppShell breadcrumb={[{ label: 'Map', to: '/map' }, { label: property?.address_line1 ?? 'Service location' }]}>
+      <div className="mx-auto max-w-4xl px-6 py-10 space-y-6">
           {/* Header */}
           <div className="flex items-center justify-between">
             <div>
@@ -276,9 +268,8 @@ export default function ServiceLocationPage() {
               </div>
             </div>
           )}
-        </div>
       </div>
-    </div>
+    </AppShell>
   )
 }
 

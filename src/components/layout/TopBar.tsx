@@ -8,8 +8,19 @@
 // The hamburger only appears on screens < md and toggles the sidebar
 // drawer. On desktop the sidebar is always docked, so no hamburger.
 import { useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { ChevronRight, LogOut, Menu, Settings, User } from 'lucide-react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import {
+  ChevronRight,
+  LogOut,
+  Map as MapIcon,
+  Menu,
+  Settings,
+  Shield,
+  Upload,
+  User,
+  Users,
+} from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import ThemeToggle from '../ui/ThemeToggle'
 import {
   DropdownMenu,
@@ -21,6 +32,35 @@ import {
 } from '../ui/DropdownMenu'
 import { cn } from '../../lib/cn'
 import { supabase } from '../../lib/supabase/client'
+
+// Primary nav. Order matches the legacy Navbar so muscle memory still works.
+// `match` decides active state — most pages need a startsWith check so e.g.
+// /accounts/JLL/clients/.../analysis still highlights the Accounts tab.
+const PRIMARY_NAV: Array<{
+  label: string
+  to: string
+  icon: LucideIcon
+  match: (pathname: string) => boolean
+}> = [
+  {
+    label: 'Map',
+    to: '/map',
+    icon: MapIcon,
+    match: (p) => p === '/map' || p.startsWith('/properties/'),
+  },
+  {
+    label: 'Accounts',
+    to: '/accounts',
+    icon: Users,
+    match: (p) => p.startsWith('/accounts') || p.startsWith('/clients'),
+  },
+  {
+    label: 'Upload',
+    to: '/upload',
+    icon: Upload,
+    match: (p) => p === '/upload' || p.startsWith('/upload/') || p.startsWith('/uploads/'),
+  },
+]
 
 export interface BreadcrumbItem {
   label: React.ReactNode
@@ -35,6 +75,8 @@ export interface TopBarProps {
 }
 
 export default function TopBar({ breadcrumb, onMobileMenuClick }: TopBarProps) {
+  const { pathname } = useLocation()
+
   return (
     <header
       className={cn(
@@ -62,13 +104,48 @@ export default function TopBar({ breadcrumb, onMobileMenuClick }: TopBarProps) {
         className="flex items-center gap-2 text-sm font-semibold tracking-tight text-fg shrink-0"
       >
         <LogoMark />
-        <span>PortfolioIQ</span>
+        <span className="hidden sm:inline">PortfolioIQ</span>
       </Link>
+
+      {/* Primary nav. Hidden on tiny screens; the hamburger drawer covers
+          mobile when the page exposes a sidebar, otherwise mobile users
+          drop back to the nav inside the user menu. */}
+      <nav aria-label="Primary" className="hidden md:flex items-center gap-0.5">
+        {PRIMARY_NAV.map((item) => {
+          const Icon = item.icon
+          const active = item.match(pathname)
+          return (
+            <Link
+              key={item.to}
+              to={item.to}
+              aria-current={active ? 'page' : undefined}
+              className={cn(
+                'inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium',
+                'transition-colors duration-150',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+                active
+                  ? 'bg-surface-muted text-fg'
+                  : 'text-fg-muted hover:text-fg hover:bg-surface-muted'
+              )}
+            >
+              <Icon
+                className={cn(
+                  'h-3.5 w-3.5',
+                  active ? 'text-accent' : 'text-fg-subtle'
+                )}
+                strokeWidth={1.75}
+                aria-hidden
+              />
+              {item.label}
+            </Link>
+          )
+        })}
+      </nav>
 
       {breadcrumb && breadcrumb.length > 0 && (
         <nav
           aria-label="Breadcrumb"
-          className="hidden sm:flex items-center gap-1.5 text-sm text-fg-muted min-w-0"
+          className="hidden lg:flex items-center gap-1.5 text-sm text-fg-muted min-w-0"
         >
           <span className="text-fg-subtle" aria-hidden>
             <ChevronRight className="h-3.5 w-3.5" />
@@ -188,6 +265,13 @@ function UserMenu() {
           <span className="ml-auto text-[10px] text-fg-subtle uppercase">
             Soon
           </span>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => navigate('/admin')}>
+          <Shield className="h-4 w-4" /> Admin
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => navigate('/admin/uploads')}>
+          <Upload className="h-4 w-4" /> Upload batches
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => navigate('/logout')}>

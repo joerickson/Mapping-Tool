@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
-import Navbar from '../components/ui/Navbar'
+import AppShell from '../components/layout/AppShell'
 import type { UploadSummaryStats } from '../types'
 
 interface SummaryData {
@@ -57,10 +57,8 @@ export default function UploadSummaryPage() {
   }, [batchId, getToken])
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
-      <Navbar />
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto px-6 py-8">
+    <AppShell breadcrumb={[{ label: 'Upload', to: '/upload' }, { label: 'Summary' }]}>
+      <div className="mx-auto max-w-3xl px-6 py-10">
           {loading && (
             <div className="flex items-center gap-3 text-gray-500">
               <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
@@ -196,9 +194,8 @@ export default function UploadSummaryPage() {
               </div>
             </div>
           )}
-        </div>
       </div>
-    </div>
+    </AppShell>
   )
 }
 

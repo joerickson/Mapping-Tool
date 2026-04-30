@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
-import Navbar from '../../components/ui/Navbar'
+import AppShell from '../../components/layout/AppShell'
 import Button from '../../components/ui/Button'
 import type { Account } from '../../types'
 
@@ -75,23 +75,23 @@ export default function NewAccountClientPage() {
   }
 
   if (loadingAccount) return (
-    <div className="flex flex-col h-full bg-gray-50"><Navbar />
-      <div className="flex-1 flex items-center justify-center text-gray-400">Loading…</div>
-    </div>
+    <AppShell>
+      <div className="flex h-full items-center justify-center text-fg-subtle">Loading…</div>
+    </AppShell>
   )
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
-      <Navbar />
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-2xl mx-auto px-6 py-8">
-          <div className="flex items-center gap-2 mb-6 text-sm">
-            <Link to="/accounts" className="text-gray-400 hover:text-gray-600">Accounts</Link>
-            <span className="text-gray-300">›</span>
-            <Link to={`/accounts/${id}`} className="text-gray-400 hover:text-gray-600">{account?.display_name ?? account?.name ?? id}</Link>
-            <span className="text-gray-300">›</span>
-            <h1 className="text-2xl font-bold text-gray-900">New Client</h1>
-          </div>
+    <AppShell
+      breadcrumb={[
+        { label: 'Accounts', to: '/accounts' },
+        { label: account?.display_name ?? account?.name ?? id, to: `/accounts/${id}` },
+        { label: 'New client' },
+      ]}
+    >
+      <div className="mx-auto max-w-2xl px-6 py-10">
+        <h1 className="mb-6 text-2xl font-semibold tracking-tight text-fg">
+          New client
+        </h1>
 
           <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-sm border p-6 space-y-5">
             {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>}
@@ -137,8 +137,7 @@ export default function NewAccountClientPage() {
               <Button type="submit" loading={saving}>Create Client</Button>
             </div>
           </form>
-        </div>
       </div>
-    </div>
+    </AppShell>
   )
 }

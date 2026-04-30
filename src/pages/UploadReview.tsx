@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
-import Navbar from '../components/ui/Navbar'
+import AppShell from '../components/layout/AppShell'
 import Button from '../components/ui/Button'
 import type { StagedAddress, ScrubSummary, ValidatedAddress } from '../types'
 
@@ -164,23 +164,21 @@ export default function UploadReview() {
 
   if (loading) {
     return (
-      <div className="flex flex-col h-full bg-gray-50">
-        <Navbar />
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-gray-500">Loading review data…</div>
+      <AppShell>
+        <div className="flex h-full items-center justify-center text-fg-subtle">
+          Loading review data…
         </div>
-      </div>
+      </AppShell>
     )
   }
 
   if (error && !state) {
     return (
-      <div className="flex flex-col h-full bg-gray-50">
-        <Navbar />
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-red-600">{error}</div>
+      <AppShell>
+        <div className="flex h-full items-center justify-center text-danger">
+          {error}
         </div>
-      </div>
+      </AppShell>
     )
   }
 
@@ -198,11 +196,9 @@ export default function UploadReview() {
   ]
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
-      <Navbar />
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-5xl mx-auto px-6 py-8">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Address Review</h1>
+    <AppShell breadcrumb={[{ label: 'Upload', to: '/upload' }, { label: 'Review' }]}>
+      <div className="mx-auto max-w-5xl px-6 py-10">
+        <h1 className="mb-2 text-2xl font-semibold tracking-tight text-fg">Address review</h1>
           <p className="text-gray-500 mb-6 text-sm">
             Review and approve scrubbed addresses before starting geocoding enrichment.
           </p>
@@ -516,9 +512,8 @@ export default function UploadReview() {
               Proceed to enrichment
             </Button>
           </div>
-        </div>
       </div>
-    </div>
+    </AppShell>
   )
 }
 

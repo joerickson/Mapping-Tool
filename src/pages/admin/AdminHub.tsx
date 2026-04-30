@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
-import Navbar from '../../components/ui/Navbar'
+import AppShell from '../../components/layout/AppShell'
 import Button from '../../components/ui/Button'
 
 interface EnrichmentStats {
@@ -97,10 +97,8 @@ export default function AdminHubPage() {
   const isRunning = enrichState.status === 'running'
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
-      <Navbar />
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-6 py-8 space-y-6">
+    <AppShell breadcrumb={[{ label: 'Admin' }]}>
+      <div className="mx-auto max-w-4xl px-6 py-10 space-y-6">
           <div className="flex items-center gap-3 mb-2">
             <Link to="/map" className="text-gray-400 hover:text-gray-600 text-sm">← Map</Link>
             <h1 className="text-2xl font-bold text-gray-900">Admin</h1>
@@ -213,8 +211,7 @@ export default function AdminHubPage() {
               <li><Link to="/admin/parcels/fallbacks" className="text-blue-600 hover:underline">Parcel Fallbacks</Link></li>
             </ul>
           </div>
-        </div>
       </div>
-    </div>
+    </AppShell>
   )
 }

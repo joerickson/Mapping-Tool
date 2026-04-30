@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
-import Navbar from '../../components/ui/Navbar'
+import AppShell from '../../components/layout/AppShell'
 import Button from '../../components/ui/Button'
 import Papa from 'papaparse'
 import * as XLSX from 'xlsx'
@@ -272,18 +272,16 @@ export default function ClientSetupPage() {
   const STEP_LABELS = ['Service Offerings', 'Custom Fields', 'Upload Template', 'Validate Template', 'Done']
 
   if (loading) return (
-    <div className="flex flex-col h-full bg-gray-50"><Navbar />
-      <div className="flex-1 flex items-center justify-center text-gray-400">Loading…</div>
-    </div>
+    <AppShell>
+      <div className="flex h-full items-center justify-center text-fg-subtle">Loading…</div>
+    </AppShell>
   )
 
   const clientName = client?.display_name ?? client?.name ?? '…'
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
-      <Navbar />
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto px-6 py-8 space-y-6">
+    <AppShell breadcrumb={[{ label: 'Clients', to: '/clients' }, { label: clientName, to: `/clients/${id}` }, { label: 'Setup' }]}>
+      <div className="mx-auto max-w-3xl px-6 py-10 space-y-6">
           {/* Breadcrumb */}
           <div className="flex items-center gap-2 text-sm text-gray-400">
             <Link to="/accounts" className="hover:text-gray-600">Accounts</Link>
@@ -680,8 +678,7 @@ export default function ClientSetupPage() {
               </div>
             </div>
           )}
-        </div>
       </div>
-    </div>
+    </AppShell>
   )
 }
