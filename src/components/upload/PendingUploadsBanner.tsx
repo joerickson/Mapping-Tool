@@ -3,7 +3,7 @@
 // its own "Retry commit" button; on success the row removes itself
 // from the list.
 import { useCallback, useEffect, useState } from 'react'
-import { Loader2, AlertTriangle, RotateCcw } from 'lucide-react'
+import { Loader2, AlertTriangle, RotateCcw, X } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import Button from '../ui/Button'
 
@@ -31,6 +31,7 @@ export default function PendingUploadsBanner({ clientId, onCommitted }: Props) {
   const [batches, setBatches] = useState<PendingBatch[]>([])
   const [loading, setLoading] = useState(true)
   const [retryingId, setRetryingId] = useState<string | null>(null)
+  const [ignoringId, setIgnoringId] = useState<string | null>(null)
   const [perBatchMessage, setPerBatchMessage] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
 
@@ -54,6 +55,41 @@ export default function PendingUploadsBanner({ clientId, onCommitted }: Props) {
   useEffect(() => {
     fetchPending()
   }, [fetchPending])
+
+  const ignore = async (batch: PendingBatch) => {
+    if (
+      !window.confirm(
+        `Mark ${Math.max(0, batch.valid_count - batch.committed_count)} stuck row${
+          batch.valid_count - batch.committed_count === 1 ? '' : 's'
+        } in "${batch.source_filename ?? 'this batch'}" as ignored? They'll stay in the upload audit but won't be reattempted.`
+      )
+    ) {
+      return
+    }
+    setIgnoringId(batch.batch_id)
+    setError(null)
+    try {
+      const token = await getToken()
+      const res = await fetch(`/api/uploads/${batch.batch_id}/ignore-failed`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error ?? `Ignore failed: ${res.status}`)
+      setPerBatchMessage((prev) => ({
+        ...prev,
+        [batch.batch_id]: `Marked ${j.ignored ?? 0} row${j.ignored === 1 ? '' : 's'} as ignored.`,
+      }))
+      await fetchPending()
+    } catch (err) {
+      setPerBatchMessage((prev) => ({
+        ...prev,
+        [batch.batch_id]: err instanceof Error ? err.message : String(err),
+      }))
+    } finally {
+      setIgnoringId(null)
+    }
+  }
 
   const retry = async (batch: PendingBatch) => {
     setRetryingId(batch.batch_id)
@@ -146,24 +182,47 @@ export default function PendingUploadsBanner({ clientId, onCommitted }: Props) {
                   </p>
                 )}
               </div>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => retry(b)}
-                disabled={isRetrying || retryingId != null}
-              >
-                {isRetrying ? (
-                  <>
-                    <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                    Retrying…
-                  </>
-                ) : (
-                  <>
-                    <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-                    Retry commit
-                  </>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => retry(b)}
+                  disabled={isRetrying || retryingId != null || ignoringId != null}
+                >
+                  {isRetrying ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                      Retrying…
+                    </>
+                  ) : (
+                    <>
+                      <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+                      Retry commit
+                    </>
+                  )}
+                </Button>
+                {(b.failure_count > 0 || b.committed_count < b.valid_count) && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => ignore(b)}
+                    disabled={ignoringId === b.batch_id || retryingId != null || ignoringId != null}
+                    title="Mark unfinishable rows as ignored so this batch stops being flagged."
+                  >
+                    {ignoringId === b.batch_id ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                        Ignoring…
+                      </>
+                    ) : (
+                      <>
+                        <X className="h-3.5 w-3.5 mr-1.5" />
+                        Ignore stuck rows
+                      </>
+                    )}
+                  </Button>
                 )}
-              </Button>
+              </div>
             </li>
           )
         })}

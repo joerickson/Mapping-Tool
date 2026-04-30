@@ -29,16 +29,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const db = createAdminClient()
 
   // Resolve the property ids under this client via service_locations.
-  const { data: slRows, error: slErr } = await db
-    .from('service_locations')
-    .select('property_id')
-    .eq('client_id', clientId)
-    .not('property_id', 'is', null)
-  if (slErr) return res.status(500).json({ error: slErr.message })
-
-  const propertyIds = Array.from(
-    new Set((slRows ?? []).map((r: any) => r.property_id).filter(Boolean))
-  ) as string[]
+  // PostgREST silently caps at ~1000 rows per response, so for clients
+  // with 1000+ SLs we MUST paginate or the enrichment banner under-
+  // counts and (when total ends up at the cap exactly) shows wrong
+  // numbers. Loop pages of 1000 until a short page comes back.
+  const SL_PAGE = 1000
+  const propIdSet = new Set<string>()
+  let slOffset = 0
+  const MAX_SL_PAGES = 100
+  for (let page = 0; page < MAX_SL_PAGES; page++) {
+    const { data: slRows, error: slErr } = await db
+      .from('service_locations')
+      .select('property_id')
+      .eq('client_id', clientId)
+      .not('property_id', 'is', null)
+      .range(slOffset, slOffset + SL_PAGE - 1)
+    if (slErr) return res.status(500).json({ error: slErr.message })
+    const batch = slRows ?? []
+    for (const r of batch) {
+      const id = (r as any).property_id
+      if (id) propIdSet.add(id)
+    }
+    if (batch.length < SL_PAGE) break
+    slOffset += SL_PAGE
+  }
+  const propertyIds = Array.from(propIdSet)
 
   if (req.method === 'GET') {
     if (propertyIds.length === 0) {
@@ -50,30 +65,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         no_coords: 0,
       })
     }
-    const { data: props, error } = await db
-      .from('properties')
-      .select('id, enrichment_status, latitude, longitude')
-      .in('id', propertyIds)
-    if (error) return res.status(500).json({ error: error.message })
-    const rows = (props ?? []) as Array<{
-      id: string
-      enrichment_status: string | null
-      latitude: number | null
-      longitude: number | null
-    }>
+    // Chunk the .in() to keep the PostgREST URL under its ~32KB limit.
+    const PROP_ID_CHUNK = 250
     let enriched = 0
     let pending = 0
     let failed = 0
     let noCoords = 0
-    for (const r of rows) {
-      const s = r.enrichment_status
-      if (s === 'enriched') enriched++
-      else if (s === 'failed') failed++
-      else pending++
-      if (r.latitude == null || r.longitude == null) noCoords++
+    let total = 0
+    for (let i = 0; i < propertyIds.length; i += PROP_ID_CHUNK) {
+      const chunk = propertyIds.slice(i, i + PROP_ID_CHUNK)
+      const { data: props, error } = await db
+        .from('properties')
+        .select('id, enrichment_status, latitude, longitude')
+        .in('id', chunk)
+      if (error) return res.status(500).json({ error: error.message })
+      const rows = (props ?? []) as Array<{
+        id: string
+        enrichment_status: string | null
+        latitude: number | null
+        longitude: number | null
+      }>
+      total += rows.length
+      for (const r of rows) {
+        const s = r.enrichment_status
+        if (s === 'enriched') enriched++
+        else if (s === 'failed') failed++
+        else pending++
+        if (r.latitude == null || r.longitude == null) noCoords++
+      }
     }
     return res.status(200).json({
-      total: rows.length,
+      total,
       enriched,
       pending,
       failed,
@@ -85,14 +107,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (propertyIds.length === 0) {
       return res.status(200).json({ message: 'No properties under this client', count: 0 })
     }
-    const { data: pendingRows, error } = await db
-      .from('properties')
-      .select('id')
-      .in('id', propertyIds)
-      .in('enrichment_status', ['pending', 'failed'])
-      .limit(ENRICH_BATCH_LIMIT)
-    if (error) return res.status(500).json({ error: error.message })
-    const targets = (pendingRows ?? []) as Array<{ id: string }>
+    // Chunk the .in() over property ids to keep the URL under
+    // PostgREST's ~32KB limit for clients with many properties.
+    const PROP_ID_CHUNK = 250
+    const targets: Array<{ id: string }> = []
+    for (let i = 0; i < propertyIds.length; i += PROP_ID_CHUNK) {
+      if (targets.length >= ENRICH_BATCH_LIMIT) break
+      const chunk = propertyIds.slice(i, i + PROP_ID_CHUNK)
+      const { data: pendingRows, error } = await db
+        .from('properties')
+        .select('id')
+        .in('id', chunk)
+        .in('enrichment_status', ['pending', 'failed'])
+      if (error) return res.status(500).json({ error: error.message })
+      for (const r of (pendingRows ?? []) as Array<{ id: string }>) {
+        targets.push(r)
+        if (targets.length >= ENRICH_BATCH_LIMIT) break
+      }
+    }
     if (targets.length === 0) {
       return res.status(200).json({ message: 'No pending properties', count: 0 })
     }
