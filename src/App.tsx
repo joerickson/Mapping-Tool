@@ -19,6 +19,10 @@ import FallbacksPage from './pages/admin/parcels/Fallbacks'
 import DangerousAdminPage from './pages/admin/Dangerous'
 import AdminUploadsPage from './pages/admin/Uploads'
 import AdminHubPage from './pages/admin/AdminHub'
+import AdminUsersPage from './pages/admin/Users'
+import AdminBootstrapPage from './pages/admin/Bootstrap'
+import InviteAcceptPage from './pages/InviteAccept'
+import AdminGuard from './components/auth/AdminGuard'
 import AccountsListPage from './pages/accounts/AccountsList'
 import NewAccountPage from './pages/accounts/NewAccount'
 import AccountDetailPage from './pages/accounts/AccountDetail'
@@ -174,12 +178,15 @@ export default function App() {
           <Route path="/clients/:id/setup" element={<AuthGuard><ClientSetupPage /></AuthGuard>} />
 
           {/* Admin */}
-          <Route path="/admin" element={<AuthGuard><AdminHubPage /></AuthGuard>} />
-          <Route path="/admin/dangerous" element={<AuthGuard><DangerousAdminPage /></AuthGuard>} />
-          <Route path="/admin/uploads" element={<AuthGuard><AdminUploadsPage /></AuthGuard>} />
-          <Route path="/admin/parcels/import" element={<AuthGuard><ParcelImportPage /></AuthGuard>} />
-          <Route path="/admin/parcels/counties" element={<AuthGuard><CountiesPage /></AuthGuard>} />
-          <Route path="/admin/parcels/fallbacks" element={<AuthGuard><FallbacksPage /></AuthGuard>} />
+          <Route path="/admin" element={<AuthGuard><AdminGuard><AdminHubPage /></AdminGuard></AuthGuard>} />
+          <Route path="/admin/bootstrap" element={<AuthGuard><AdminBootstrapPage /></AuthGuard>} />
+          <Route path="/admin/users" element={<AuthGuard><AdminGuard><AdminUsersPage /></AdminGuard></AuthGuard>} />
+          <Route path="/admin/dangerous" element={<AuthGuard><AdminGuard><DangerousAdminPage /></AdminGuard></AuthGuard>} />
+          <Route path="/admin/uploads" element={<AuthGuard><AdminGuard><AdminUploadsPage /></AdminGuard></AuthGuard>} />
+          <Route path="/admin/parcels/import" element={<AuthGuard><AdminGuard><ParcelImportPage /></AdminGuard></AuthGuard>} />
+          <Route path="/admin/parcels/counties" element={<AuthGuard><AdminGuard><CountiesPage /></AdminGuard></AuthGuard>} />
+          <Route path="/admin/parcels/fallbacks" element={<AuthGuard><AdminGuard><FallbacksPage /></AdminGuard></AuthGuard>} />
+          <Route path="/invite/:token" element={<InviteAcceptPage />} />
 
           {/* Design system reference (Phase B). Public for now — no AuthGuard
               so designers can hit the URL directly during review. */}
