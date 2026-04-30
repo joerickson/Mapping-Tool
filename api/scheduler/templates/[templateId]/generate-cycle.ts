@@ -5,7 +5,7 @@ import { createAdminClient } from '../../../_lib/supabase.js'
 import { authenticateRequest } from '../../../_lib/auth.js'
 import { generateCycleInstance } from '../../../_lib/scheduler/generate-cycle-instance.js'
 
-export const config = { maxDuration: 60 }
+export const config = { maxDuration: 300 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
