@@ -15,6 +15,7 @@ import { useAuth } from '../../hooks/useAuth'
 import Button from '../../components/ui/Button'
 import AppShell from '../../components/layout/AppShell'
 import EnrichmentBanner from '../../components/property/EnrichmentBanner'
+import ClientEditDialog from '../../components/client/ClientEditDialog'
 import {
   Sidebar,
   SidebarItem,
@@ -143,6 +144,12 @@ interface ClientInfo {
   id: string
   name: string
   display_name: string | null
+  status?: 'active' | 'prospect' | 'churned'
+  primary_contact_name?: string | null
+  primary_contact_email?: string | null
+  primary_contact_phone?: string | null
+  notes?: string | null
+  brand_color?: string | null
 }
 
 export default function AccountAnalysisPage() {
@@ -151,6 +158,7 @@ export default function AccountAnalysisPage() {
 
   const [account, setAccount] = useState<AccountInfo | null>(null)
   const [client, setClient] = useState<ClientInfo | null>(null)
+  const [editClientOpen, setEditClientOpen] = useState(false)
   const [latestByModule, setLatestByModule] = useState<Record<string, AnalysisRow | null>>({})
   const [running, setRunning] = useState<Record<string, boolean>>({})
   const [pollIds, setPollIds] = useState<Record<string, string>>({})
@@ -770,15 +778,16 @@ export default function AccountAnalysisPage() {
                 )}
               </span>
               {client && (
-                <Link
-                  to={`/clients/${client.id}`}
+                <button
+                  type="button"
+                  onClick={() => setEditClientOpen(true)}
                   title="Edit client (name, contact, status, brand color)"
                   aria-label="Edit client"
                   className="inline-flex items-center gap-1 text-xs font-normal text-fg-subtle hover:text-accent transition-colors border border-border rounded px-1.5 py-0.5"
                 >
                   <Pencil className="h-3 w-3" />
                   Edit client
-                </Link>
+                </button>
               )}
             </h1>
             <p className="text-sm text-fg-muted">
@@ -1051,6 +1060,28 @@ export default function AccountAnalysisPage() {
           )}
 
       </div>
+
+      {/* Inline edit dialog for the client (name, status, contact info,
+          brand color, notes). PATCHes /api/v1/clients/{id} and merges
+          the result into local state on save. */}
+      {client && (
+        <ClientEditDialog
+          open={editClientOpen}
+          onClose={() => setEditClientOpen(false)}
+          client={{
+            id: client.id,
+            name: client.name,
+            display_name: client.display_name,
+            status: client.status ?? 'active',
+            primary_contact_name: client.primary_contact_name,
+            primary_contact_email: client.primary_contact_email,
+            primary_contact_phone: client.primary_contact_phone,
+            notes: client.notes,
+            brand_color: client.brand_color,
+          }}
+          onSaved={(updated) => setClient((prev) => (prev ? { ...prev, ...updated } : prev))}
+        />
+      )}
     </AppShell>
   )
 }
