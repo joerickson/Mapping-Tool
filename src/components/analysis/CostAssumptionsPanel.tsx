@@ -10,6 +10,7 @@ import Button from '../ui/Button'
 import { Badge } from '../ui/Badge'
 import { Input } from '../ui/Input'
 import { cn } from '../../lib/cn'
+import OvernightLodgingSection from './OvernightLodgingSection'
 
 export interface CostAssumptionsConstraints {
   crew_size: number
@@ -39,12 +40,32 @@ export interface CostAssumptionsConstraints {
   surge_premium_multiplier: number
   branch_overhead_annual: number
   hotels_annual: number
+  hotel_cost_config: HotelCostConfig
+  hotels_annual_override: number | null
   supplies_pct_of_labor: number
   insurance_annual: number
   corporate_overhead_pct: number
   target_gross_margin_pct: number
 
   system_defaults?: Record<string, number>
+}
+
+export interface HotelCostConfig {
+  cost_per_night: number
+  overnight_trigger_one_way_hours: number
+  max_work_hours_per_crew_day: number
+  buffer_hours_per_day: number
+  per_diem_per_night: number
+  include_per_diem: boolean
+}
+
+const HOTEL_CONFIG_DEFAULTS: HotelCostConfig = {
+  cost_per_night: 120,
+  overnight_trigger_one_way_hours: 3,
+  max_work_hours_per_crew_day: 8,
+  buffer_hours_per_day: 2,
+  per_diem_per_night: 50,
+  include_per_diem: true,
 }
 
 const PHASE35_DEFAULTS = {
@@ -116,9 +137,10 @@ const GROUPS: Array<{
   },
   {
     title: 'Branch & operational costs',
+    description:
+      'Hotels & overnight stays are now calculated below per Phase 3.7. Override available when needed.',
     fields: [
       { key: 'branch_overhead_annual', label: 'Branch overhead per year' },
-      { key: 'hotels_annual', label: 'Hotels & overnight stays per year' },
       { key: 'supplies_pct_of_labor', label: 'Supplies (% of labor)' },
       { key: 'insurance_annual', label: 'Insurance per year' },
       { key: 'corporate_overhead_pct', label: 'Corporate overhead (% of direct cost)' },
@@ -353,6 +375,9 @@ export default function CostAssumptionsPanel({
               <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
                 {g.title}
               </h4>
+              {g.description && (
+                <p className="text-xs text-fg-subtle">{g.description}</p>
+              )}
               <ul className="divide-y divide-border rounded-md border border-border bg-surface">
                 {g.fields.map((f) => {
                   const cur =
@@ -438,6 +463,18 @@ export default function CostAssumptionsPanel({
               </ul>
             </section>
           ))}
+
+          <OvernightLodgingSection
+            accountId={accountId}
+            clientId={clientId}
+            config={data.hotel_cost_config ?? HOTEL_CONFIG_DEFAULTS}
+            override={data.hotels_annual_override}
+            constraintsRow={data}
+            onSaved={() => {
+              refresh()
+              onSaved?.()
+            }}
+          />
         </div>
       )}
     </div>

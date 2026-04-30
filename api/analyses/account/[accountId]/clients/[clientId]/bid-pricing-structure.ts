@@ -18,6 +18,14 @@ import {
   requireSelectedBranches,
   NO_SELECTION_ERROR,
 } from '../../../../../_lib/analysis/operational-constraints.js'
+import { loadAccountOfferings } from '../../../../../_lib/analysis/service-offerings.js'
+import { computePropertyVisitHours } from '../../../../../_lib/analysis/property-hours.js'
+import {
+  calculateOvernights,
+  resolveHotelsCost,
+  type OvernightConfig,
+  type ResolvedHotelsCost,
+} from '../../../../../_lib/analysis/overnight-calculator.js'
 
 export const config = { maxDuration: 60 }
 
@@ -102,12 +110,58 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const branchOpt = await fetchLatestCompletedAnalysis(db, accountId, clientId, 'branch_optimization')
     const workforce = await fetchLatestCompletedAnalysis(db, accountId, clientId, 'workforce_sizing')
 
+    // Phase 3.7 — calculate overnight cost from selected branches + property
+    // visit hours, then resolve final hotels value (override / calc / flat).
+    const offerings = await loadAccountOfferings(db, accountId, clientId)
+    const visits = computePropertyVisitHours(properties, offerings, {
+      project_clean_base_hours: constraints.project_clean_base_hours,
+      project_clean_hours_per_sqft: constraints.project_clean_hours_per_sqft,
+      upholstery_solo_hours: constraints.upholstery_solo_hours,
+      upholstery_combo_hours_pct: constraints.upholstery_combo_hours_pct,
+      visits_per_year_default: constraints.visits_per_year_default ?? 2,
+    })
+    const overnightConfig: OvernightConfig = {
+      drive_speed_mph: constraints.drive_speed_mph,
+      overnight_trigger_one_way_hours: constraints.hotel_cost_config.overnight_trigger_one_way_hours,
+      max_work_hours_per_crew_day: constraints.hotel_cost_config.max_work_hours_per_crew_day,
+      buffer_hours_per_day: constraints.hotel_cost_config.buffer_hours_per_day,
+      crew_size: constraints.crew_size,
+      cost_per_night: constraints.hotel_cost_config.cost_per_night,
+      per_diem_per_night: constraints.hotel_cost_config.per_diem_per_night,
+      include_per_diem: constraints.hotel_cost_config.include_per_diem,
+    }
+    const overnightInput = visits
+      .filter((v) => v.property.latitude != null && v.property.longitude != null && v.hours_per_visit > 0)
+      .map((v) => ({
+        id: v.property.id,
+        address: v.property.address_line1,
+        lat: v.property.latitude as number,
+        lng: v.property.longitude as number,
+        visits_per_year: v.visits_per_year,
+        hours_per_visit: v.hours_per_visit,
+      }))
+    const calc = calculateOvernights(
+      overnightInput,
+      sel.branches.map((b) => ({ name: b.name, lat: b.lat, lng: b.lng })),
+      overnightConfig
+    )
+    const hotelsResolved = resolveHotelsCost(
+      calc,
+      constraints.hotels_annual_override,
+      constraints.hotels_annual,
+      overnightConfig
+    )
+
+    // Pin the resolved value into inputs so computeBidPricing uses it.
+    inputs.hotels_annual = hotelsResolved.value
+
     const result = computeBidPricing(
       properties,
       inputs,
       crewStrategy?.outputs,
       branchOpt?.outputs,
-      workforce?.outputs
+      workforce?.outputs,
+      hotelsResolved
     )
 
     await completeAnalysisRecord(db, analysisId, {
@@ -128,7 +182,8 @@ export function computeBidPricing(
   inputs: BidInputs,
   crewStrategyOutputs: any,
   branchOptOutputs: any,
-  workforceOutputs: any
+  workforceOutputs: any,
+  hotelsResolved?: ResolvedHotelsCost
 ) {
   let resolvedLabor = inputs.total_annual_labor_cost
   let resolvedVehicleFuel = inputs.total_annual_vehicle_cost
@@ -237,7 +292,26 @@ export function computeBidPricing(
         direct_labor: Math.round(direct_labor),
         vehicle_fuel: Math.round(vehicle_fuel),
         vehicle_lease: Math.round(vehicle_lease),
-        hotels: Math.round(hotels),
+        // Phase 3.7 — hotels is now structured. When the caller hasn't passed
+        // hotelsResolved (e.g. body.hotels_annual override path), fall back
+        // to a minimal flat shape so consumers can still read .total.
+        hotels: hotelsResolved
+          ? {
+              total: Math.round(hotelsResolved.value),
+              hotel_room_cost: hotelsResolved.hotel_room_cost,
+              per_diem_cost: hotelsResolved.per_diem_cost,
+              basis: hotelsResolved.basis,
+              calculated_value: hotelsResolved.calculated_value,
+              breakdown: {
+                total_nights: hotelsResolved.total_nights,
+                cost_per_night: hotelsResolved.cost_per_night,
+                crew_size: hotelsResolved.crew_size,
+                per_diem_per_night: hotelsResolved.per_diem_per_night,
+                cluster_count: hotelsResolved.cluster_count,
+                properties_requiring_overnight: hotelsResolved.properties_requiring_overnight,
+              },
+            }
+          : { total: Math.round(hotels), basis: 'flat_fallback' as const },
         supplies: Math.round(supplies),
         branch_overhead: Math.round(branch_overhead),
         insurance: Math.round(insurance),
