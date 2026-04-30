@@ -19,9 +19,16 @@ import {
   type ConstraintInput,
 } from '../_lib/analysis/constraint-validators.js'
 
-export const config = { maxDuration: 30 }
+export const config = { maxDuration: 60 }
 
-const MAX_BULK_SLS = 500 // arbitrary safety cap — UI lets you select up to ~50
+// PostgREST has a ~32KB URL limit. UUIDs are 36 chars + comma = ~37
+// chars per id, so .in('id', [...]) starts failing around ~800 ids.
+// Chunk lookups in 250-id batches.
+const SL_LOOKUP_CHUNK = 250
+// Insert chunk size — one bulk insert per chunk. Keeps the payload
+// per request under ~5MB even at the high end (e.g. 1000 SLs × 6
+// constraints with notes = 6000 rows).
+const INSERT_CHUNK = 1000
 
 interface NormalizedConstraint {
   constraint_type: string
@@ -48,9 +55,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (slIds.length === 0) {
     return res.status(400).json({ error: 'service_location_ids must be a non-empty array' })
-  }
-  if (slIds.length > MAX_BULK_SLS) {
-    return res.status(400).json({ error: `cap is ${MAX_BULK_SLS} service locations per call` })
   }
 
   const db = createAdminClient()
@@ -88,21 +92,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // Look up tenant scope for each SL — also confirms they exist + filters
-  // out any IDs the caller doesn't have access to.
-  const { data: sls, error: slErr } = await db
-    .from('service_locations')
-    .select('id, account_id, client_id')
-    .in('id', slIds)
-
-  if (slErr) return res.status(500).json({ error: slErr.message })
-  const foundIds = new Set((sls ?? []).map((s) => (s as { id: string }).id))
+  // out any IDs the caller doesn't have access to. Chunk to stay under
+  // PostgREST's URL limit at large bulk sizes.
+  type SlScope = { id: string; account_id: string | null; client_id: string | null }
+  const sls: SlScope[] = []
+  for (let i = 0; i < slIds.length; i += SL_LOOKUP_CHUNK) {
+    const chunk = slIds.slice(i, i + SL_LOOKUP_CHUNK)
+    const { data, error: slErr } = await db
+      .from('service_locations')
+      .select('id, account_id, client_id')
+      .in('id', chunk)
+    if (slErr) return res.status(500).json({ error: slErr.message })
+    for (const row of data ?? []) sls.push(row as SlScope)
+  }
+  const foundIds = new Set(sls.map((s) => s.id))
   const missing = slIds.filter((id) => !foundIds.has(id))
 
   // Build the insert payload — N service_locations × M constraints rows.
   const rows: Array<Record<string, unknown>> = []
   const slsWithoutAccount: string[] = []
-  for (const sl of sls ?? []) {
-    const slRow = sl as { id: string; account_id: string | null; client_id: string | null }
+  for (const slRow of sls) {
     if (!slRow.account_id) {
       slsWithoutAccount.push(slRow.id)
       continue
@@ -131,15 +140,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
   }
 
-  // One bulk insert. Per-row failures are rare with our schema, but if the
-  // whole insert fails we surface that to the caller and they can retry
-  // smaller batches.
-  const { error: insertErr } = await db
-    .from('service_location_constraints')
-    .insert(rows)
-
-  if (insertErr) {
-    return res.status(500).json({ error: insertErr.message })
+  // Chunked insert. One bulk insert per chunk so a 1000-SL × 6-constraint
+  // bulk apply (6000 rows) doesn't blow the request payload size.
+  for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
+    const chunk = rows.slice(i, i + INSERT_CHUNK)
+    const { error: insertErr } = await db
+      .from('service_location_constraints')
+      .insert(chunk)
+    if (insertErr) {
+      return res.status(500).json({ error: insertErr.message })
+    }
   }
 
   // Group by service_location_id for the response.
