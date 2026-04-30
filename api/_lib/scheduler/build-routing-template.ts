@@ -293,9 +293,19 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
     for (const clusterId of crew.cluster_ids) {
       const cluster = clusters.find((c) => c.cluster_id === clusterId)!
       for (let visitIdx = 0; visitIdx < cluster.trips_per_cycle; visitIdx++) {
-        const tripDuration = cluster.cluster_type === 'remote' ? cluster.days_on_site_per_trip : 1
-        const targetStart = Math.floor((cycleDays * (visitIdx + 0.5)) / cluster.trips_per_cycle)
-        const tripStart = Math.max(targetStart, nextAvailableDay)
+        const tripDuration = cluster.days_on_site_per_trip
+        // Remote trips spread across the cycle (target the midpoint of
+        // each visit segment); local trips pack sequentially from day 0
+        // since they're continuous work, not discrete visits.
+        let tripStart: number
+        if (cluster.cluster_type === 'remote') {
+          const targetStart = Math.floor(
+            (cycleDays * (visitIdx + 0.5)) / cluster.trips_per_cycle
+          )
+          tripStart = Math.max(targetStart, nextAvailableDay)
+        } else {
+          tripStart = nextAvailableDay
+        }
 
         // Build per-day routes via routeDay(). Visits eligible for THIS
         // visit_index of THIS cluster:
@@ -380,24 +390,22 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
           const placedIds = new Set(dayResult.route.map((s) => s.service_location_id))
           remaining = remaining.filter((v) => !placedIds.has(v.service_location_id))
 
-          // Day end → set next day's start to the last stop's lat/lng
-          // (will be a hotel near the cluster centroid in reality — for
-          // template purposes we use the last stop as the proxy origin
-          // for day N+1).
-          if (remaining.length > 0 && dayNumber < tripDuration) {
-            const lastStop = stopsWithAddons[stopsWithAddons.length - 1]
-            const lastSpec = visitsForThisInstance.find(
-              (v) => v.service_location_id === lastStop.service_location_id
-            )
-            if (lastSpec) {
-              dayStartLoc = {
-                type: 'overnight_anchor',
-                name: `Hotel near ${cluster.cluster_id}`,
-                lat: cluster.centroid_lat,
-                lng: cluster.centroid_lng,
-              }
+          // For REMOTE multi-day trips: day N+1 starts from a hotel near
+          // the cluster centroid. For LOCAL multi-day trips: day N+1
+          // starts back at the branch (crew goes home each evening).
+          if (
+            remaining.length > 0 &&
+            dayNumber < tripDuration &&
+            cluster.cluster_type === 'remote'
+          ) {
+            dayStartLoc = {
+              type: 'overnight_anchor',
+              name: `Hotel near ${cluster.cluster_id}`,
+              lat: cluster.centroid_lat,
+              lng: cluster.centroid_lng,
             }
           }
+          // For local clusters, dayStartLoc stays as the branch (no change).
 
           dayNumber++
         }
@@ -532,12 +540,15 @@ function makeCluster(
       ? driveTimeMinutes(haversineMiles(c, branch), input.config.drive_speed_mph) / 60
       : 0
 
-  let daysOnSite = 1
-  if (cluster_type === 'remote') {
-    // Work hours per single visit (one trip of trips_per_cycle)
-    const workPerTrip = totalWork / tripsPerCycle
-    daysOnSite = Math.max(1, Math.ceil(workPerTrip / input.config.max_work_hours_per_crew_day))
-  }
+  // Multi-day applies to local clusters too — a crew working its
+  // local cluster doesn't fit ~85 properties × 3hr in one 10hr day.
+  // Local: each day starts/ends at the branch (no overnight). Remote:
+  // each day after the first starts from a hotel anchor.
+  const workPerTrip = totalWork / tripsPerCycle
+  const daysOnSite = Math.max(
+    1,
+    Math.ceil(workPerTrip / input.config.max_work_hours_per_crew_day)
+  )
 
   return {
     cluster_id,
