@@ -25,6 +25,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       'name', 'display_name', 'description', 'pricing_model',
       'default_frequency_label', 'default_visits_per_year', 'default_hours_per_visit',
       'default_crew_size', 'is_archived', 'account_id', 'client_id', 'metadata',
+      // Phase 4d routing flags
+      'is_routed', 'offering_role', 'visit_interval_years',
+      'attaches_to_offering_ids', 'uses_cohort_rotation', 'routing_metadata',
     ]
     const patch: Record<string, unknown> = {}
     for (const key of allowed) {

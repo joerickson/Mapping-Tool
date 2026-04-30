@@ -1147,6 +1147,12 @@ function AnalysisSidebar({
         >
           Plan a day
         </SidebarItem>
+        <SidebarItem
+          icon={CalendarDays}
+          to={`/accounts/${accountId}/clients/${clientId}/scheduler/templates`}
+        >
+          Routing templates
+        </SidebarItem>
       </SidebarSection>
 
       <SidebarSection title="Settings">
@@ -1161,6 +1167,12 @@ function AnalysisSidebar({
           to={`/accounts/${accountId}/clients/${clientId}/admin/constraint-templates`}
         >
           Constraint templates
+        </SidebarItem>
+        <SidebarItem
+          icon={Sparkles}
+          to={`/accounts/${accountId}/clients/${clientId}/admin/service-offerings`}
+        >
+          Service offerings
         </SidebarItem>
         <SidebarItem
           icon={History}
