@@ -4,11 +4,14 @@
 // edit + reset-to-default. Saves go through PUT /operational-constraints
 // which triggers a background synthesis refresh.
 import { useEffect, useMemo, useState } from 'react'
+import { ChevronDown, RotateCcw } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import Button from '../ui/Button'
+import { Badge } from '../ui/Badge'
+import { Input } from '../ui/Input'
+import { cn } from '../../lib/cn'
 
 export interface CostAssumptionsConstraints {
-  // Crew Economics
   crew_size: number
   hours_per_day: number
   working_days_per_year: number | null
@@ -20,24 +23,20 @@ export interface CostAssumptionsConstraints {
     benefits: boolean
     training: boolean
   } | null
-  // Productivity
   project_clean_base_hours: number
   project_clean_hours_per_sqft: number
   upholstery_solo_hours: number
   upholstery_combo_hours_pct: number
   recurring_productivity_sqft_per_hour: number
   visits_per_year_default: number | null
-  // Vehicle & Fuel
   fuel_cost_per_mile: number
   vehicles_per_crew: number
   vehicle_lease_annual_per_crew: number
   drive_speed_mph: number
   max_one_way_drive_minutes: number
-  // Surge
   surge_weeks_per_year: number
   surge_crew_count: number
   surge_premium_multiplier: number
-  // Branch & Operational
   branch_overhead_annual: number
   hotels_annual: number
   supplies_pct_of_labor: number
@@ -78,7 +77,7 @@ const GROUPS: Array<{
   fields: Array<{ key: keyof CostAssumptionsConstraints; label: string }>
 }> = [
   {
-    title: 'Crew Economics',
+    title: 'Crew economics',
     fields: [
       { key: 'crew_size', label: 'Crew size (workers)' },
       { key: 'hours_per_day', label: 'Hours per day' },
@@ -87,7 +86,7 @@ const GROUPS: Array<{
     ],
   },
   {
-    title: 'Productivity Rules',
+    title: 'Productivity rules',
     fields: [
       { key: 'project_clean_base_hours', label: 'Project Clean base hours' },
       { key: 'project_clean_hours_per_sqft', label: 'Project Clean per-sqft (hrs/sqft)' },
@@ -98,7 +97,7 @@ const GROUPS: Array<{
     ],
   },
   {
-    title: 'Vehicle & Fuel',
+    title: 'Vehicle & fuel',
     fields: [
       { key: 'fuel_cost_per_mile', label: 'Fuel cost per mile' },
       { key: 'vehicles_per_crew', label: 'Vehicles per crew' },
@@ -108,7 +107,7 @@ const GROUPS: Array<{
     ],
   },
   {
-    title: 'Surge Model (Option C)',
+    title: 'Surge model (Option C)',
     fields: [
       { key: 'surge_weeks_per_year', label: 'Surge weeks per year' },
       { key: 'surge_crew_count', label: 'Surge crew count' },
@@ -116,7 +115,7 @@ const GROUPS: Array<{
     ],
   },
   {
-    title: 'Branch & Operational Costs',
+    title: 'Branch & operational costs',
     fields: [
       { key: 'branch_overhead_annual', label: 'Branch overhead per year' },
       { key: 'hotels_annual', label: 'Hotels & overnight stays per year' },
@@ -131,12 +130,16 @@ const GROUPS: Array<{
 interface Props {
   accountId: string
   clientId: string
-  // Optional initial-expand support so module cards can deep-link by group
   highlightGroup?: string | null
   onSaved?: () => void
 }
 
-export default function CostAssumptionsPanel({ accountId, clientId, highlightGroup, onSaved }: Props) {
+export default function CostAssumptionsPanel({
+  accountId,
+  clientId,
+  highlightGroup,
+  onSaved,
+}: Props) {
   const { getToken } = useAuth()
   const [data, setData] = useState<CostAssumptionsConstraints | null>(null)
   const [loading, setLoading] = useState(true)
@@ -209,6 +212,8 @@ export default function CostAssumptionsPanel({ accountId, clientId, highlightGro
     return n
   }, [data, defaults])
 
+  const totalFields = GROUPS.reduce((s, g) => s + g.fields.length, 0)
+
   const startEdit = (key: string, currentVal: number) => {
     setEditingKey(key)
     setEditValue(String(currentVal))
@@ -225,8 +230,6 @@ export default function CostAssumptionsPanel({ accountId, clientId, highlightGro
     setToast(null)
     try {
       const token = await getToken()
-      // PUT requires the existing branch/exclusion config to be passed back.
-      // Pull from the current data; backend treats missing fields as no-op.
       const payload: Record<string, unknown> = {
         [key]: newValue,
         client_id: (data as any).client_id ?? null,
@@ -252,7 +255,7 @@ export default function CostAssumptionsPanel({ accountId, clientId, highlightGro
         throw new Error(err.error ?? `HTTP ${res.status}`)
       }
       await refresh()
-      setToast(`Updated. Re-running synthesis…`)
+      setToast('Updated. Re-running synthesis…')
       setTimeout(() => setToast(null), 4000)
       onSaved?.()
     } catch (err: any) {
@@ -282,55 +285,78 @@ export default function CostAssumptionsPanel({ accountId, clientId, highlightGro
   }
 
   return (
-    <div className="bg-white rounded-xl border shadow-sm">
+    <div className="rounded-lg border border-border bg-surface overflow-hidden">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full px-5 py-4 flex items-center justify-between gap-3 text-left hover:bg-gray-50"
+        aria-expanded={open}
+        className={cn(
+          'group flex w-full items-center justify-between gap-3 px-6 py-4 text-left',
+          'transition-colors hover:bg-surface-subtle',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset'
+        )}
       >
         <div className="min-w-0 flex-1">
-          <div className="font-semibold text-gray-900">Cost Assumptions</div>
-          <div className="text-xs text-gray-500 mt-0.5">
-            {loading
-              ? 'Loading…'
-              : error
-              ? <span className="text-red-600">Failed: {error}</span>
-              : <>
-                  {overrideCount} of{' '}
-                  {GROUPS.reduce((s, g) => s + g.fields.length, 0)} fields overridden from defaults.{' '}
-                  Click to {open ? 'collapse' : 'expand'} and review or edit.
-                </>}
+          <p className="text-base font-semibold tracking-tight text-fg">
+            Cost assumptions
+          </p>
+          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-fg-muted">
+            {loading ? (
+              <span>Loading…</span>
+            ) : error ? (
+              <span className="text-danger">Failed: {error}</span>
+            ) : (
+              <>
+                <span>
+                  <span className="font-tabular">{overrideCount}</span> of{' '}
+                  <span className="font-tabular">{totalFields}</span> fields
+                  overridden from defaults
+                </span>
+                {overrideCount > 0 && <Badge variant="accent">Overridden</Badge>}
+                <span className="text-fg-subtle">
+                  · click to {open ? 'collapse' : 'expand'}
+                </span>
+              </>
+            )}
           </div>
         </div>
-        <svg
-          className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
+        <ChevronDown
+          className={cn(
+            'h-4 w-4 shrink-0 text-fg-muted transition-transform duration-150',
+            open && 'rotate-180'
+          )}
+          aria-hidden
+        />
       </button>
 
       {open && data && (
-        <div className="border-t px-5 py-4 space-y-5">
+        <div className="space-y-5 border-t border-border px-6 py-5">
           {toast && (
-            <div className="bg-green-50 border border-green-200 text-green-800 text-sm px-3 py-2 rounded">
+            <div
+              role="status"
+              className="rounded-md border border-success/20 bg-success-subtle px-3 py-2 text-sm text-success"
+            >
               {toast}
             </div>
           )}
           {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-3 py-2 rounded">
+            <div
+              role="alert"
+              className="rounded-md border border-danger/20 bg-danger-subtle px-3 py-2 text-sm text-danger"
+            >
               {error}
             </div>
           )}
 
           {GROUPS.map((g) => (
-            <section key={g.title} id={`cost-group-${slug(g.title)}`}>
-              <h4 className="text-sm font-semibold text-gray-700 mb-2">{g.title}</h4>
-              <div className="border rounded-lg divide-y">
+            <section key={g.title} id={`cost-group-${slug(g.title)}`} className="space-y-2">
+              <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+                {g.title}
+              </h4>
+              <ul className="divide-y divide-border rounded-md border border-border bg-surface">
                 {g.fields.map((f) => {
-                  const cur = (data[f.key] as number | null | undefined) ?? defaults[f.key as string]
+                  const cur =
+                    (data[f.key] as number | null | undefined) ?? defaults[f.key as string]
                   const def = defaults[f.key as string]
                   const overridden =
                     typeof cur === 'number' &&
@@ -338,48 +364,56 @@ export default function CostAssumptionsPanel({ accountId, clientId, highlightGro
                     Math.abs(cur - def) > 1e-9
                   const isEditing = editingKey === (f.key as string)
                   return (
-                    <div
+                    <li
                       key={f.key as string}
-                      className="px-3 py-2.5 flex items-center justify-between gap-3 text-sm"
+                      className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 text-sm"
                     >
                       <div className="min-w-0 flex-1">
-                        <div className="font-medium text-gray-800">{f.label}</div>
-                        <div className="text-xs text-gray-500">
-                          Default: {typeof def === 'number' ? fmt(f.key as string, def) : '—'}
-                          {overridden && (
-                            <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
-                              Overridden
+                        <p className="font-medium text-fg">{f.label}</p>
+                        <div className="mt-0.5 flex items-center gap-2 text-xs text-fg-muted">
+                          <span>
+                            Default:{' '}
+                            <span className="font-tabular">
+                              {typeof def === 'number' ? fmt(f.key as string, def) : '—'}
                             </span>
-                          )}
+                          </span>
+                          {overridden && <Badge variant="accent">Overridden</Badge>}
                         </div>
                       </div>
                       {isEditing ? (
-                        <>
-                          <input
+                        <div className="flex items-center gap-2">
+                          <Input
                             type="number"
                             step="any"
                             value={editValue}
                             onChange={(e) => setEditValue(e.target.value)}
                             autoFocus
                             disabled={saving}
-                            className="w-32 border border-gray-300 rounded px-2 py-1 text-sm font-mono"
+                            className="w-32 font-mono"
                           />
                           <Button size="sm" onClick={commitEdit} loading={saving}>
                             Save
                           </Button>
-                          <Button variant="secondary" size="sm" onClick={cancelEdit} disabled={saving}>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={cancelEdit}
+                            disabled={saving}
+                          >
                             Cancel
                           </Button>
-                        </>
+                        </div>
                       ) : (
-                        <>
-                          <div className="font-mono font-semibold text-gray-900 text-right min-w-[100px]">
+                        <div className="flex items-center gap-3">
+                          <p className="min-w-[100px] text-right font-mono font-semibold tabular-nums text-fg">
                             {typeof cur === 'number' ? fmt(f.key as string, cur) : '—'}
-                          </div>
+                          </p>
                           <button
                             type="button"
-                            onClick={() => typeof cur === 'number' && startEdit(f.key as string, cur)}
-                            className="text-xs text-blue-600 hover:underline"
+                            onClick={() =>
+                              typeof cur === 'number' && startEdit(f.key as string, cur)
+                            }
+                            className="rounded-sm text-xs text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
                             disabled={saving}
                           >
                             Edit
@@ -388,19 +422,20 @@ export default function CostAssumptionsPanel({ accountId, clientId, highlightGro
                             <button
                               type="button"
                               onClick={() => resetField(f.key as string)}
-                              className="text-xs text-gray-500 hover:text-red-600"
+                              className="inline-flex items-center gap-1 rounded-sm text-xs text-fg-muted hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
                               disabled={saving}
                               title="Reset to system default"
                             >
-                              ↻ Reset
+                              <RotateCcw className="h-3 w-3" />
+                              Reset
                             </button>
                           )}
-                        </>
+                        </div>
                       )}
-                    </div>
+                    </li>
                   )
                 })}
-              </div>
+              </ul>
             </section>
           ))}
         </div>
@@ -410,5 +445,8 @@ export default function CostAssumptionsPanel({ accountId, clientId, highlightGro
 }
 
 function slug(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
 }

@@ -1,17 +1,26 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 import Button from '../ui/Button'
-import Modal from '../ui/Modal'
-
-interface BaselineSummary {
-  bid_total: number | null
-  bid_per_property: number | null
-  monthly_invoice_estimate: number | null
-  margin_pct: number | null
-  crew_recommended_option: string | null
-  crew_total_annual_cost: number | null
-  branch_count_recommended: number | null
-}
+import { Badge } from '../ui/Badge'
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../ui/Dialog'
+import { FormField, Input, Textarea } from '../ui/Input'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../ui/Table'
+import { cn } from '../../lib/cn'
 
 interface SelectedBranch {
   name: string
@@ -34,7 +43,6 @@ interface Props {
   accountId: string
   clientId: string
   hasSelection: boolean
-  // Baseline values pulled from current operational_constraints + bid_pricing run
   baselineLaborCost: number
   baselineFuelCost: number
   baselineMargin: number
@@ -80,13 +88,13 @@ export default function ScenarioPanel({
     setSurgeMultiplier(baselineSurgePremium)
   }, [baselineLaborCost, baselineFuelCost, baselineMargin, baselineSurgePremium])
 
-  // Fetch saved scenarios on mount
   const refreshScenarios = async () => {
     try {
       const token = await getToken()
-      const res = await fetch(`/api/accounts/${accountId}/clients/${clientId}/scenarios`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      const res = await fetch(
+        `/api/accounts/${accountId}/clients/${clientId}/scenarios`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
       if (res.ok) setSavedScenarios((await res.json()) ?? [])
     } catch {
       /* ignore */
@@ -165,19 +173,22 @@ export default function ScenarioPanel({
 
   const saveScenario = async (name: string, description: string) => {
     const token = await getToken()
-    const res = await fetch(`/api/accounts/${accountId}/clients/${clientId}/scenarios`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        name,
-        description,
-        overrides,
-        module_results: result?.scenario?.module_results ?? {},
-      }),
-    })
+    const res = await fetch(
+      `/api/accounts/${accountId}/clients/${clientId}/scenarios`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name,
+          description,
+          overrides,
+          module_results: result?.scenario?.module_results ?? {},
+        }),
+      }
+    )
     if (res.ok) {
       setSaveOpen(false)
       await refreshScenarios()
@@ -262,18 +273,20 @@ export default function ScenarioPanel({
 
   const deleteScenario = async (id: string) => {
     const token = await getToken()
-    const res = await fetch(`/api/accounts/${accountId}/clients/${clientId}/scenarios/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    const res = await fetch(
+      `/api/accounts/${accountId}/clients/${clientId}/scenarios/${id}`,
+      { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }
+    )
     if (res.ok) await refreshScenarios()
   }
 
   if (!hasSelection) {
     return (
-      <div className="bg-white rounded-xl border shadow-sm px-5 py-4 opacity-60">
-        <h3 className="font-semibold text-gray-900">Scenarios — What-If Analysis</h3>
-        <p className="text-sm text-gray-500 mt-1">
+      <div className="rounded-lg border border-border bg-surface px-6 py-5 opacity-60">
+        <h3 className="text-base font-semibold tracking-tight text-fg">
+          Scenarios — what-if analysis
+        </h3>
+        <p className="mt-1 text-sm text-fg-muted">
           Confirm a branch selection and run all modules first to enable scenarios.
         </p>
       </div>
@@ -281,19 +294,31 @@ export default function ScenarioPanel({
   }
 
   return (
-    <div className="bg-white rounded-xl border shadow-sm">
-      <div className="px-5 py-4 border-b">
-        <h3 className="font-semibold text-gray-900">Scenarios — What-If Analysis</h3>
-        <p className="text-sm text-gray-500 mt-1">
-          Move sliders to draft a scenario. Click Compute to run; the results show
-          alongside your baseline.
-        </p>
+    <div className="rounded-lg border border-border bg-surface overflow-hidden">
+      <div className="border-b border-border px-6 py-4 flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h3 className="text-base font-semibold tracking-tight text-fg">
+            Scenarios — what-if analysis
+          </h3>
+          <p className="mt-1 text-sm text-fg-muted">
+            Move sliders to draft a scenario. Click Compute to run; the results
+            show alongside your baseline.
+          </p>
+        </div>
+        {changeCount > 0 ? (
+          <Badge variant="accent">
+            Draft: <span className="font-tabular">{changeCount}</span>{' '}
+            {changeCount === 1 ? 'change' : 'changes'}
+          </Badge>
+        ) : (
+          <Badge>Baseline</Badge>
+        )}
       </div>
 
-      <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-5">
+      <div className="grid grid-cols-1 gap-5 p-6 sm:grid-cols-2">
         <SliderRow
           label="Labor cost"
-          subtitle={`Hourly loaded labor: $${baselineLaborCost.toFixed(2)} → $${(baselineLaborCost * (laborPct / 100)).toFixed(2)}`}
+          subtitle={`Hourly loaded: $${baselineLaborCost.toFixed(2)} → $${(baselineLaborCost * (laborPct / 100)).toFixed(2)}`}
           value={laborPct}
           min={80}
           max={125}
@@ -303,7 +328,7 @@ export default function ScenarioPanel({
         />
         <SliderRow
           label="Fuel cost"
-          subtitle={`Fuel per mile: $${baselineFuelCost.toFixed(3)} → $${(baselineFuelCost * (fuelPct / 100)).toFixed(3)}`}
+          subtitle={`Per mile: $${baselineFuelCost.toFixed(3)} → $${(baselineFuelCost * (fuelPct / 100)).toFixed(3)}`}
           value={fuelPct}
           min={70}
           max={150}
@@ -323,7 +348,7 @@ export default function ScenarioPanel({
         />
         <SliderRow
           label="Surge crew premium"
-          subtitle={`Surge multiplier: ${baselineSurgePremium.toFixed(1)}x → ${surgeMultiplier.toFixed(1)}x`}
+          subtitle={`Multiplier: ${baselineSurgePremium.toFixed(1)}x → ${surgeMultiplier.toFixed(1)}x`}
           value={Math.round(surgeMultiplier * 100)}
           min={100}
           max={200}
@@ -333,50 +358,48 @@ export default function ScenarioPanel({
         />
 
         {/* K override */}
-        <div className="sm:col-span-2 border-t pt-4">
-          <div className="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">
+        <div className="border-t border-border pt-4 sm:col-span-2">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
             Branch count override
-          </div>
+          </p>
           <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className="text-gray-600">
-              Selected K = <span className="font-semibold">{selectedK ?? '?'}</span>. Try:
+            <span className="text-fg-muted">
+              Selected K ={' '}
+              <span className="font-semibold text-fg font-tabular">
+                {selectedK ?? '?'}
+              </span>
+              . Try:
             </span>
             {[1, 2, 3, 4, 5, 6, 7].map((k) => (
-              <button
+              <KChip
                 key={k}
-                type="button"
-                onClick={() => setKOverride(kOverride === k ? '' : k)}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium border ${
-                  kOverride === k
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                }`}
-              >
-                K={k}
-              </button>
+                k={k}
+                active={kOverride === k}
+                onToggle={() => setKOverride(kOverride === k ? '' : k)}
+              />
             ))}
             {kOverride !== '' && (
               <button
                 type="button"
                 onClick={() => setKOverride('')}
-                className="text-xs text-gray-500 hover:underline"
+                className="text-xs text-fg-muted hover:text-fg hover:underline"
               >
                 Clear
               </button>
             )}
           </div>
-          <p className="text-xs text-gray-500 mt-1">
-            Re-runs Branch Optimization at the new K and uses its computed centroids
-            for this scenario.
+          <p className="mt-1 text-xs text-fg-subtle">
+            Re-runs Branch Optimization at the new K and uses its computed
+            centroids for this scenario.
           </p>
         </div>
 
         {/* Drop branches */}
         {selectedBranches && selectedBranches.length > 0 && (
-          <div className="sm:col-span-2 border-t pt-4">
-            <div className="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">
+          <div className="border-t border-border pt-4 sm:col-span-2">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
               Drop branches (toggle to remove from scenario)
-            </div>
+            </p>
             <div className="flex flex-wrap gap-2">
               {selectedBranches.map((b, i) => {
                 const dropped = droppedBranchIdxs.includes(i)
@@ -389,11 +412,13 @@ export default function ScenarioPanel({
                         cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]
                       )
                     }
-                    className={`px-2.5 py-1 rounded-md text-xs font-medium border ${
+                    className={cn(
+                      'inline-flex h-7 items-center rounded-md border px-2.5 text-xs font-medium transition-colors',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
                       dropped
-                        ? 'bg-red-50 text-red-700 border-red-200 line-through'
-                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                    }`}
+                        ? 'border-danger/40 bg-danger-subtle text-danger line-through'
+                        : 'border-border bg-surface text-fg hover:bg-surface-muted hover:border-border-strong'
+                    )}
                   >
                     {b.name}
                   </button>
@@ -405,17 +430,18 @@ export default function ScenarioPanel({
       </div>
 
       {/* Compute / Save bar */}
-      <div className="px-5 py-3 border-t bg-gray-50 flex items-center justify-between gap-3 flex-wrap">
-        <div className="text-sm text-gray-600">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-surface-subtle px-6 py-3">
+        <p className="text-sm text-fg-muted">
           {changeCount === 0 ? (
-            <span>No changes from baseline.</span>
+            'No changes from baseline.'
           ) : (
-            <span>
-              <strong>Draft scenario:</strong> {changeCount} change{changeCount === 1 ? '' : 's'}{' '}
-              from baseline
-            </span>
+            <>
+              <span className="font-semibold text-fg">Draft scenario:</span>{' '}
+              <span className="font-tabular">{changeCount}</span> change
+              {changeCount === 1 ? '' : 's'} from baseline
+            </>
           )}
-        </div>
+        </p>
         <div className="flex gap-2">
           {result && (
             <Button variant="secondary" size="sm" onClick={() => setSaveOpen(true)}>
@@ -428,13 +454,18 @@ export default function ScenarioPanel({
             loading={computing}
             disabled={changeCount === 0 || computing}
           >
-            Compute Scenario
+            Compute scenario
           </Button>
         </div>
       </div>
 
       {error && (
-        <div className="px-5 py-3 border-t bg-red-50 text-sm text-red-700">{error}</div>
+        <div
+          role="alert"
+          className="border-t border-danger/20 bg-danger-subtle px-6 py-3 text-sm text-danger"
+        >
+          {error}
+        </div>
       )}
 
       {/* Side-by-side compare */}
@@ -442,94 +473,148 @@ export default function ScenarioPanel({
 
       {/* Saved scenarios */}
       {savedScenarios.length > 0 && (
-        <div className="px-5 py-4 border-t">
-          <h4 className="text-sm font-semibold text-gray-700 mb-2">Saved scenarios</h4>
-          <div className="space-y-2">
-            {savedScenarios.map((s) => (
-              <div key={s.id} className="border rounded-lg px-3 py-2 flex items-start justify-between gap-3 flex-wrap">
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium text-gray-900">{s.name}</div>
-                  {s.description && (
-                    <div className="text-xs text-gray-500">{s.description}</div>
-                  )}
-                  <div className="text-xs text-gray-400 mt-0.5">
-                    {Object.keys(s.overrides ?? {}).length} change{Object.keys(s.overrides ?? {}).length === 1 ? '' : 's'} ·
-                    saved {new Date(s.created_at).toLocaleString()}
+        <div className="space-y-2 border-t border-border px-6 py-5">
+          <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+            Saved scenarios
+          </h4>
+          <ul className="space-y-2">
+            {savedScenarios.map((s) => {
+              const overrideCount = Object.keys(s.overrides ?? {}).length
+              return (
+                <li
+                  key={s.id}
+                  className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-border bg-surface px-3 py-2.5"
+                >
+                  <div className="min-w-0 flex-1 space-y-0.5">
+                    <p className="text-sm font-medium text-fg">{s.name}</p>
+                    {s.description && (
+                      <p className="text-xs text-fg-muted">{s.description}</p>
+                    )}
+                    <p className="text-xs text-fg-subtle">
+                      <span className="font-tabular">{overrideCount}</span>{' '}
+                      {overrideCount === 1 ? 'change' : 'changes'} · saved{' '}
+                      <span className="font-tabular">
+                        {new Date(s.created_at).toLocaleString()}
+                      </span>
+                    </p>
                   </div>
-                </div>
-                <div className="flex gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => loadScenarioIntoSliders(s)}
-                    className="text-xs text-blue-600 hover:underline"
-                  >
-                    Load
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => requestApply(s.id)}
-                    className="text-xs text-emerald-700 hover:underline"
-                  >
-                    Apply to constraints
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => deleteScenario(s.id)}
-                    className="text-xs text-red-600 hover:underline"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+                  <div className="flex shrink-0 items-center gap-3 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => loadScenarioIntoSliders(s)}
+                      className="text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-sm"
+                    >
+                      Load
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => requestApply(s.id)}
+                      className="text-success hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-sm"
+                    >
+                      Apply to constraints
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteScenario(s.id)}
+                      className="text-danger hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-sm"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
         </div>
       )}
 
-      {/* Save modal */}
-      {saveOpen && (
-        <SaveScenarioModal
-          open={saveOpen}
-          onClose={() => setSaveOpen(false)}
-          onSave={saveScenario}
-        />
-      )}
+      {/* Save dialog */}
+      <SaveScenarioDialog
+        open={saveOpen}
+        onOpenChange={setSaveOpen}
+        onSave={saveScenario}
+      />
 
-      {/* Apply confirmation modal */}
-      {confirmApplyId && confirmApplyDiff && (
-        <Modal open onClose={() => setConfirmApplyId(null)} title="Apply scenario to constraints" size="md">
-          <p className="text-sm text-gray-700 mb-3">{confirmApplyDiff.message}</p>
-          <div className="border rounded-lg overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
-                <tr>
-                  <th className="text-left px-3 py-2">Field</th>
-                  <th className="text-right px-3 py-2">From</th>
-                  <th className="text-right px-3 py-2">To</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(confirmApplyDiff.diff ?? []).map((d: any) => (
-                  <tr key={d.key} className="border-t">
-                    <td className="px-3 py-2 font-mono text-xs text-gray-700">{d.key}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatValue(d.from)}</td>
-                    <td className="px-3 py-2 text-right font-mono font-semibold">{formatValue(d.to)}</td>
-                  </tr>
+      {/* Apply confirmation dialog */}
+      <Dialog
+        open={!!confirmApplyId && !!confirmApplyDiff}
+        onOpenChange={(open) => {
+          if (!open) {
+            setConfirmApplyId(null)
+            setConfirmApplyDiff(null)
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Apply scenario to constraints</DialogTitle>
+            {confirmApplyDiff?.message && (
+              <DialogDescription>{confirmApplyDiff.message}</DialogDescription>
+            )}
+          </DialogHeader>
+          <div className="rounded-md border border-border bg-surface overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Field</TableHead>
+                  <TableHead className="text-right">From</TableHead>
+                  <TableHead className="text-right">To</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(confirmApplyDiff?.diff ?? []).map((d: any) => (
+                  <TableRow key={d.key}>
+                    <TableCell className="font-mono text-xs text-fg">{d.key}</TableCell>
+                    <TableCell numeric className="text-fg-muted">
+                      {formatValue(d.from)}
+                    </TableCell>
+                    <TableCell numeric className="font-semibold text-fg">
+                      {formatValue(d.to)}
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
-          <div className="flex justify-end gap-2 mt-4">
-            <Button variant="secondary" size="sm" onClick={() => setConfirmApplyId(null)}>
-              Cancel
-            </Button>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="ghost" size="sm">
+                Cancel
+              </Button>
+            </DialogClose>
             <Button size="sm" onClick={confirmApply}>
               Apply
             </Button>
-          </div>
-        </Modal>
-      )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
+  )
+}
+
+function KChip({
+  k,
+  active,
+  onToggle,
+}: {
+  k: number
+  active: boolean
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={cn(
+        'inline-flex h-7 items-center rounded-md border px-2.5 font-mono text-xs font-medium tabular-nums transition-colors',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+        active
+          ? 'border-accent bg-accent text-accent-fg'
+          : 'border-border bg-surface text-fg hover:bg-surface-muted hover:border-border-strong'
+      )}
+    >
+      K={k}
+    </button>
   )
 }
 
@@ -554,15 +639,17 @@ function SliderRow({
 }) {
   return (
     <div>
-      <div className="flex items-baseline justify-between">
-        <div>
-          <div className="text-xs font-semibold text-gray-700 uppercase tracking-wide">{label}</div>
-          <div className="text-xs text-gray-500 mt-0.5">{subtitle}</div>
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+            {label}
+          </p>
+          <p className="mt-0.5 text-xs text-fg-muted">{subtitle}</p>
         </div>
-        <div className="font-mono text-sm font-semibold text-gray-900">
+        <p className="font-mono text-sm font-semibold tabular-nums text-fg">
           {value}
           {unit}
-        </div>
+        </p>
       </div>
       <input
         type="range"
@@ -571,9 +658,9 @@ function SliderRow({
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full mt-2"
+        className="mt-2 w-full accent-accent"
       />
-      <div className="flex justify-between text-[10px] font-mono text-gray-400 mt-0.5">
+      <div className="mt-0.5 flex justify-between font-mono text-[10px] text-fg-subtle">
         <span>
           {min}
           {unit}
@@ -598,98 +685,131 @@ function ScenarioCompare({ result }: { result: any }) {
     { key: 'crew_total_annual_cost', label: 'Crew strategy total', isCurrency: true },
   ]
   return (
-    <div className="px-5 py-4 border-t bg-blue-50/30">
-      <h4 className="text-sm font-semibold text-gray-700 mb-2">Scenario vs baseline</h4>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-xs uppercase tracking-wide text-gray-500">
-            <th className="text-left py-2"></th>
-            <th className="text-right py-2 pr-4">Baseline</th>
-            <th className="text-right py-2 pr-4">Scenario</th>
-            <th className="text-right py-2">Δ</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => {
-            const delta = deltas[r.key]
-            const pct = delta?.pct
-            const colorClass =
-              pct == null ? 'text-gray-500' : pct > 0 ? 'text-red-600' : pct < 0 ? 'text-green-600' : 'text-gray-500'
-            return (
-              <tr key={r.key} className="border-t">
-                <td className="py-2 font-medium text-gray-700">{r.label}</td>
-                <td className="text-right font-mono py-2 pr-4">{formatNumber((b as any)[r.key], r.isCurrency)}</td>
-                <td className="text-right font-mono py-2 pr-4 font-semibold">
-                  {formatNumber((s as any)[r.key], r.isCurrency)}
-                </td>
-                <td className={`text-right font-mono py-2 ${colorClass}`}>
-                  {pct == null ? '—' : `${pct > 0 ? '+' : ''}${pct}%`}
-                </td>
-              </tr>
-            )
-          })}
-          <tr className="border-t">
-            <td className="py-2 font-medium text-gray-700">Recommended K</td>
-            <td className="text-right font-mono py-2 pr-4">{b.branch_count_recommended ?? '—'}</td>
-            <td className="text-right font-mono py-2 pr-4 font-semibold">{s.branch_count_recommended ?? '—'}</td>
-            <td className="text-right font-mono py-2 text-gray-400">—</td>
-          </tr>
-          <tr className="border-t">
-            <td className="py-2 font-medium text-gray-700">Recommended crew option</td>
-            <td className="text-right font-mono py-2 pr-4">{b.crew_recommended_option ?? '—'}</td>
-            <td className="text-right font-mono py-2 pr-4 font-semibold">{s.crew_recommended_option ?? '—'}</td>
-            <td className="text-right font-mono py-2 text-gray-400">—</td>
-          </tr>
-        </tbody>
-      </table>
+    <div className="space-y-2 border-t border-border bg-accent-subtle/30 px-6 py-5">
+      <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+        Scenario vs baseline
+      </h4>
+      <div className="rounded-md border border-border bg-surface overflow-hidden">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead />
+              <TableHead className="text-right">Baseline</TableHead>
+              <TableHead className="text-right">Scenario</TableHead>
+              <TableHead className="text-right">Δ</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((r) => {
+              const delta = deltas[r.key]
+              const pct = delta?.pct
+              return (
+                <TableRow key={r.key}>
+                  <TableCell className="font-medium text-fg">{r.label}</TableCell>
+                  <TableCell numeric className="text-fg-muted">
+                    {formatNumber((b as any)[r.key], r.isCurrency)}
+                  </TableCell>
+                  <TableCell numeric className="font-semibold text-fg">
+                    {formatNumber((s as any)[r.key], r.isCurrency)}
+                  </TableCell>
+                  <TableCell
+                    numeric
+                    className={cn(
+                      pct == null
+                        ? 'text-fg-subtle'
+                        : pct > 0
+                          ? 'text-danger'
+                          : pct < 0
+                            ? 'text-success'
+                            : 'text-fg-subtle'
+                    )}
+                  >
+                    {pct == null ? '—' : `${pct > 0 ? '+' : ''}${pct}%`}
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+            <TableRow>
+              <TableCell className="font-medium text-fg">Recommended K</TableCell>
+              <TableCell numeric className="text-fg-muted">
+                {b.branch_count_recommended ?? '—'}
+              </TableCell>
+              <TableCell numeric className="font-semibold text-fg">
+                {s.branch_count_recommended ?? '—'}
+              </TableCell>
+              <TableCell numeric className="text-fg-subtle">—</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell className="font-medium text-fg">
+                Recommended crew option
+              </TableCell>
+              <TableCell numeric className="text-fg-muted">
+                {b.crew_recommended_option ?? '—'}
+              </TableCell>
+              <TableCell numeric className="font-semibold text-fg">
+                {s.crew_recommended_option ?? '—'}
+              </TableCell>
+              <TableCell numeric className="text-fg-subtle">—</TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </div>
     </div>
   )
 }
 
-function SaveScenarioModal({
+function SaveScenarioDialog({
   open,
-  onClose,
+  onOpenChange,
   onSave,
 }: {
   open: boolean
-  onClose: () => void
+  onOpenChange: (open: boolean) => void
   onSave: (name: string, description: string) => void
 }) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   return (
-    <Modal open={open} onClose={onClose} title="Save scenario" size="md">
-      <div className="space-y-3">
-        <div>
-          <label className="block text-xs font-semibold text-gray-700 mb-1">Name</label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Higher labor scenario"
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            autoFocus
-          />
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Save scenario</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-4">
+          <FormField label="Name" htmlFor="save-scenario-name">
+            <Input
+              id="save-scenario-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Higher labor scenario"
+              autoFocus
+            />
+          </FormField>
+          <FormField label="Description" htmlFor="save-scenario-desc" helper="Optional">
+            <Textarea
+              id="save-scenario-desc"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+            />
+          </FormField>
         </div>
-        <div>
-          <label className="block text-xs font-semibold text-gray-700 mb-1">Description (optional)</label>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            rows={2}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="secondary" size="sm" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button size="sm" onClick={() => name.trim() && onSave(name.trim(), description.trim())} disabled={!name.trim()}>
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button variant="ghost" size="sm">
+              Cancel
+            </Button>
+          </DialogClose>
+          <Button
+            size="sm"
+            onClick={() => name.trim() && onSave(name.trim(), description.trim())}
+            disabled={!name.trim()}
+          >
             Save
           </Button>
-        </div>
-      </div>
-    </Modal>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
