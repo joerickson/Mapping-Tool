@@ -176,10 +176,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }))
 
     const total_count = count ?? 0
+    // has_more must compare against the *actual* returned length, not
+    // the *requested* limit. PostgREST silently caps responses at ~1000
+    // rows even when limit=2000 is requested, so using the requested
+    // limit causes early termination of paginated callers when total
+    // is between cap and limit (e.g. 1000–2000 properties → only the
+    // first page would be returned).
+    const has_more = offset + properties.length < total_count
     return res.status(200).json({
       properties,
       total_count,
-      has_more: offset + limit < total_count,
+      has_more,
     })
   }
 
