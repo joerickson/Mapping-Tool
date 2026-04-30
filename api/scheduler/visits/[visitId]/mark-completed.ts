@@ -7,6 +7,7 @@ import { createAdminClient } from '../../../_lib/supabase.js'
 import { authenticateRequest } from '../../../_lib/auth.js'
 import { markVisitCompleted } from '../../../_lib/scheduler/edit-propagation.js'
 import { recordEdit } from '../../../_lib/scheduler/edit-history.js'
+import { refreshCycleCompletion } from '../../../_lib/scheduler/cycle-completion.js'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
@@ -47,6 +48,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         })
       } catch (err) {
         console.error('[mark-completed] history record failed:', err)
+      }
+    }
+    // Phase 4e — refresh the cycle's completion stats so the UI banner
+    // and auto-generation trigger see the latest count immediately.
+    // Then opportunistically check the auto-generation trigger so a
+    // visit completion that crosses the threshold doesn't have to wait
+    // for the daily cron.
+    if (beforeRow?.cycle_instance_id) {
+      try {
+        await refreshCycleCompletion(db, beforeRow.cycle_instance_id)
+      } catch (err) {
+        console.error('[mark-completed] completion refresh failed:', err)
+      }
+      try {
+        const { checkAndTriggerAutoGeneration } = await import(
+          '../../../_lib/scheduler/auto-generation.js'
+        )
+        await checkAndTriggerAutoGeneration(db, beforeRow.cycle_instance_id)
+      } catch (err) {
+        console.error('[mark-completed] auto-generation check failed:', err)
       }
     }
     return res.status(200).json(result)
