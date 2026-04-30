@@ -59,28 +59,57 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const hasPortfolioFilter = portfolio_id && String(portfolio_id).trim().length > 0
 
     if (hasClientFilter || hasStatusFilter || hasPortfolioFilter) {
-      let slQuery = db.from('service_locations').select('property_id')
+      // Strip empty/whitespace-only ids — Postgres uuid type rejects ''
+      // with a 22P02 error which would surface as a 500 here.
+      const cleanIds = (csv: string) =>
+        csv.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
 
-      if (hasClientFilter) {
-        slQuery = slQuery.in('client_id', String(client_id).split(','))
+      // PostgREST silently caps responses at ~1000 rows; for accounts
+      // with thousands of service_locations we MUST paginate, otherwise
+      // the property-id slice we feed into the next query is incomplete
+      // (the "all clients = 0 pins" bug). Loop pages until we get a
+      // short page back.
+      const SL_PAGE = 1000
+      const propIdSet = new Set<string>()
+      let slOffset = 0
+      // Hard ceiling — 100 pages × 1000 rows = 100k SLs, more than any
+      // legitimate portfolio. Beyond that something is wrong upstream.
+      const MAX_SL_PAGES = 100
+      for (let page = 0; page < MAX_SL_PAGES; page++) {
+        let slQuery = db
+          .from('service_locations')
+          .select('property_id')
+          .range(slOffset, slOffset + SL_PAGE - 1)
+        if (hasClientFilter) {
+          const ids = cleanIds(String(client_id))
+          if (ids.length === 0) break
+          slQuery = slQuery.in('client_id', ids)
+        }
+        if (hasStatusFilter) {
+          const statuses = cleanIds(String(status))
+          if (statuses.length === 0) break
+          slQuery = slQuery.in('status', statuses)
+        }
+        if (hasPortfolioFilter) {
+          const portfolioIds = cleanIds(String(portfolio_id))
+          if (portfolioIds.length === 0) break
+          slQuery = slQuery.overlaps('portfolio_ids', portfolioIds)
+        }
+        const { data: sls, error: slError } = await slQuery
+        if (slError) {
+          return res
+            .status(500)
+            .json({ error: `Service location query failed: ${slError.message}` })
+        }
+        const batch = sls ?? []
+        for (const r of batch) {
+          const id = (r as any).property_id
+          if (id) propIdSet.add(id)
+        }
+        if (batch.length < SL_PAGE) break
+        slOffset += SL_PAGE
       }
-      if (hasStatusFilter) {
-        slQuery = slQuery.in('status', String(status).split(','))
-      }
-      if (hasPortfolioFilter) {
-        // portfolio_ids is an array field, use containedBy or overlaps
-        const portfolioIds = String(portfolio_id).split(',')
-        slQuery = slQuery.overlaps('portfolio_ids', portfolioIds)
-      }
-
-      const { data: sls, error: slError } = await slQuery
-
-      // Return error if service_locations query fails
-      if (slError) {
-        return res.status(500).json({ error: `Service location query failed: ${slError.message}` })
-      }
-
-      propIdsFromServiceLocations = [...new Set((sls ?? []).map((r: any) => r.property_id).filter((id: any) => id != null))]
+      propIdsFromServiceLocations = Array.from(propIdSet)
 
       if (propIdsFromServiceLocations.length === 0) {
         return res.status(200).json({ properties: [], total_count: 0, has_more: false })
