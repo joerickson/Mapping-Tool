@@ -615,114 +615,140 @@ export default function CrewStrategyChart({
         })}
       </div>
 
-      {/* Phase 4.2 — Manual per-branch crew override. Beats A/B/C
-          selection in Bid Pricing when toggled on. */}
+      {/* Phase 4.2 — Manual per-branch crew override. Inputs are
+          always visible so the user can directly type. Override is
+          ACTIVE whenever the sum of inputs > 0; clearing all inputs
+          (or pressing "Use Option {activeOption}") falls back to the
+          A/B/C selection. */}
       {(data.branches?.length ?? 0) > 0 && (
-        <Card padding="md" className={overrideEnabled ? 'border-accent ring-1 ring-accent' : undefined}>
+        <Card
+          padding="md"
+          className={overrideEnabled && overrideTotal > 0 ? 'border-accent ring-1 ring-accent' : undefined}
+        >
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
                 Manual crew override
               </p>
               <p className="mt-1 text-sm text-fg">
-                Set the exact number of crews per branch. When on,
-                Bid Pricing uses these counts instead of Option {activeOption}.
+                Type the number of crews you want at each branch. Any
+                non-zero entry switches Bid Pricing, Workforce Sizing,
+                and Seasonality off Option {activeOption} and onto your
+                numbers.
               </p>
             </div>
-            <label className="inline-flex items-center gap-2 text-sm cursor-pointer self-center">
-              <input
-                type="checkbox"
-                checked={overrideEnabled}
-                onChange={(e) => {
-                  const enabled = e.target.checked
-                  setOverrideEnabled(enabled)
-                  // Auto-seed inputs from Option B branch breakdown so the user
-                  // has a starting point on first enable.
-                  if (enabled && Object.keys(crewOverride).length === 0) {
-                    const seed: Record<string, number> = {}
-                    for (const b of branchBreakdown) {
-                      seed[b.branch_name] = b.crew_count
-                    }
-                    setCrewOverride(seed)
-                    void saveOverride(seed, true)
-                  } else {
-                    void saveOverride(crewOverride, enabled)
-                  }
+            {overrideEnabled && overrideTotal > 0 && (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  setCrewOverride({})
+                  setOverrideEnabled(false)
+                  void saveOverride({}, false)
                 }}
-                className="rounded border-border accent-accent"
-              />
-              <span className="font-medium text-fg">
-                {overrideEnabled ? 'Override active' : 'Use Option ' + activeOption}
-              </span>
-            </label>
+              >
+                Use Option {activeOption} instead
+              </Button>
+            )}
           </div>
 
-          {overrideEnabled && (
-            <div className="mt-4 space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                {(data.branches ?? []).map((b) => {
-                  const value = crewOverride[b.name] ?? 0
-                  const breakdown = branchBreakdown.find(
-                    (bb) => bb.branch_name === b.name
-                  )
-                  return (
-                    <div
-                      key={b.name}
-                      className="rounded-md border border-border bg-surface-subtle/40 p-3"
-                    >
-                      <p className="text-sm font-semibold text-fg truncate">
-                        {b.city_state || b.name}
+          <div className="mt-4 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {(data.branches ?? []).map((b) => {
+                // Default the input to whatever the active option
+                // assigns to this branch — that way the field shows
+                // a real starting number and any edit is a clear
+                // override.
+                const breakdown = branchBreakdown.find(
+                  (bb) => bb.branch_name === b.name
+                )
+                const recommended = breakdown?.crew_count ?? 0
+                const userValue = crewOverride[b.name]
+                const value = userValue ?? recommended
+                const isDirty = userValue != null && userValue !== recommended
+                return (
+                  <div
+                    key={b.name}
+                    className={cn(
+                      'rounded-md border bg-surface-subtle/40 p-3',
+                      isDirty ? 'border-accent' : 'border-border'
+                    )}
+                  >
+                    <p className="text-sm font-semibold text-fg truncate">
+                      {b.city_state || b.name}
+                    </p>
+                    {breakdown && (
+                      <p className="text-[10px] text-fg-subtle mt-0.5">
+                        {breakdown.property_count} properties ·{' '}
+                        {breakdown.work_hours.toLocaleString()} hr/yr · Option{' '}
+                        {activeOption} rec:{' '}
+                        <span className="font-tabular">{recommended}</span>{' '}
+                        crews
                       </p>
-                      {breakdown && (
-                        <p className="text-[10px] text-fg-subtle mt-0.5">
-                          {breakdown.property_count} properties ·{' '}
-                          {breakdown.work_hours.toLocaleString()} hr/yr · rec:{' '}
-                          <span className="font-tabular">{breakdown.crew_count}</span> crews
-                        </p>
+                    )}
+                    <div className="mt-2 flex items-center gap-2">
+                      <label className="text-xs text-fg-muted">Crews:</label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={value}
+                        onChange={(e) => {
+                          const raw = e.target.value
+                          const n = raw === '' ? 0 : Math.max(0, Math.floor(Number(raw)))
+                          setCrewOverride((prev) => ({ ...prev, [b.name]: n }))
+                          // Override is implicitly enabled the moment
+                          // the user types anything. Keep state in sync.
+                          if (!overrideEnabled) setOverrideEnabled(true)
+                        }}
+                        onBlur={() => {
+                          // Snapshot current state at blur time and
+                          // save. Empty / all-zero override clears.
+                          const snapshot = { ...crewOverride }
+                          const total = Object.values(snapshot).reduce(
+                            (s, v) =>
+                              s + (Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0),
+                            0
+                          )
+                          void saveOverride(snapshot, total > 0)
+                        }}
+                        className="w-20 h-8 rounded-md border border-border bg-surface px-2 text-sm font-mono text-fg focus-visible:outline-none focus-visible:border-border-focus focus-visible:ring-2 focus-visible:ring-accent"
+                      />
+                      {isDirty && (
+                        <span className="text-[10px] text-accent">overridden</span>
                       )}
-                      <div className="mt-2 flex items-center gap-2">
-                        <label className="text-xs text-fg-muted">Crews:</label>
-                        <input
-                          type="number"
-                          min={0}
-                          step={1}
-                          value={value}
-                          onChange={(e) => {
-                            const raw = e.target.value
-                            const n = raw === '' ? 0 : Math.max(0, Math.floor(Number(raw)))
-                            setCrewOverride((prev) => {
-                              const next = { ...prev, [b.name]: n }
-                              return next
-                            })
-                          }}
-                          onBlur={() => void saveOverride(crewOverride, true)}
-                          className="w-20 h-8 rounded-md border border-border bg-surface px-2 text-sm font-mono text-fg focus-visible:outline-none focus-visible:border-border-focus focus-visible:ring-2 focus-visible:ring-accent"
-                        />
-                      </div>
                     </div>
-                  )
-                })}
-              </div>
-              <div className="flex items-center justify-between pt-2 border-t border-border">
-                <p className="text-sm text-fg">
-                  Total crews:{' '}
-                  <span className="font-mono font-semibold tabular-nums">
-                    {overrideTotal}
-                  </span>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="flex items-center justify-between pt-2 border-t border-border flex-wrap gap-2">
+              <p className="text-sm text-fg">
+                Total crews:{' '}
+                <span className="font-mono font-semibold tabular-nums">
+                  {overrideEnabled && overrideTotal > 0
+                    ? overrideTotal
+                    : data.options[activeOption].crew_count}
+                </span>
+                {overrideEnabled && overrideTotal > 0 && (
                   <span className="text-xs text-fg-muted ml-2">
-                    (vs Option {activeOption}:{' '}
+                    override (vs Option {activeOption}:{' '}
                     <span className="font-tabular">
                       {data.options[activeOption].crew_count}
                     </span>
                     )
                   </span>
-                </p>
-                <p className="text-xs text-fg-subtle">
-                  {savingOverride ? 'Saving…' : 'Auto-saves on blur. Re-run Bid Pricing to apply.'}
-                </p>
-              </div>
+                )}
+              </p>
+              <p className="text-xs text-fg-subtle">
+                {savingOverride
+                  ? 'Saving…'
+                  : overrideEnabled && overrideTotal > 0
+                    ? 'Override active. Re-run Bid Pricing / Workforce / Seasonality to apply.'
+                    : 'No override active. Type any crew count to start.'}
+              </p>
             </div>
-          )}
+          </div>
         </Card>
       )}
 

@@ -22,6 +22,7 @@ import {
   requireSelectedBranches,
   NO_SELECTION_ERROR,
 } from '../../../../../_lib/analysis/operational-constraints.js'
+import { resolveCrews } from '../../../../../_lib/analysis/crew-resolution.js'
 
 export const config = { maxDuration: 60 }
 
@@ -83,7 +84,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const properties = applyExclusions(allProperties, constraints.excluded_property_ids)
     const offerings = await loadAccountOfferings(db, accountId, clientId)
     const crewStrategy = await fetchLatestCompletedAnalysis(db, accountId, clientId, 'crew_strategy')
-    const result = computeWorkforceSizing(properties, offerings, crewStrategy?.outputs, inputs)
+    const result = computeWorkforceSizing(properties, offerings, crewStrategy?.outputs, inputs, constraints)
 
     await completeAnalysisRecord(db, analysisId, {
       outputs: result.outputs,
@@ -102,7 +103,11 @@ export function computeWorkforceSizing(
   properties: Awaited<ReturnType<typeof loadAccountProperties>>,
   offerings: Map<string, { id: string; name: string }>,
   crewStrategyOutputs: any,
-  inputs: WorkforceInputs
+  inputs: WorkforceInputs,
+  constraints?: {
+    crew_strategy_selected_option?: 'A' | 'B' | 'C' | null
+    crew_count_per_branch_override?: Record<string, number> | null
+  }
 ) {
   const wbOfferingIds = new Set<string>()
   const overrideNameSet = inputs.workforce_b_offerings
@@ -149,15 +154,17 @@ export function computeWorkforceSizing(
   let workforceAFteEquivalent = 0
   let workforceANote = 'Run Crew Strategy first to size the project crew workforce.'
   if (crewStrategyOutputs) {
-    const recommendedKey = crewStrategyOutputs.recommended_option as 'A' | 'B' | 'C'
-    const opt = crewStrategyOutputs.options?.[recommendedKey]
-    if (opt) {
-      const crewCount =
-        (opt.crew_count ?? 0) + (recommendedKey === 'C' ? opt.surge_crew_count ?? 0 : 0)
-      const crewSize = crewStrategyOutputs.inputs?.crew_size ?? 3
-      workforceAFteEquivalent = crewCount * crewSize
-      workforceANote = `Per Crew Strategy (Option ${recommendedKey}): ${crewCount} crew${crewCount === 1 ? '' : 's'} × ~${crewSize} workers ≈ ${workforceAFteEquivalent} FTE equivalent.`
-    }
+    // Phase 4.2 — honor user's selected option + manual per-branch
+    // override, not just analysis recommended_option.
+    const resolved = resolveCrews(crewStrategyOutputs, constraints ?? {})
+    const crewCount = resolved.crew_count
+    const crewSize = crewStrategyOutputs.inputs?.crew_size ?? 3
+    workforceAFteEquivalent = crewCount * crewSize
+    const sourceLabel =
+      resolved.source === 'manual_override'
+        ? 'manual per-branch override'
+        : `Option ${resolved.effective_option}${resolved.source === 'user_selected_option' ? ' (your selection)' : ''}`
+    workforceANote = `Per Crew Strategy (${sourceLabel}): ${crewCount} crew${crewCount === 1 ? '' : 's'} × ~${crewSize} workers ≈ ${workforceAFteEquivalent} FTE equivalent.`
   }
 
   const totalFte = workforceAFteEquivalent + fteCount
