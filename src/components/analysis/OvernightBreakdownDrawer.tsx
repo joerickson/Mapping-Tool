@@ -1,28 +1,52 @@
 // Overnight breakdown drawer — opens from the Cost Assumptions panel and
 // shows cluster-by-cluster detail (which properties go on which trips,
-// how many nights, annual cost). Built fresh on design tokens rather than
-// reusing SlideOver because we need a wider panel + tabular data layout.
-import { useEffect, useState } from 'react'
-import { Loader2, RotateCcw, X } from 'lucide-react'
+// how many nights, annual cost). Phase 4.1 adds borderline/override/skip
+// badges, the calculation explainer string, and a per-cluster override
+// editor modal.
+import { useEffect, useMemo, useState } from 'react'
+import { AlertTriangle, Ban, Loader2, Pencil, RotateCcw, Settings2, X } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import { Badge } from '../ui/Badge'
 import Button from '../ui/Button'
-import { Input } from '../ui/Input'
+import { Input, FormField, Textarea } from '../ui/Input'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../ui/Dialog'
 import { cn } from '../../lib/cn'
 
 interface Trip {
   branch_name: string
   cluster_id: string
+  cluster_label: string
   cluster_centroid: { lat: number; lng: number }
   drive_hours_one_way: number
+  drive_distance_miles_one_way: number
   total_work_hours_per_visit: number
   work_days_per_trip: number
+  nights_per_trip_calculated: number
+  trips_per_year_calculated: number
+  cost_per_night_default: number
+  per_diem_per_night_default: number
   nights_per_trip: number
   trips_per_year: number
+  cost_per_night_used: number
+  per_diem_per_night_used: number
   annual_nights: number
   annual_hotel_cost: number
   annual_per_diem_cost: number
   annual_total_cost: number
+  is_borderline: boolean
+  borderline_reason: string | null
+  has_overrides: boolean
+  override_fields: string[]
+  is_skipped: boolean
+  skip_reason: string | null
+  calculation_text: string
   properties_in_cluster: Array<{
     property_id: string
     address: string | null
@@ -41,12 +65,26 @@ interface BreakdownData {
     properties_requiring_overnight: number
     day_trip_property_count: number
     avg_drive_hours_to_overnight_property: number
+    cluster_count: number
+    cluster_count_with_overrides: number
+    cluster_count_skipped: number
+    cluster_count_borderline: number
+    stale_override_cluster_ids: string[]
   }
   resolved: {
     value: number
     basis: 'override' | 'calculated' | 'flat_fallback'
     calculated_value: number
   }
+  cluster_override_meta?: Record<
+    string,
+    {
+      cluster_label: string
+      override_reason: string | null
+      overridden_by: string | null
+      overridden_at: string
+    }
+  >
 }
 
 interface Props {
@@ -79,6 +117,12 @@ export default function OvernightBreakdownDrawer({
   const [overrideEditing, setOverrideEditing] = useState(false)
   const [savingOverride, setSavingOverride] = useState(false)
   const [overrideError, setOverrideError] = useState<string | null>(null)
+  const [editingClusterId, setEditingClusterId] = useState<string | null>(null)
+
+  const editingTrip = useMemo(() => {
+    if (!data || !editingClusterId) return null
+    return data.result.trips.find((t) => t.cluster_id === editingClusterId) ?? null
+  }, [data, editingClusterId])
 
   useEffect(() => {
     if (!open) return
@@ -227,6 +271,13 @@ export default function OvernightBreakdownDrawer({
                 saving={savingOverride}
                 error={overrideError}
               />
+              {data.result.stale_override_cluster_ids.length > 0 && (
+                <div className="rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning">
+                  ⚠ {data.result.stale_override_cluster_ids.length} override
+                  {data.result.stale_override_cluster_ids.length === 1 ? ' is' : 's are'} stale
+                  (cluster contents changed). Open the cluster to clear or re-apply.
+                </div>
+              )}
               {data.result.trips.length === 0 ? (
                 <div className="rounded-md border border-border bg-surface-subtle px-4 py-6 text-sm text-fg-muted text-center">
                   No overnight stays required — all properties are within{' '}
@@ -237,21 +288,66 @@ export default function OvernightBreakdownDrawer({
                   {data.result.trips.map((trip) => (
                     <li
                       key={trip.cluster_id}
-                      className="rounded-md border border-border bg-surface p-4"
+                      className={cn(
+                        'rounded-md border bg-surface p-4',
+                        trip.is_skipped
+                          ? 'border-fg-subtle/30 opacity-80'
+                          : trip.is_borderline
+                            ? 'border-warning/30'
+                            : trip.has_overrides
+                              ? 'border-accent/30'
+                              : 'border-border'
+                      )}
                     >
                       <div className="flex items-start justify-between gap-3 flex-wrap">
                         <div className="space-y-0.5 min-w-0">
-                          <p className="text-sm font-semibold text-fg">
-                            {trip.cluster_id}
-                          </p>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-sm font-semibold text-fg">
+                              {trip.cluster_label}
+                            </p>
+                            {trip.is_skipped && (
+                              <Badge variant="outline" className="text-[10px]">
+                                <Ban className="h-3 w-3 mr-0.5" />
+                                Skipped
+                              </Badge>
+                            )}
+                            {trip.is_borderline && (
+                              <Badge variant="outline" className="text-[10px] text-warning border-warning/40">
+                                <AlertTriangle className="h-3 w-3 mr-0.5" />
+                                Borderline
+                              </Badge>
+                            )}
+                            {trip.has_overrides && (
+                              <Badge variant="outline" className="text-[10px] text-accent border-accent/40">
+                                <Settings2 className="h-3 w-3 mr-0.5" />
+                                Overridden
+                              </Badge>
+                            )}
+                          </div>
                           <p className="text-xs text-fg-muted">
                             from <span className="text-fg">{trip.branch_name}</span> ·{' '}
-                            <span className="font-tabular">{trip.drive_hours_one_way}</span> hr one-way
+                            <span className="font-tabular">{trip.drive_hours_one_way}</span> hr one-way ·{' '}
+                            <span className="font-tabular">{trip.drive_distance_miles_one_way}</span> mi
                           </p>
+                          {trip.is_borderline && trip.borderline_reason && (
+                            <p className="text-[11px] text-warning italic mt-0.5">
+                              {trip.borderline_reason}
+                            </p>
+                          )}
                         </div>
-                        <Badge variant="accent">
-                          ${trip.annual_total_cost.toLocaleString()}/yr
-                        </Badge>
+                        <div className="flex flex-col items-end gap-1">
+                          <Badge variant="accent">
+                            ${trip.annual_total_cost.toLocaleString()}/yr
+                          </Badge>
+                          <button
+                            type="button"
+                            onClick={() => setEditingClusterId(trip.cluster_id)}
+                            className="text-fg-subtle hover:text-accent inline-flex items-center gap-1 text-xs"
+                          >
+                            <Pencil className="h-3 w-3" />
+                            Edit
+                          </button>
+                        </div>
                       </div>
 
                       <dl className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
@@ -270,6 +366,10 @@ export default function OvernightBreakdownDrawer({
                           value={`$${trip.annual_per_diem_cost.toLocaleString()}`}
                         />
                       </dl>
+
+                      <p className="mt-2 text-[11px] text-fg-subtle font-tabular leading-relaxed">
+                        {trip.calculation_text}
+                      </p>
 
                       <details className="mt-3 group">
                         <summary className="cursor-pointer text-xs text-accent hover:underline">
@@ -300,6 +400,21 @@ export default function OvernightBreakdownDrawer({
           )}
         </div>
       </div>
+
+      {editingTrip && (
+        <ClusterOverrideModal
+          trip={editingTrip}
+          accountId={accountId}
+          clientId={clientId}
+          getToken={getToken}
+          onClose={() => setEditingClusterId(null)}
+          onSaved={async () => {
+            await refresh()
+            onOverrideSaved?.()
+            setEditingClusterId(null)
+          }}
+        />
+      )}
     </>
   )
 }
@@ -360,6 +475,31 @@ function SummaryStrip({
           value={`${data.result.avg_drive_hours_to_overnight_property} hr`}
         />
       </dl>
+      {(data.result.cluster_count_borderline > 0 ||
+        data.result.cluster_count_with_overrides > 0 ||
+        data.result.cluster_count_skipped > 0) && (
+        <p className="mt-2 text-[11px] text-fg-muted flex flex-wrap items-center gap-x-3">
+          {data.result.cluster_count_borderline > 0 && (
+            <span className="inline-flex items-center gap-1 text-warning">
+              <AlertTriangle className="h-3 w-3" />
+              {data.result.cluster_count_borderline} borderline
+            </span>
+          )}
+          {data.result.cluster_count_with_overrides > 0 && (
+            <span className="inline-flex items-center gap-1 text-accent">
+              <Settings2 className="h-3 w-3" />
+              {data.result.cluster_count_with_overrides} override
+              {data.result.cluster_count_with_overrides === 1 ? '' : 's'} applied
+            </span>
+          )}
+          {data.result.cluster_count_skipped > 0 && (
+            <span className="inline-flex items-center gap-1">
+              <Ban className="h-3 w-3" />
+              {data.result.cluster_count_skipped} skipped
+            </span>
+          )}
+        </p>
+      )}
 
       {allowOverride && (
         <div className="mt-3 pt-3 border-t border-border space-y-1.5">
@@ -430,5 +570,349 @@ function Stat({ label, value }: { label: string; value: string | number }) {
         {typeof value === 'number' ? value.toLocaleString() : value}
       </dd>
     </div>
+  )
+}
+
+// Per-cluster override editor. Renders a preview of the resulting
+// annual cost as the user edits, so the "what does this change" math
+// is visible before save. Skip mode disables the rate fields and
+// requires a reason.
+function ClusterOverrideModal({
+  trip,
+  accountId,
+  clientId,
+  getToken,
+  onClose,
+  onSaved,
+}: {
+  trip: Trip
+  accountId: string
+  clientId: string
+  getToken: () => Promise<string | null>
+  onClose: () => void
+  onSaved: () => void | Promise<void>
+}) {
+  const initialNights =
+    trip.nights_per_trip !== trip.nights_per_trip_calculated
+      ? String(trip.nights_per_trip)
+      : ''
+  const initialTrips =
+    trip.trips_per_year !== trip.trips_per_year_calculated
+      ? String(trip.trips_per_year)
+      : ''
+  const initialCost =
+    trip.cost_per_night_used !== trip.cost_per_night_default
+      ? String(trip.cost_per_night_used)
+      : ''
+  const initialPerDiem =
+    trip.per_diem_per_night_used !== trip.per_diem_per_night_default
+      ? String(trip.per_diem_per_night_used)
+      : ''
+
+  const [skip, setSkip] = useState<boolean>(trip.is_skipped)
+  const [skipReason, setSkipReason] = useState<string>(trip.skip_reason ?? '')
+  const [nights, setNights] = useState<string>(initialNights)
+  const [trips, setTrips] = useState<string>(initialTrips)
+  const [costPerNight, setCostPerNight] = useState<string>(initialCost)
+  const [perDiem, setPerDiem] = useState<string>(initialPerDiem)
+  const [reason, setReason] = useState<string>('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Live preview using the same arithmetic as the backend calculator.
+  // crew_size + include_per_diem aren't in the trip — derive include
+  // by whether per-diem cost was non-zero in the saved trip.
+  const includePerDiem = trip.annual_per_diem_cost > 0 || trip.per_diem_per_night_default > 0
+  const crewSizeFromTrip =
+    trip.annual_per_diem_cost > 0 && trip.per_diem_per_night_used > 0 && trip.annual_nights > 0
+      ? Math.round(
+          trip.annual_per_diem_cost / (trip.annual_nights * trip.per_diem_per_night_used)
+        )
+      : 3
+  const previewNights = skip
+    ? 0
+    : nights.trim() === ''
+      ? trip.nights_per_trip_calculated
+      : Math.max(0, Number(nights))
+  const previewTrips = skip
+    ? 0
+    : trips.trim() === ''
+      ? trip.trips_per_year_calculated
+      : Math.max(0, Number(trips))
+  const previewCost =
+    costPerNight.trim() === '' ? trip.cost_per_night_default : Number(costPerNight)
+  const previewPerDiem = perDiem.trim() === '' ? trip.per_diem_per_night_default : Number(perDiem)
+  const previewAnnualNights = previewNights * previewTrips
+  const previewHotel = previewAnnualNights * previewCost
+  const previewPerDiemCost = includePerDiem
+    ? previewAnnualNights * previewPerDiem * crewSizeFromTrip
+    : 0
+  const previewTotal = previewHotel + previewPerDiemCost
+  const delta = previewTotal - trip.annual_total_cost
+
+  const handleSave = async () => {
+    if (skip && !skipReason.trim()) {
+      setError('Reason is required when marking cluster as day-trip')
+      return
+    }
+    setError(null)
+    setSaving(true)
+    try {
+      const token = await getToken()
+      const res = await fetch(
+        `/api/analyses/account/${accountId}/clients/${clientId}/cluster-override`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            cluster_id: trip.cluster_id,
+            cluster_label: trip.cluster_label,
+            skip_overnight: skip,
+            skip_overnight_reason: skip ? skipReason.trim() : null,
+            nights_per_trip_override:
+              !skip && nights.trim() !== '' ? Math.max(0, Number(nights)) : null,
+            trips_per_year_override:
+              !skip && trips.trim() !== '' ? Math.max(0, Number(trips)) : null,
+            cost_per_night_override:
+              !skip && costPerNight.trim() !== '' ? Number(costPerNight) : null,
+            per_diem_per_night_override:
+              !skip && perDiem.trim() !== '' ? Number(perDiem) : null,
+            override_reason: reason.trim() || null,
+          }),
+        }
+      )
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        throw new Error((j as any).error ?? `HTTP ${res.status}`)
+      }
+      await onSaved()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleClear = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      const token = await getToken()
+      const res = await fetch(
+        `/api/analyses/account/${accountId}/clients/${clientId}/cluster-override`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            cluster_id: trip.cluster_id,
+            cluster_label: trip.cluster_label,
+            skip_overnight: false,
+            nights_per_trip_override: null,
+            trips_per_year_override: null,
+            cost_per_night_override: null,
+            per_diem_per_night_override: null,
+          }),
+        }
+      )
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        throw new Error((j as any).error ?? `HTTP ${res.status}`)
+      }
+      await onSaved()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && !saving && onClose()}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{trip.cluster_label}</DialogTitle>
+          <DialogDescription>
+            From {trip.branch_name} · {trip.drive_hours_one_way} hr ·{' '}
+            {trip.drive_distance_miles_one_way} mi one-way ·{' '}
+            {trip.properties_in_cluster.length} propert
+            {trip.properties_in_cluster.length === 1 ? 'y' : 'ies'}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="rounded-md border border-border bg-surface-subtle p-3 text-xs space-y-1">
+            <p className="text-[10px] uppercase tracking-wider text-fg-subtle font-semibold">
+              Calculated baseline
+            </p>
+            <p className="text-fg font-tabular leading-relaxed">
+              {trip.calculation_text}
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={skip}
+                onChange={(e) => setSkip(e.target.checked)}
+                className="mt-1 rounded border-border accent-accent"
+                disabled={saving}
+              />
+              <div>
+                <p className="text-sm font-medium text-fg">
+                  Mark cluster as day-trip (no overnight)
+                </p>
+                <p className="text-xs text-fg-muted">
+                  All overnight + per diem costs go to $0 for this cluster.
+                </p>
+              </div>
+            </label>
+            {skip && (
+              <FormField label="Reason (required)">
+                <Input
+                  value={skipReason}
+                  onChange={(e) => setSkipReason(e.target.value)}
+                  placeholder="e.g. crew can do it as a long day trip"
+                  disabled={saving}
+                />
+              </FormField>
+            )}
+          </div>
+
+          <div className={skip ? 'opacity-50 pointer-events-none' : ''}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <FormField
+                label="Nights per trip"
+                helper={`Calculated: ${trip.nights_per_trip_calculated}`}
+              >
+                <Input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={nights}
+                  onChange={(e) => setNights(e.target.value)}
+                  placeholder={String(trip.nights_per_trip_calculated)}
+                  disabled={saving || skip}
+                />
+              </FormField>
+              <FormField
+                label="Trips per year"
+                helper={`Calculated: ${trip.trips_per_year_calculated}`}
+              >
+                <Input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={trips}
+                  onChange={(e) => setTrips(e.target.value)}
+                  placeholder={String(trip.trips_per_year_calculated)}
+                  disabled={saving || skip}
+                />
+              </FormField>
+              <FormField
+                label="Cost per night ($)"
+                helper={`Default: $${trip.cost_per_night_default}`}
+              >
+                <Input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={costPerNight}
+                  onChange={(e) => setCostPerNight(e.target.value)}
+                  placeholder={String(trip.cost_per_night_default)}
+                  disabled={saving || skip}
+                />
+              </FormField>
+              <FormField
+                label="Per diem per night ($)"
+                helper={`Default: $${trip.per_diem_per_night_default}`}
+              >
+                <Input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={perDiem}
+                  onChange={(e) => setPerDiem(e.target.value)}
+                  placeholder={String(trip.per_diem_per_night_default)}
+                  disabled={saving || skip}
+                />
+              </FormField>
+            </div>
+          </div>
+
+          <FormField label="Reason (optional)">
+            <Textarea
+              rows={2}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Why is this overridden?"
+              disabled={saving}
+            />
+          </FormField>
+
+          <div className="rounded-md border border-accent/30 bg-accent/5 p-3 text-xs space-y-1">
+            <p className="text-[10px] uppercase tracking-wider text-fg-subtle font-semibold">
+              Preview with overrides
+            </p>
+            {skip ? (
+              <p className="text-fg font-tabular">
+                $0 — cluster will be served as day trips
+              </p>
+            ) : (
+              <>
+                <p className="text-fg font-tabular">
+                  Annual nights: {previewAnnualNights} · Annual cost: $
+                  {Math.round(previewTotal).toLocaleString()}{' '}
+                  <span
+                    className={delta === 0 ? 'text-fg-subtle' : delta > 0 ? 'text-danger' : 'text-success'}
+                  >
+                    ({delta === 0 ? 'no change' : `${delta > 0 ? '+' : '−'}$${Math.abs(Math.round(delta)).toLocaleString()}`})
+                  </span>
+                </p>
+                <p className="text-fg-muted font-tabular">
+                  Hotel: {previewAnnualNights} × ${previewCost.toFixed(0)} = $
+                  {Math.round(previewHotel).toLocaleString()}
+                </p>
+                <p className="text-fg-muted font-tabular">
+                  Per diem: {previewAnnualNights} × {crewSizeFromTrip} crew × $
+                  {previewPerDiem.toFixed(0)} = $
+                  {Math.round(previewPerDiemCost).toLocaleString()}
+                </p>
+              </>
+            )}
+          </div>
+
+          {error && <p className="text-xs text-danger">{error}</p>}
+        </div>
+
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          {trip.has_overrides || trip.is_skipped ? (
+            <Button variant="ghost" onClick={handleClear} disabled={saving}>
+              <RotateCcw className="h-3 w-3 mr-1" />
+              Clear overrides
+            </Button>
+          ) : null}
+          <Button onClick={handleSave} disabled={saving}>
+            {saving ? (
+              <>
+                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                Saving…
+              </>
+            ) : (
+              'Save'
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

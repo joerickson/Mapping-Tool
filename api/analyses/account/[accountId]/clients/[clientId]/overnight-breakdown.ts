@@ -21,6 +21,7 @@ import {
   resolveHotelsCost,
   type OvernightConfig,
   type OvernightBranch,
+  type OvernightClusterOverride,
 } from '../../../../../_lib/analysis/overnight-calculator.js'
 
 export const config = { maxDuration: 30 }
@@ -96,6 +97,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     visits_per_year_default: constraints.visits_per_year_default ?? 2,
   })
 
+  // Phase 4.1 — load any per-cluster overrides for this client.
+  const { data: overrideRows } = await db
+    .from('overnight_cluster_overrides')
+    .select(
+      'cluster_id, cluster_label, nights_per_trip_override, trips_per_year_override, cost_per_night_override, per_diem_per_night_override, skip_overnight, skip_overnight_reason, override_reason, overridden_by, overridden_at'
+    )
+    .eq('account_id', accountId)
+    .eq('client_id', clientId)
+  const clusterOverrides: Record<string, OvernightClusterOverride> = {}
+  const overrideMeta: Record<
+    string,
+    {
+      cluster_label: string
+      override_reason: string | null
+      overridden_by: string | null
+      overridden_at: string
+    }
+  > = {}
+  for (const r of overrideRows ?? []) {
+    clusterOverrides[r.cluster_id] = {
+      nights_per_trip_override: r.nights_per_trip_override,
+      trips_per_year_override: r.trips_per_year_override,
+      cost_per_night_override: r.cost_per_night_override != null ? Number(r.cost_per_night_override) : null,
+      per_diem_per_night_override:
+        r.per_diem_per_night_override != null ? Number(r.per_diem_per_night_override) : null,
+      skip_overnight: r.skip_overnight,
+      skip_overnight_reason: r.skip_overnight_reason,
+    }
+    overrideMeta[r.cluster_id] = {
+      cluster_label: r.cluster_label,
+      override_reason: r.override_reason ?? null,
+      overridden_by: r.overridden_by ?? null,
+      overridden_at: r.overridden_at,
+    }
+  }
+
   const calc = calculateOvernights(
     visits
       .filter(
@@ -113,7 +150,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         hours_per_visit: v.hours_per_visit,
       })),
     branches,
-    overnightConfig
+    overnightConfig,
+    clusterOverrides
   )
 
   const resolved = resolveHotelsCost(
@@ -128,5 +166,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     resolved,
     config: mergedConfig,
     override: constraints.hotels_annual_override,
+    cluster_override_meta: overrideMeta,
   })
 }
