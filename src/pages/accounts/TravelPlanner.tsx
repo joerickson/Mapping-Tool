@@ -508,7 +508,7 @@ export default function TravelPlannerPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredProperties.slice(0, 200).map((p) => {
+                    {filteredProperties.map((p) => {
                       const inTrip = trips.find((t) => t.property_ids.includes(p.property_id))
                       return (
                         <TableRow key={p.property_id}>
@@ -520,7 +520,7 @@ export default function TravelPlannerPage() {
                           </TableCell>
                           <TableCell className="text-xs text-fg-muted">
                             <MapPin className="inline h-3 w-3 mr-0.5" />
-                            {p.assigned_branch_city_state ?? p.assigned_branch ?? '—'}
+                            {p.assigned_branch_city_state || p.assigned_branch || '—'}
                           </TableCell>
                           <TableCell numeric className="text-xs">
                             {p.miles_to_branch != null ? `${p.miles_to_branch} mi` : '—'}
@@ -544,12 +544,6 @@ export default function TravelPlannerPage() {
                     })}
                   </TableBody>
                 </Table>
-                {filteredProperties.length > 200 && (
-                  <p className="px-4 py-2 text-xs text-fg-muted bg-surface-subtle">
-                    Showing first 200 of {filteredProperties.length}. Filter
-                    to narrow the list.
-                  </p>
-                )}
               </div>
             </section>
           </>
