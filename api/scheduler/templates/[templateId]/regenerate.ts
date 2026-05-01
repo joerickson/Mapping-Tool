@@ -286,6 +286,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         allow_hard_constraint_violation: body.preferences?.allow_hard_constraint_violation ?? false,
       },
       cycle_start_year: new Date().getUTCFullYear(),
+      branch_assignment_overrides:
+        (tpl.branch_assignment_overrides as Record<string, number> | null) ?? undefined,
     })
 
     if (propertiesMissingCoords.length > 0) {
@@ -363,6 +365,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         optimizer_notes: result.optimizer_notes,
         pacing_analysis: result.pacing_analysis,
         warnings: result.warnings,
+        branch_assignments: result.branch_assignments,
       })
       .eq('id', templateId)
     const { data: full } = await db.from('routing_templates').select('*').eq('id', templateId).single()

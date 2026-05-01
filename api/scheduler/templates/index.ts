@@ -423,6 +423,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           optimizer_notes: result.optimizer_notes,
           pacing_analysis: result.pacing_analysis,
           warnings: result.warnings,
+          branch_assignments: result.branch_assignments,
         })
         .eq('id', templateId)
 
