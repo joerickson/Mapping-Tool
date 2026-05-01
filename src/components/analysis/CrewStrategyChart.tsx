@@ -55,6 +55,15 @@ interface CrewOption {
   crew_count_ceiling?: number
   crew_count_optimistic?: number
   surge_crew_count?: number
+  // Phase 4 follow-up — Option B is now hybrid: dedicated per branch
+  // + roving pool. crew_count = dedicated_total + roving_crews.
+  dedicated_per_branch?: Array<{
+    branch_name: string
+    city_state: string | null
+    crew_count: number
+  }>
+  roving_crews?: number
+  dedicated_total?: number
   surge_weeks?: number
   utilization_pct: number
   annual_labor_cost: number
@@ -305,19 +314,38 @@ export default function CrewStrategyChart({
   // The total is then a sum of EVERY branch's visible value, not just
   // the ones the user explicitly typed into. This matches the inputs
   // they see on screen.
+  // Pull recommended dedicated counts out of Option B's hybrid output
+  // when present; that's the new building-day-aware recommendation.
+  const recommendedDedicatedByBranch: Record<string, number> = {}
+  for (const dp of data.options.B.dedicated_per_branch ?? []) {
+    recommendedDedicatedByBranch[dp.branch_name] = dp.crew_count
+  }
+  const recommendedRoving = data.options.B.roving_crews ?? 0
+
   const visibleOverride: Record<string, number> = {}
   for (const b of data.branches ?? []) {
     if (crewOverride[b.name] != null) {
       visibleOverride[b.name] = crewOverride[b.name]
     } else {
-      const rec = branchBreakdown.find((bb) => bb.branch_name === b.name)?.crew_count ?? 0
+      // Fall back to the recommended dedicated count for this branch
+      // (could be 0 — branch has no work justifying a dedicated crew).
+      // If recommendation isn't available (older outputs), use the
+      // legacy crew_count from branchBreakdown.
+      const rec =
+        recommendedDedicatedByBranch[b.name] ??
+        branchBreakdown.find((bb) => bb.branch_name === b.name)?.crew_count ??
+        0
       visibleOverride[b.name] = rec
     }
   }
-  const overrideTotal = Object.values(visibleOverride).reduce(
-    (s, v) => s + (Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0),
-    0
-  )
+  // Roving — special key '__roving' on the override jsonb.
+  const visibleRoving =
+    crewOverride['__roving'] != null ? crewOverride['__roving'] : recommendedRoving
+  const overrideTotal =
+    Object.values(visibleOverride).reduce(
+      (s, v) => s + (Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0),
+      0
+    ) + Math.max(0, Math.floor(Number.isFinite(visibleRoving) ? visibleRoving : 0))
   const allowAllocations =
     accountId != null && clientId != null && (data.branches?.length ?? 0) > 0
   const opts = [
@@ -687,6 +715,14 @@ export default function CrewStrategyChart({
             <dl className="my-3 grid grid-cols-2 gap-3 border-y border-border py-3 text-sm">
               <Stat label="Crews">
                 <span className="font-tabular">{o.crew_count}</span>
+                {o.dedicated_total != null && o.roving_crews != null && o.roving_crews > 0 && (
+                  <span className="text-fg-muted text-xs">
+                    {' '}
+                    <span className="text-fg-subtle">
+                      ({o.dedicated_total} dedicated + {o.roving_crews} roving)
+                    </span>
+                  </span>
+                )}
                 {o.crew_count_ceiling != null &&
                   o.crew_count_ceiling !== o.crew_count && (
                     <span
@@ -788,6 +824,36 @@ export default function CrewStrategyChart({
                 const userValue = crewOverride[b.name]
                 const value = userValue ?? recommended
                 const isDirty = userValue != null && userValue !== recommended
+                // Compute and persist the FULL override map (every
+                // branch + roving). Used by both per-branch and
+                // roving onBlur paths so they save consistent state.
+                const persistFull = () => {
+                  const fullMap: Record<string, number> = {}
+                  for (const branch of data.branches ?? []) {
+                    const u = crewOverride[branch.name]
+                    if (u != null) {
+                      fullMap[branch.name] = u
+                    } else {
+                      fullMap[branch.name] =
+                        recommendedDedicatedByBranch[branch.name] ??
+                        branchBreakdown.find((bb) => bb.branch_name === branch.name)
+                          ?.crew_count ??
+                        0
+                    }
+                  }
+                  const rovingVal =
+                    crewOverride['__roving'] != null
+                      ? crewOverride['__roving']
+                      : recommendedRoving
+                  if (rovingVal > 0) fullMap['__roving'] = rovingVal
+                  const total =
+                    Object.values(fullMap).reduce(
+                      (s, v) =>
+                        s + (Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0),
+                      0
+                    )
+                  void saveOverride(fullMap, total > 0)
+                }
                 return (
                   <div
                     key={b.name}
@@ -801,11 +867,11 @@ export default function CrewStrategyChart({
                     </p>
                     {breakdown && (
                       <p className="text-[10px] text-fg-subtle mt-0.5">
-                        {breakdown.property_count} properties ·{' '}
-                        {breakdown.work_hours.toLocaleString()} hr/yr · Option{' '}
-                        {activeOption} rec:{' '}
-                        <span className="font-tabular">{recommended}</span>{' '}
-                        crews
+                        {breakdown.property_count} properties · rec:{' '}
+                        <span className="font-tabular">
+                          {recommendedDedicatedByBranch[b.name] ?? recommended}
+                        </span>{' '}
+                        dedicated
                       </p>
                     )}
                     <div className="mt-2 flex items-center gap-2">
@@ -819,36 +885,9 @@ export default function CrewStrategyChart({
                           const raw = e.target.value
                           const n = raw === '' ? 0 : Math.max(0, Math.floor(Number(raw)))
                           setCrewOverride((prev) => ({ ...prev, [b.name]: n }))
-                          // Override is implicitly enabled the moment
-                          // the user types anything. Keep state in sync.
                           if (!overrideEnabled) setOverrideEnabled(true)
                         }}
-                        onBlur={() => {
-                          // Save the FULL per-branch map the user sees
-                          // on screen (override values + recommended
-                          // fallbacks for branches they left untouched),
-                          // so the bid pricing / workforce / seasonality
-                          // modules see crew counts for every branch,
-                          // not just the ones the user typed into.
-                          const fullMap: Record<string, number> = {}
-                          for (const branch of data.branches ?? []) {
-                            const u = crewOverride[branch.name]
-                            if (u != null) {
-                              fullMap[branch.name] = u
-                            } else {
-                              const rec = branchBreakdown.find(
-                                (bb) => bb.branch_name === branch.name
-                              )?.crew_count ?? 0
-                              fullMap[branch.name] = rec
-                            }
-                          }
-                          const total = Object.values(fullMap).reduce(
-                            (s, v) =>
-                              s + (Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0),
-                            0
-                          )
-                          void saveOverride(fullMap, total > 0)
-                        }}
+                        onBlur={persistFull}
                         className="w-20 h-8 rounded-md border border-border bg-surface px-2 text-sm font-mono text-fg focus-visible:outline-none focus-visible:border-border-focus focus-visible:ring-2 focus-visible:ring-accent"
                       />
                       {isDirty && (
@@ -858,6 +897,77 @@ export default function CrewStrategyChart({
                   </div>
                 )
               })}
+              {/* Roving crew input — not tied to a specific branch.
+                  Counts toward total but isn't a per-branch denominator. */}
+              {(() => {
+                const userRoving = crewOverride['__roving']
+                const rovingValue = userRoving ?? recommendedRoving
+                const isRovingDirty =
+                  userRoving != null && userRoving !== recommendedRoving
+                return (
+                  <div
+                    className={cn(
+                      'rounded-md border bg-surface-subtle/40 p-3',
+                      isRovingDirty ? 'border-accent' : 'border-border'
+                    )}
+                  >
+                    <p className="text-sm font-semibold text-fg truncate">
+                      Roving (any branch)
+                    </p>
+                    <p className="text-[10px] text-fg-subtle mt-0.5">
+                      Floats between branches to absorb overflow · rec:{' '}
+                      <span className="font-tabular">{recommendedRoving}</span>{' '}
+                      crews
+                    </p>
+                    <div className="mt-2 flex items-center gap-2">
+                      <label className="text-xs text-fg-muted">Crews:</label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={rovingValue}
+                        onChange={(e) => {
+                          const raw = e.target.value
+                          const n = raw === '' ? 0 : Math.max(0, Math.floor(Number(raw)))
+                          setCrewOverride((prev) => ({ ...prev, ['__roving']: n }))
+                          if (!overrideEnabled) setOverrideEnabled(true)
+                        }}
+                        onBlur={() => {
+                          const fullMap: Record<string, number> = {}
+                          for (const branch of data.branches ?? []) {
+                            const u = crewOverride[branch.name]
+                            if (u != null) {
+                              fullMap[branch.name] = u
+                            } else {
+                              fullMap[branch.name] =
+                                recommendedDedicatedByBranch[branch.name] ??
+                                branchBreakdown.find(
+                                  (bb) => bb.branch_name === branch.name
+                                )?.crew_count ??
+                                0
+                            }
+                          }
+                          const r =
+                            crewOverride['__roving'] != null
+                              ? crewOverride['__roving']
+                              : recommendedRoving
+                          if (r > 0) fullMap['__roving'] = r
+                          const total = Object.values(fullMap).reduce(
+                            (s, v) =>
+                              s + (Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0),
+                            0
+                          )
+                          void saveOverride(fullMap, total > 0)
+                        }}
+                        className="w-20 h-8 rounded-md border border-border bg-surface px-2 text-sm font-mono text-fg focus-visible:outline-none focus-visible:border-border-focus focus-visible:ring-2 focus-visible:ring-accent"
+                      />
+                      {isRovingDirty && (
+                        <span className="text-[10px] text-accent">overridden</span>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
             <div className="flex items-center justify-between pt-2 border-t border-border flex-wrap gap-2">
               <p className="text-sm text-fg">
