@@ -327,6 +327,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           soft_constraint_violations: result.soft_constraint_violations,
           optimization_score: result.optimization_score,
           optimizer_notes: result.optimizer_notes,
+          pacing_analysis: result.pacing_analysis,
+          warnings: result.warnings,
         })
         .eq('id', templateId)
 

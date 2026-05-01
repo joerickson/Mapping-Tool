@@ -162,6 +162,34 @@ export interface TemplateBuildResult {
       classified: 'local' | 'remote'
     }>
   }
+  // Phase 4.4 — pairing + pacing analysis surfaced for the cycle summary.
+  pacing_analysis: {
+    per_crew: Array<{
+      crew_index: number
+      crew_label: string
+      total_visits: number
+      total_workdays_used: number
+      single_stop_days: number
+      paired_days: number
+      pair_rate_pct: number
+      cycle_end_workday: number
+      days_idle_at_end: number
+    }>
+    crew_end_workday_spread: number
+    target_spread_workdays: number
+    pairing_stats: {
+      total_workdays: number
+      single_stop_days: number
+      paired_days: number
+      pair_rate_pct: number
+    }
+  }
+  warnings: Array<{
+    type: 'crew_load_imbalance' | 'crew_end_date_spread' | 'pairing_underutilized'
+    message: string
+    affected_crews?: number[]
+    suggested_action?: string
+  }>
 }
 
 const DAYS_PER_YEAR = 365
@@ -681,6 +709,127 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
     )
   }
 
+  // ── 7. Phase 4.4 — pacing post-process + stats ────────────────────
+  // Spread each crew's trips across the cycle so they end within ±10
+  // workdays of the latest crew. Operates in workday space (the same
+  // unit relative_start_day is in); cycle gen later maps to calendars.
+  const tripsByCrew = new Map<number, any[]>()
+  for (const t of trips) {
+    const arr = tripsByCrew.get(t.crew_index) ?? []
+    arr.push(t)
+    tripsByCrew.set(t.crew_index, arr)
+  }
+  // Natural end workday = relative_start_day + duration_days for the latest trip.
+  const naturalEndByCrew = new Map<number, number>()
+  for (const [crewIdx, list] of tripsByCrew) {
+    const end = list.reduce((m, t) => Math.max(m, (t.relative_start_day ?? 0) + (t.duration_days ?? 0)), 0)
+    naturalEndByCrew.set(crewIdx, end)
+  }
+  const latestNaturalEnd = Math.max(0, ...Array.from(naturalEndByCrew.values()))
+  // Stretch every crew's trips so their LAST trip ends at latestNaturalEnd
+  // (or as close as the cycle horizon allows). Distribute the slack as
+  // idle gaps proportional to trip durations between consecutive trips.
+  for (const [crewIdx, list] of tripsByCrew) {
+    if (list.length === 0) continue
+    list.sort((a, b) => (a.relative_start_day ?? 0) - (b.relative_start_day ?? 0))
+    const naturalEnd = naturalEndByCrew.get(crewIdx) ?? 0
+    if (naturalEnd >= latestNaturalEnd) continue
+    const slack = Math.min(latestNaturalEnd - naturalEnd, Math.max(0, cycleDays - naturalEnd))
+    if (slack <= 0) continue
+    // Distribute slack across the gaps after each trip except the last.
+    // For N trips → N-1 gap slots; if there's 1 trip, just delay it.
+    const slots = Math.max(1, list.length - 1)
+    const baseGap = Math.floor(slack / slots)
+    const remainder = slack - baseGap * slots
+    let cursor = list[0].relative_start_day ?? 0
+    if (list.length === 1) {
+      list[0].relative_start_day = cursor + slack
+    } else {
+      for (let i = 0; i < list.length; i++) {
+        list[i].relative_start_day = cursor
+        cursor += list[i].duration_days ?? 0
+        if (i < list.length - 1) {
+          cursor += baseGap + (i < remainder ? 1 : 0)
+        }
+      }
+    }
+  }
+
+  // Pair-rate + idle-tail stats. After pacing, "natural end" for slow
+  // crews moves up toward the latest crew's end.
+  const pacingPerCrew: TemplateBuildResult['pacing_analysis']['per_crew'] = []
+  let globalSingleStop = 0
+  let globalPaired = 0
+  for (const c of crews) {
+    const list = tripsByCrew.get(c.index) ?? []
+    let workdaysUsed = 0
+    let visits = 0
+    let single = 0
+    let paired = 0
+    let lastEnd = 0
+    for (const t of list) {
+      const dur = t.duration_days ?? 0
+      workdaysUsed += dur
+      lastEnd = Math.max(lastEnd, (t.relative_start_day ?? 0) + dur)
+      for (const day of t.days ?? []) {
+        const stops = (day.stops ?? []).length
+        visits += stops
+        if (stops <= 1) single++
+        else paired++
+      }
+    }
+    globalSingleStop += single
+    globalPaired += paired
+    const totalDays = single + paired
+    pacingPerCrew.push({
+      crew_index: c.index,
+      crew_label: c.label,
+      total_visits: visits,
+      total_workdays_used: workdaysUsed,
+      single_stop_days: single,
+      paired_days: paired,
+      pair_rate_pct: totalDays > 0 ? Math.round((paired / totalDays) * 1000) / 10 : 0,
+      cycle_end_workday: lastEnd,
+      days_idle_at_end: Math.max(0, latestNaturalEnd - lastEnd),
+    })
+  }
+  const endWorkdays = pacingPerCrew.map((p) => p.cycle_end_workday).filter((n) => n > 0)
+  const crewEndSpread =
+    endWorkdays.length > 1 ? Math.max(...endWorkdays) - Math.min(...endWorkdays) : 0
+  const TARGET_SPREAD = 10
+  const totalDaysGlobal = globalSingleStop + globalPaired
+  const pacing_analysis: TemplateBuildResult['pacing_analysis'] = {
+    per_crew: pacingPerCrew,
+    crew_end_workday_spread: crewEndSpread,
+    target_spread_workdays: TARGET_SPREAD,
+    pairing_stats: {
+      total_workdays: totalDaysGlobal,
+      single_stop_days: globalSingleStop,
+      paired_days: globalPaired,
+      pair_rate_pct: totalDaysGlobal > 0
+        ? Math.round((globalPaired / totalDaysGlobal) * 1000) / 10
+        : 0,
+    },
+  }
+
+  const warnings: TemplateBuildResult['warnings'] = []
+  if (crewEndSpread > TARGET_SPREAD) {
+    const slowest = pacingPerCrew.reduce((a, b) => (a.cycle_end_workday < b.cycle_end_workday ? b : a))
+    const fastest = pacingPerCrew.reduce((a, b) => (a.cycle_end_workday > b.cycle_end_workday ? b : a))
+    warnings.push({
+      type: 'crew_end_date_spread',
+      message: `Crew end-workdays spread ${crewEndSpread} (target ≤${TARGET_SPREAD}). ${slowest.crew_label} ends ${crewEndSpread}d after ${fastest.crew_label}.`,
+      affected_crews: [slowest.crew_index, fastest.crew_index],
+      suggested_action: 're-cluster property assignments across crews to equalize load',
+    })
+  }
+  if (totalDaysGlobal > 20 && pacing_analysis.pairing_stats.pair_rate_pct < 20) {
+    warnings.push({
+      type: 'pairing_underutilized',
+      message: `Pair rate ${pacing_analysis.pairing_stats.pair_rate_pct}% — most days are single-stop. Geography may not have many close pairs, or in_day_pairing_max_drive_minutes is tight.`,
+    })
+  }
+
   return {
     cycle_length_days: cycleDays,
     cycle_length_label: cycleResult.cycle_length_label,
@@ -728,6 +877,8 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
       // First 10 sample classifications for user audit on the cycle UI.
       sample: classificationAudit.slice(0, 10),
     },
+    pacing_analysis,
+    warnings,
   }
 }
 

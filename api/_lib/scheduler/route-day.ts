@@ -205,17 +205,25 @@ export function routeDay(input: DayRoutingInput): DayRoutingResult {
         : 0
       if (workEndMin + returnDriveMin > workEnd) continue
 
-      // Phase 4.3 — pairing rule: combined-sqft + drive-radius check.
-      // The second slot is only filled when both buildings are within
-      // maxPairDriveMin of each other AND their combined serviceable
-      // sqft is at most maxCombinedSqft.
+      // Phase 4.4 — aggressive pairing: drop the combined-sqft gate and
+      // rely on the time-fit check above. The drive-minute cap stays as
+      // a hard gate; size class becomes a soft tiebreaker (see scoring
+      // below). Two standard properties at 4-5 hr each fit in a single
+      // day with room to spare and the previous rule blocked them.
+      let pairingTiebreakerPenalty = 0
       if (route.length >= 1) {
         if (driveMin > maxPairDriveMin) continue
+        // Soft tiebreaker: prefer small+small pairings when multiple
+        // candidates fit. Penalty only differentiates between equally
+        // valid pairings; never blocks a fit.
         const firstStop = route[0]
         const firstProp = candidates.find((c) => c.id === firstStop.service_location_id)
-        const firstSqft = firstProp?.serviceable_sqft ?? 0
-        const candidateSqft = p.serviceable_sqft ?? 0
-        if (firstSqft + candidateSqft > maxCombinedSqft) continue
+        const isSmall = (sqft: number) => sqft > 0 && sqft <= maxCombinedSqft / 2
+        const firstSmall = isSmall(firstProp?.serviceable_sqft ?? 0)
+        const candidateSmall = isSmall(p.serviceable_sqft ?? 0)
+        if (!(firstSmall && candidateSmall)) {
+          pairingTiebreakerPenalty = 5
+        }
       }
 
       // Soft-constraint penalty at this proposed schedule
@@ -236,7 +244,8 @@ export function routeDay(input: DayRoutingInput): DayRoutingResult {
         }
       }
 
-      // Score: depends on objective
+      // Score: depends on objective. Tiebreaker penalty added on top
+      // for non-small+small pairings (Phase 4.4).
       let score: number
       if (input.preferences.objective === 'minimize_drive') {
         score = driveMin + softPenalty * 30 * input.preferences.soft_constraint_weight
@@ -247,6 +256,7 @@ export function routeDay(input: DayRoutingInput): DayRoutingResult {
       } else {
         score = driveMin + softPenalty * 20 * input.preferences.soft_constraint_weight
       }
+      score += pairingTiebreakerPenalty
 
       if (score < bestScore) {
         bestScore = score
