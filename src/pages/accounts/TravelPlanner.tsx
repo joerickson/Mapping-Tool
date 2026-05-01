@@ -96,6 +96,7 @@ export default function TravelPlannerPage() {
   const [client, setClient] = useState<{ name: string; display_name: string | null } | null>(null)
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<ManualTripWithMetrics | null>(null)
+  const [editingSuggestion, setEditingSuggestion] = useState<Suggestion | null>(null)
   const [suggestions, setSuggestions] = useState<Suggestion[] | null>(null)
   const [suggesting, setSuggesting] = useState(false)
   const [propertyFilter, setPropertyFilter] = useState('')
@@ -345,9 +346,18 @@ export default function TravelPlannerPage() {
                             {s.rationale}
                           </p>
                         </div>
-                        <Button size="sm" onClick={() => acceptSuggestion(s)}>
-                          Accept
-                        </Button>
+                        <div className="inline-flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setEditingSuggestion(s)}
+                          >
+                            <Pencil className="h-3 w-3" /> Edit
+                          </Button>
+                          <Button size="sm" onClick={() => acceptSuggestion(s)}>
+                            Accept
+                          </Button>
+                        </div>
                       </div>
                       <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-fg-muted">
                         <div>
@@ -551,13 +561,15 @@ export default function TravelPlannerPage() {
       </div>
 
       <TripDialog
-        open={creating || editing !== null}
+        open={creating || editing !== null || editingSuggestion !== null}
         onClose={() => {
           setCreating(false)
           setEditing(null)
+          setEditingSuggestion(null)
         }}
         clientId={clientId!}
         existingTrip={editing}
+        suggestionPrefill={editingSuggestion}
         properties={properties}
         branches={branches}
         propsAlreadyInOtherTrips={
@@ -570,8 +582,15 @@ export default function TravelPlannerPage() {
             : propsInTrips
         }
         onSaved={() => {
+          if (editingSuggestion) {
+            const acceptedName = editingSuggestion.suggested_name
+            setSuggestions((prev) =>
+              prev ? prev.filter((x) => x.suggested_name !== acceptedName) : prev
+            )
+          }
           setCreating(false)
           setEditing(null)
+          setEditingSuggestion(null)
           refresh()
         }}
       />
@@ -593,6 +612,7 @@ function TripDialog({
   onClose,
   clientId,
   existingTrip,
+  suggestionPrefill,
   properties,
   branches,
   propsAlreadyInOtherTrips,
@@ -602,6 +622,7 @@ function TripDialog({
   onClose: () => void
   clientId: string
   existingTrip: ManualTripWithMetrics | null
+  suggestionPrefill: Suggestion | null
   properties: TravelProperty[]
   branches: BranchInfo[]
   propsAlreadyInOtherTrips: Set<string>
@@ -625,6 +646,12 @@ function TripDialog({
         setVisitsPerYear(String(existingTrip.visits_per_year))
         setNotes(existingTrip.notes ?? '')
         setSelected(new Set(existingTrip.property_ids))
+      } else if (suggestionPrefill) {
+        setName(suggestionPrefill.suggested_name)
+        setBranchName(suggestionPrefill.branch_name)
+        setVisitsPerYear('2')
+        setNotes('')
+        setSelected(new Set(suggestionPrefill.property_ids))
       } else {
         setName('')
         setBranchName(branches[0]?.name ?? '')
@@ -635,7 +662,7 @@ function TripDialog({
       setFilter('')
       setErr(null)
     }
-  }, [open, existingTrip, branches])
+  }, [open, existingTrip, suggestionPrefill, branches])
 
   const filteredProps = useMemo(() => {
     const q = filter.trim().toLowerCase()

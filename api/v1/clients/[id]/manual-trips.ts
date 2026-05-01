@@ -313,7 +313,10 @@ function annotateTrip(
   // for crew_size + work_hours; v1 keeps it simple and explicit.
   const isOvernight =
     oneWayHours > (hotelConfig?.overnight_trigger_one_way_hours ?? 3)
-  const nightsPerTrip = isOvernight ? Math.max(1, validProps.length) : 0
+  // Crew cleans one property on the arrival day and one on the departure
+  // day, so hotel nights = mid days only = property_count - 2 (floor of 1
+  // when the trip is overnight at all).
+  const nightsPerTrip = isOvernight ? Math.max(1, validProps.length - 2) : 0
   const annualNights = nightsPerTrip * Math.max(1, trip.visits_per_year ?? 1)
   const annualMiles = totalDriveMiles * Math.max(1, trip.visits_per_year ?? 1)
 
