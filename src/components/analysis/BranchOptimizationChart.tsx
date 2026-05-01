@@ -295,17 +295,24 @@ export default function BranchOptimizationChart({
         </section>
       )}
 
-      {/* Per-K selection table */}
-      {showTable && onBuild && (
+      {/* Per-K selection / scenario table. Always shown when there's a
+          callback so the user can switch K after locking in a selection
+          (otherwise the only way to change K is to clear and re-pick,
+          which loses every per-branch override). The currently-selected
+          K row is highlighted; other rows show "Switch to K=N" so the
+          user can model alternatives in a click. */}
+      {onBuild && (
         <section className="space-y-2">
           <div>
             <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
-              Pick a branch count to build your selection
+              {selectedK != null
+                ? 'Branch count scenarios'
+                : 'Pick a branch count to build your selection'}
             </h4>
             <p className="mt-1 text-xs text-fg-muted">
-              Each row shows the modeled cost at K branches. Click a row's button to
-              start building your selection — you'll specify the actual locations
-              manually.
+              {selectedK != null
+                ? `Currently selected: K=${selectedK}. Click any other row to switch — your existing branches will be re-used as locked rows so you only fill the new ones.`
+                : 'Each row shows the modeled cost at K branches. Click a row\'s button to start building your selection — you\'ll specify the actual locations manually.'}
             </p>
           </div>
           <div className="rounded-md border border-border bg-surface overflow-hidden">
@@ -324,15 +331,23 @@ export default function BranchOptimizationChart({
               <TableBody>
                 {data.k_results.map((r) => {
                   const isRec = r.k === data.recommended_k
+                  const isCurrent = selectedK != null && r.k === selectedK
                   return (
                     <TableRow
                       key={r.k}
-                      className={isRec ? 'bg-success-subtle/40' : undefined}
+                      className={
+                        isCurrent
+                          ? 'bg-accent-subtle'
+                          : isRec
+                            ? 'bg-success-subtle/40'
+                            : undefined
+                      }
                     >
                       <TableCell className="font-mono font-semibold text-fg">
                         <span className="inline-flex items-center gap-1.5">
                           {r.k}
-                          {isRec && <Badge variant="success">Recommended</Badge>}
+                          {isCurrent && <Badge variant="accent">Current</Badge>}
+                          {isRec && !isCurrent && <Badge variant="success">Recommended</Badge>}
                         </span>
                       </TableCell>
                       <TableCell numeric className="text-fg">
@@ -351,9 +366,15 @@ export default function BranchOptimizationChart({
                         {r.branches.map((b) => b.city_state).join(' · ')}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button size="sm" onClick={() => onBuild(r.k)}>
-                          Build K={r.k} →
-                        </Button>
+                        {isCurrent ? (
+                          <span className="text-xs text-fg-subtle italic">
+                            already selected
+                          </span>
+                        ) : (
+                          <Button size="sm" onClick={() => onBuild(r.k)}>
+                            {selectedK != null ? `Switch to K=${r.k}` : `Build K=${r.k}`} →
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   )
