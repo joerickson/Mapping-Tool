@@ -301,6 +301,10 @@ export interface MapFilter {
   cityState: string
   statuses: ServiceLocationStatus[]
   portfolios: string[]
+  // Custom-field filters keyed by field_key.
+  //   string  → text contains-match
+  //   string[] → select multi-choice (any-of)
+  custom: Record<string, string | string[]>
 }
 
 export interface PropertyWithLocations extends Property {
