@@ -472,10 +472,13 @@ export function computeCrewStrategy(
       : DEFAULT_WORKING_DAYS_PER_YEAR
 
   // ── Option A: Roving ──────────────────────────────────────────────────────
-  // Variable cost — paid only for hours worked. Crew count comes from the
-  // building-count math (conservative); cost is hours-based regardless.
-  const optionA_crews = crewCountAnalysis.conservative.crews_needed
-  const optionA_crews_optimistic = crewCountAnalysis.optimistic.crews_needed
+  // Phase 4 follow-up — primary crew count is now the OPTIMISTIC count
+  // (small buildings paired). Real-world dispatch always pairs adjacent
+  // smalls; the conservative count was a worst-case ceiling that
+  // recommended over-staffing. Conservative is kept as
+  // crew_count_conservative for display ("up to N without pairing").
+  const optionA_crews = crewCountAnalysis.optimistic.crews_needed
+  const optionA_crews_ceiling = crewCountAnalysis.conservative.crews_needed
   const optionA_labor =
     totalAnnualHours * inputs.hourly_loaded_labor_cost * inputs.crew_size
   // Building-day utilization: how many crew-days of work do we have
@@ -524,10 +527,14 @@ export function computeCrewStrategy(
   // below as informational annotation on the per-branch breakdown.
   const band = inputs.utilization_constraint
   const bandActive = band.enabled
-  const crewsPerBranch = crewCountPerBranch.map((c) => Math.max(1, c.conservative))
-  const crewsPerBranchOptimistic = crewCountPerBranch.map((c) => Math.max(1, c.optimistic))
+  // Phase 4 follow-up — primary count = optimistic (paired). The
+  // conservative "1 building/day no pairing" is kept as a ceiling
+  // annotation so the user can see the worst case if dispatchers
+  // don't realize the pairing.
+  const crewsPerBranch = crewCountPerBranch.map((c) => Math.max(1, c.optimistic))
+  const crewsPerBranchCeiling = crewCountPerBranch.map((c) => Math.max(1, c.conservative))
   const optionB_crews = crewsPerBranch.reduce((a: number, b: number) => a + b, 0)
-  const optionB_crews_optimistic = crewsPerBranchOptimistic.reduce(
+  const optionB_crews_ceiling = crewsPerBranchCeiling.reduce(
     (a: number, b: number) => a + b,
     0
   )
@@ -543,14 +550,12 @@ export function computeCrewStrategy(
     city_state: string
     population: number | null
     crew_count: number
+    crew_count_ceiling: number
     crew_count_optimistic: number
     work_hours: number
     available_hours: number
     utilization_pct: number
     property_count: number
-    // Phase 4 follow-up — surface building-day math directly so the
-    // per-branch util table can drop hours-based columns ("Work hrs" /
-    // "Available") in favor of "Buildings" / "Available work days."
     building_days: number
     available_work_days: number
     avg_drive_miles_one_way: number
@@ -598,7 +603,9 @@ export function computeCrewStrategy(
       city_state: branchMeta[i].city_state,
       population: branchMeta[i].population,
       crew_count: crews,
-      crew_count_optimistic: crewsPerBranchOptimistic[i],
+      crew_count_ceiling: crewsPerBranchCeiling[i],
+      // Deprecated alias — back-compat for older chart consumers.
+      crew_count_optimistic: crews,
       work_hours: Math.round(branchHours[i]),
       available_hours: Math.round(available),
       utilization_pct: utilPct,
@@ -877,7 +884,10 @@ export function computeCrewStrategy(
     A: {
       label: 'Roving Crews',
       crew_count: optionA_crews,
-      crew_count_optimistic: optionA_crews_optimistic,
+      crew_count_ceiling: optionA_crews_ceiling,
+      // Deprecated alias for back-compat with older chart consumers.
+      // Kept until the UI fully migrates to crew_count_ceiling.
+      crew_count_optimistic: optionA_crews,
       utilization_pct: optionA_util_pct,
       annual_labor_cost: Math.round(optionA_labor),
       annual_vehicle_cost: Math.round(optionA_vehicle),
@@ -900,7 +910,8 @@ export function computeCrewStrategy(
     B: {
       label: 'Dedicated Crews',
       crew_count: optionB_crews,
-      crew_count_optimistic: optionB_crews_optimistic,
+      crew_count_ceiling: optionB_crews_ceiling,
+      crew_count_optimistic: optionB_crews,
       utilization_pct: optionB_util_pct,
       annual_labor_cost: Math.round(optionB_labor),
       annual_vehicle_cost: Math.round(optionB_vehicle),
