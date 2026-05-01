@@ -82,11 +82,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     .update({ status: 'optimizing', updated_at: new Date().toISOString() })
     .eq('id', templateId)
 
-  // Re-load offerings + property hours + cohorts
-  const { data: slRows } = await db
-    .from('service_locations')
-    .select('id, property_id, service_offering_id, serviceable_sqft, hours_per_visit_override, building_size_class_override, property:properties(id, address_line1, latitude, longitude)')
-    .in('id', slIds)
+  // Re-load offerings + property hours + cohorts. Page through chunks
+  // — PostgREST silently caps a single fetch and large clients can
+  // exceed it (truncated to 500 in practice).
+  const SL_CHUNK = 250
+  const SL_PAGE = 1000
+  const slRows: any[] = []
+  for (let i = 0; i < slIds.length; i += SL_CHUNK) {
+    const idChunk = slIds.slice(i, i + SL_CHUNK)
+    let pageOffset = 0
+    for (let p = 0; p < 50; p++) {
+      const { data } = await db
+        .from('service_locations')
+        .select('id, property_id, service_offering_id, serviceable_sqft, hours_per_visit_override, building_size_class_override, property:properties(id, address_line1, latitude, longitude)')
+        .in('id', idChunk)
+        .range(pageOffset, pageOffset + SL_PAGE - 1)
+      const batch = data ?? []
+      slRows.push(...batch)
+      if (batch.length < SL_PAGE) break
+      pageOffset += SL_PAGE
+    }
+  }
   const { data: offeringRows } = await db
     .from('service_offerings')
     .select('id, name, is_routed, offering_role, visit_interval_years, attaches_to_offering_ids, uses_cohort_rotation')
@@ -149,11 +165,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const allOfferingMap = await loadAccountOfferings(db, accountId, clientId)
   const propIds = Array.from(new Set(routed.map((r) => r.sl.property_id)))
-  const { data: propRows } = await db
-    .from('properties')
-    .select('*, service_locations(*)')
-    .in('id', propIds)
-  const visits = computePropertyVisitHours((propRows ?? []) as any, allOfferingMap, {
+  const PROP_CHUNK = 250
+  const PROP_PAGE = 1000
+  const propRows: any[] = []
+  for (let i = 0; i < propIds.length; i += PROP_CHUNK) {
+    const idChunk = propIds.slice(i, i + PROP_CHUNK)
+    let pageOffset = 0
+    for (let p = 0; p < 50; p++) {
+      const { data } = await db
+        .from('properties')
+        .select('*, service_locations(*)')
+        .in('id', idChunk)
+        .range(pageOffset, pageOffset + PROP_PAGE - 1)
+      const batch = data ?? []
+      propRows.push(...batch)
+      if (batch.length < PROP_PAGE) break
+      pageOffset += PROP_PAGE
+    }
+  }
+  const visits = computePropertyVisitHours(propRows as any, allOfferingMap, {
     project_clean_base_hours: constraints.project_clean_base_hours,
     project_clean_hours_per_sqft: constraints.project_clean_hours_per_sqft,
     upholstery_solo_hours: constraints.upholstery_solo_hours,
