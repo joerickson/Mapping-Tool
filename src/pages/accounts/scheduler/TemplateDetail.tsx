@@ -310,6 +310,9 @@ export default function TemplateDetailPage() {
               branches={template.branches}
               assignments={template.branch_assignments as any}
               overrides={template.branch_assignment_overrides ?? {}}
+              clusterRadiusMiles={
+                ((template as any).config?.cluster_radius_miles as number | undefined) ?? 30
+              }
               onChanged={() => load()}
             />
           )}
