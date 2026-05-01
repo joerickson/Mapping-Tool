@@ -525,20 +525,15 @@ export default function CycleDetailPage() {
         {(() => {
           const placedCount = placedVisits.length + completedVisits.length
           const unplacedCount = unplacedVisits.length
-          const inCycle = visits.length
-          const requiredTotal = templateRequiredVisits ?? inCycle
-          const missingFromCycle = Math.max(0, requiredTotal - inCycle)
-          const totalMissing = missingFromCycle + unplacedCount
-          if (totalMissing === 0) return null
-          const tone = totalMissing > placedCount * 0.05 ? 'danger' : 'warning'
-          const wrap =
-            tone === 'danger'
-              ? 'border-danger/40 bg-danger-subtle text-fg'
-              : 'border-warning/40 bg-warning-subtle text-fg'
           // Combine sources: template's pre-engine unplaced (e.g. missing
           // coords) AND cycle-level unplaced rows (overflow + unplaceable
           // residue). Either path produces a property the operator needs
-          // to see, so merge them into one list.
+          // to see, so merge them into one list. The COUNT in the banner
+          // header should match what the expander shows — historically
+          // they diverged (header used cycle status only, expander used
+          // template+cycle). De-dupe by service_location_id since the
+          // same property may appear in BOTH sources after cycle gen
+          // inserts unplaced rows from template.unplaced_visits.
           type DroppedRow = { property_id?: string; address: string; reason: string }
           const cycleUnplacedRows: DroppedRow[] = unplacedVisits.map((v) => ({
             property_id: (v as any).property_id ?? undefined,
@@ -549,12 +544,42 @@ export default function CycleDetailPage() {
               '—',
             reason: v.unplaced_reason ?? 'unknown',
           }))
-          const templateUnplacedRows: DroppedRow[] = templateUnplaced.map((u) => ({
-            property_id: u.property_id,
-            address: u.address ?? u.service_location_id ?? '—',
-            reason: u.detail ?? u.reason ?? 'unknown',
-          }))
-          const allDropped: DroppedRow[] = [...cycleUnplacedRows, ...templateUnplacedRows]
+          // template.unplaced_visits was computed at TEMPLATE build time.
+          // Cycle gen's gap-fill may have placed those visits onto idle
+          // workdays after the fact, so filter out any template entries
+          // whose service_location is now status='placed' or 'completed'
+          // in the cycle.
+          const placedSlIds = new Set<string>()
+          for (const v of visits) {
+            if (v.status === 'placed' || v.status === 'completed') {
+              placedSlIds.add(v.service_location_id)
+            }
+          }
+          const templateUnplacedRows: DroppedRow[] = templateUnplaced
+            .filter((u) => u.service_location_id && !placedSlIds.has(u.service_location_id))
+            .map((u) => ({
+              property_id: u.property_id,
+              address: u.address ?? u.service_location_id ?? '—',
+              reason: u.detail ?? u.reason ?? 'unknown',
+              sl_id: u.service_location_id,
+            } as any))
+          // De-dupe by service_location_id between the two lists.
+          const seenIds = new Set<string>()
+          const allDropped: DroppedRow[] = []
+          for (const r of [...cycleUnplacedRows, ...templateUnplacedRows]) {
+            const k = (r as any).sl_id ?? r.property_id ?? r.address
+            if (seenIds.has(k)) continue
+            seenIds.add(k)
+            allDropped.push(r)
+          }
+          const totalDropped = allDropped.length
+          if (totalDropped === 0) return null
+          const tone = totalDropped > placedCount * 0.05 ? 'danger' : 'warning'
+          const wrap =
+            tone === 'danger'
+              ? 'border-danger/40 bg-danger-subtle text-fg'
+              : 'border-warning/40 bg-warning-subtle text-fg'
+          const requiredTotal = templateRequiredVisits ?? (placedCount + totalDropped)
           const reasonCounts = new Map<string, number>()
           for (const u of allDropped) {
             reasonCounts.set(u.reason, (reasonCounts.get(u.reason) ?? 0) + 1)
@@ -564,22 +589,22 @@ export default function CycleDetailPage() {
           return (
             <div className={`rounded-md border px-4 py-3 ${wrap} space-y-2`}>
               <p className="text-sm font-semibold">
-                ⚠ {totalMissing} of {requiredTotal} visit
+                ⚠ {totalDropped} of {requiredTotal} visit
                 {requiredTotal === 1 ? '' : 's'} couldn't be scheduled
                 {templateCrewCount != null ? ` with crew_count=${templateCrewCount}` : ''}.
               </p>
               <ul className="text-xs text-fg-muted space-y-0.5">
-                {missingFromCycle > 0 && (
-                  <li>
-                    <span className="font-tabular font-medium text-fg">{missingFromCycle}</span>{' '}
-                    were dropped before reaching the cycle (template build couldn't fit them).
-                  </li>
-                )}
                 {unplacedCount > 0 && (
                   <li>
                     <span className="font-tabular font-medium text-fg">{unplacedCount}</span>{' '}
-                    landed in the cycle as <code className="rounded bg-surface-subtle px-1 text-[11px]">unplaced</code>{' '}
+                    are in the cycle as <code className="rounded bg-surface-subtle px-1 text-[11px]">unplaced</code>{' '}
                     — see them in the visits list filtered by status.
+                  </li>
+                )}
+                {totalDropped - unplacedCount > 0 && (
+                  <li>
+                    <span className="font-tabular font-medium text-fg">{totalDropped - unplacedCount}</span>{' '}
+                    are in the template's overflow list (cycle gen will surface them when next regenerated).
                   </li>
                 )}
               </ul>
