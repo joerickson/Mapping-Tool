@@ -19,8 +19,6 @@ import {
   SelectTrigger,
   SelectValue,
   SelectContent,
-  SelectGroup,
-  SelectLabel,
   SelectItem,
 } from '../ui/Select'
 import { Input, Textarea, FormField } from '../ui/Input'
@@ -232,13 +230,8 @@ export default function EditTemplateDialog({
               <Select value={draftType} onValueChange={(v) => changeDraftType(v as ConstraintType)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {CONSTRAINT_GROUPS.map((g) => (
-                    <SelectGroup key={g.label}>
-                      <SelectLabel>{g.label}</SelectLabel>
-                      {g.types.map((t) => (
-                        <SelectItem key={t} value={t}>{CONSTRAINT_LABELS[t]}</SelectItem>
-                      ))}
-                    </SelectGroup>
+                  {CONSTRAINT_GROUPS.flatMap((g) => g.types).map((t) => (
+                    <SelectItem key={t} value={t}>{CONSTRAINT_LABELS[t]}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
