@@ -459,6 +459,11 @@ export async function generateCycleInstance(
       return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
     }
 
+    // Round all minute fields — crew_day_routes integer columns reject
+    // floats (e.g. driveTimeMinutes returns a real-valued estimate).
+    const driveMinInt = Math.round(best.driveMin)
+    const totalDriveMin = Math.round(2 * best.driveMin)
+    const totalDayMin = Math.round(best.totalMin)
     crewDayRoutes.push({
       id: newRouteId,
       cycle_instance_id: cycleInstanceId,
@@ -479,16 +484,16 @@ export async function generateCycleInstance(
           address: prop.address ?? '',
           arrival_time: fmt(arrivalMin),
           departure_time: fmt(departureMin),
-          drive_minutes_from_previous: best.driveMin,
+          drive_minutes_from_previous: driveMinInt,
           drive_distance_miles_from_previous: Math.round(best.distMi * 10) / 10,
           work_minutes: propWorkMin,
           constraint_violations: [],
         },
       ],
-      total_drive_minutes: 2 * best.driveMin,
+      total_drive_minutes: totalDriveMin,
       total_work_minutes: propWorkMin,
       total_buffer_minutes: 0,
-      total_day_minutes: best.totalMin,
+      total_day_minutes: totalDayMin,
       total_drive_miles: Math.round(best.distMi * 2 * 10) / 10,
       trip_day_number: 1,
       trip_total_days: 1,

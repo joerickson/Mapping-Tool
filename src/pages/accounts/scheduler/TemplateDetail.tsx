@@ -554,6 +554,11 @@ export default function TemplateDetailPage() {
                 onChange={(e) => setGenStartDate(e.target.value)}
               />
             </FormField>
+            {error && (
+              <p className="rounded-md border border-danger/30 bg-danger-subtle px-3 py-2 text-xs text-danger">
+                {error}
+              </p>
+            )}
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setGenerateOpen(false)}>Cancel</Button>
