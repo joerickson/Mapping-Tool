@@ -39,6 +39,7 @@ interface TravelProperty {
   state: string | null
   lat: number | null
   lng: number | null
+  serviceable_sqft: number | null
   assigned_branch: string | null
   assigned_branch_city_state: string | null
   miles_to_branch: number
@@ -54,6 +55,7 @@ interface ManualTripWithMetrics {
   notes: string | null
   property_count: number
   properties_missing_coords: number
+  total_sqft: number
   miles_per_trip: number
   annual_miles: number
   one_way_drive_hours_to_centroid: number
@@ -81,6 +83,7 @@ interface Suggestion {
   one_way_drive_hours_to_centroid: number
   miles_per_trip_estimate: number
   estimated_nights_per_trip: number
+  total_sqft: number
   rationale: string
 }
 
@@ -359,10 +362,18 @@ export default function TravelPlannerPage() {
                           </Button>
                         </div>
                       </div>
-                      <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-fg-muted">
+                      <div className="mt-2 grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs text-fg-muted">
                         <div>
                           <span className="text-fg-subtle">Properties:</span>{' '}
                           <span className="font-tabular text-fg">{s.property_ids.length}</span>
+                        </div>
+                        <div>
+                          <span className="text-fg-subtle">Avg sq ft:</span>{' '}
+                          <span className="font-tabular text-fg">
+                            {s.property_ids.length > 0
+                              ? Math.round(s.total_sqft / s.property_ids.length).toLocaleString()
+                              : '—'}
+                          </span>
                         </div>
                         <div>
                           <span className="text-fg-subtle">Drive:</span>{' '}
@@ -460,7 +471,48 @@ export default function TravelPlannerPage() {
                           value={`$${t.annual_lodging_cost.toLocaleString()}`}
                         />
                         <Stat label="Miles/trip" value={t.miles_per_trip} />
+                        <Stat
+                          label="Avg sq ft / site"
+                          value={
+                            t.property_count > 0
+                              ? Math.round(t.total_sqft / t.property_count).toLocaleString()
+                              : '—'
+                          }
+                        />
+                        <Stat
+                          label="Total sq ft"
+                          value={t.total_sqft.toLocaleString()}
+                        />
                       </dl>
+                      <details className="group mt-3 text-xs">
+                        <summary className="cursor-pointer text-accent hover:underline list-none [&::-webkit-details-marker]:hidden">
+                          <span className="group-open:hidden">▸ Show {t.property_count} site{t.property_count === 1 ? '' : 's'}</span>
+                          <span className="hidden group-open:inline">▾ Hide sites</span>
+                        </summary>
+                        <ul className="mt-2 divide-y divide-border rounded-md border border-border">
+                          {t.property_ids
+                            .map((pid) => properties.find((p) => p.property_id === pid))
+                            .filter((p): p is TravelProperty => !!p)
+                            .map((p) => (
+                              <li
+                                key={p.property_id}
+                                className="flex items-center justify-between gap-2 px-2 py-1.5"
+                              >
+                                <span className="truncate text-fg">
+                                  {p.address_line1 ?? '—'}
+                                  <span className="ml-1 text-fg-subtle">
+                                    {p.city}{p.city && p.state ? ', ' : ''}{p.state}
+                                  </span>
+                                </span>
+                                <span className="font-tabular text-fg-muted whitespace-nowrap">
+                                  {p.serviceable_sqft != null
+                                    ? `${p.serviceable_sqft.toLocaleString()} sq ft`
+                                    : '—'}
+                                </span>
+                              </li>
+                            ))}
+                        </ul>
+                      </details>
                       {t.properties_missing_coords > 0 && (
                         <p className="mt-2 text-[11px] text-warning">
                           ⚠ {t.properties_missing_coords} propert
@@ -512,6 +564,7 @@ export default function TravelPlannerPage() {
                     <TableRow>
                       <TableHead>Property</TableHead>
                       <TableHead>Branch</TableHead>
+                      <TableHead className="text-right">Sq ft</TableHead>
                       <TableHead className="text-right">Distance</TableHead>
                       <TableHead className="text-right">Drive</TableHead>
                       <TableHead>Trip</TableHead>
@@ -531,6 +584,11 @@ export default function TravelPlannerPage() {
                           <TableCell className="text-xs text-fg-muted">
                             <MapPin className="inline h-3 w-3 mr-0.5" />
                             {p.assigned_branch_city_state || p.assigned_branch || '—'}
+                          </TableCell>
+                          <TableCell numeric className="text-xs">
+                            {p.serviceable_sqft != null
+                              ? p.serviceable_sqft.toLocaleString()
+                              : '—'}
                           </TableCell>
                           <TableCell numeric className="text-xs">
                             {p.miles_to_branch != null ? `${p.miles_to_branch} mi` : '—'}
