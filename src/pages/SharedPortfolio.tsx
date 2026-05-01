@@ -62,7 +62,7 @@ export default function SharedPortfolioPage() {
               <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" />
               </svg>
-              RBM Geo
+              PortfolioIQ
             </div>
             <h1 className="text-xl font-bold text-gray-900">{portfolio.name}</h1>
             {portfolio.description && <p className="text-gray-500 text-sm">{portfolio.description}</p>}
