@@ -88,6 +88,7 @@ export default function CycleDetailPage() {
   const [templateCrewCount, setTemplateCrewCount] = useState<number | null>(null)
   const [templateUnplaced, setTemplateUnplaced] = useState<Array<{
     service_location_id?: string
+    property_id?: string
     address?: string
     reason?: string
     detail?: string
@@ -519,13 +520,22 @@ export default function CycleDetailPage() {
                       </ul>
                     </div>
                   )}
-                  <ul className="mt-2 max-h-48 overflow-y-auto rounded border border-border bg-surface divide-y divide-border">
+                  <ul className="mt-2 max-h-64 overflow-y-auto rounded border border-border bg-surface divide-y divide-border">
                     {templateUnplaced.map((u, i) => (
-                      <li key={u.service_location_id ?? i} className="px-2 py-1">
-                        <p className="font-medium text-fg truncate">
-                          {u.address ?? u.service_location_id ?? '—'}
-                        </p>
-                        <p className="text-[11px] text-fg-muted truncate">
+                      <li key={u.service_location_id ?? i} className="px-2 py-1.5">
+                        {u.property_id ? (
+                          <Link
+                            to={`/properties/${u.property_id}`}
+                            className="font-medium text-accent hover:underline"
+                          >
+                            {u.address ?? u.service_location_id ?? '—'}
+                          </Link>
+                        ) : (
+                          <p className="font-medium text-fg">
+                            {u.address ?? u.service_location_id ?? '—'}
+                          </p>
+                        )}
+                        <p className="text-[11px] text-fg-muted">
                           {u.detail ?? u.reason ?? 'unknown'}
                         </p>
                       </li>

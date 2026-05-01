@@ -289,12 +289,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
 
     if (propertiesMissingCoords.length > 0) {
+      const missingPropIds = Array.from(
+        new Set(propertiesMissingCoords.map((p) => p.property_id))
+      )
+      const enrichmentInfo = new Map<string, { status: string | null; errors: any; last: string | null }>()
+      for (let i = 0; i < missingPropIds.length; i += 250) {
+        const chunk = missingPropIds.slice(i, i + 250)
+        const { data } = await db
+          .from('properties')
+          .select('id, enrichment_status, enrichment_errors, last_enriched_at')
+          .in('id', chunk)
+        for (const r of (data ?? []) as any[]) {
+          enrichmentInfo.set(r.id, {
+            status: r.enrichment_status ?? null,
+            errors: r.enrichment_errors ?? null,
+            last: r.last_enriched_at ?? null,
+          })
+        }
+      }
+      const formatErr = (info: { status: string | null; errors: any; last: string | null } | undefined) => {
+        if (!info) return 'No enrichment record found for this property.'
+        const errMsg =
+          info.errors?.geocode ??
+          info.errors?.error ??
+          (typeof info.errors === 'string' ? info.errors : null)
+        const stamp = info.last ? ` (last attempted ${info.last.slice(0, 10)})` : ''
+        if (info.status === 'failed') {
+          return `Enrichment failed${stamp}: ${errMsg ?? 'unknown error — re-run enrichment to capture details.'}`
+        }
+        if (info.status === 'pending') {
+          return `Pending enrichment — never been geocoded${stamp}. Run enrichment from the Map page or property detail.`
+        }
+        return `Status: ${info.status ?? 'unknown'}${stamp}. ${errMsg ?? 'No coordinates and no error logged — likely never enriched.'}`
+      }
       const missingUnplaced = propertiesMissingCoords.map((p) => ({
         service_location_id: p.service_location_id,
         property_id: p.property_id,
         address: p.address,
         reason: 'not_geocoded',
-        detail: 'Property has no latitude/longitude — geocode the address before this property can be routed.',
+        detail: formatErr(enrichmentInfo.get(p.property_id)),
       }))
       result.unplaced_visits = [...(result.unplaced_visits ?? []), ...missingUnplaced]
       result.total_visits_required_per_cycle += propertiesMissingCoords.length
