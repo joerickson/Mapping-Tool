@@ -586,9 +586,27 @@ export default function CycleDetailPage() {
 
               {allDropped.length > 0 && (
                 <details className="text-xs">
-                  <summary className="cursor-pointer text-accent hover:underline">
-                    Show {allDropped.length} dropped propert
-                    {allDropped.length === 1 ? 'y' : 'ies'}
+                  <summary className="cursor-pointer text-accent hover:underline flex items-center justify-between gap-3">
+                    <span>
+                      Show {allDropped.length} dropped propert
+                      {allDropped.length === 1 ? 'y' : 'ies'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        const lines = allDropped
+                          .map((u) => `${u.address}\t${u.reason}`)
+                          .join('\n')
+                        navigator.clipboard?.writeText(
+                          `Address\tReason\n${lines}`
+                        )
+                      }}
+                      className="rounded border border-border bg-surface px-2 py-0.5 text-[11px] text-fg hover:bg-surface-muted"
+                    >
+                      Copy list
+                    </button>
                   </summary>
                   {reasonRows.length > 0 && (
                     <div className="mt-2 rounded border border-border bg-surface px-2 py-1.5">
