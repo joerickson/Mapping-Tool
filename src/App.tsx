@@ -38,6 +38,7 @@ import NewTemplatePage from './pages/accounts/scheduler/NewTemplate'
 import TemplateDetailPage from './pages/accounts/scheduler/TemplateDetail'
 import CycleComparePage from './pages/accounts/scheduler/CycleCompare'
 import CycleDetailPage from './pages/accounts/scheduler/CycleDetail'
+import TravelPlannerPage from './pages/accounts/TravelPlanner'
 import NewAccountClientPage from './pages/accounts/NewAccountClient'
 import ClientsListPage from './pages/clients/ClientsList'
 import NewClientPage from './pages/clients/NewClient'
@@ -169,6 +170,10 @@ export default function App() {
           <Route
             path="/accounts/:accountId/clients/:clientId/scheduler/compare"
             element={<AuthGuard><CycleComparePage /></AuthGuard>}
+          />
+          <Route
+            path="/accounts/:accountId/clients/:clientId/travel"
+            element={<AuthGuard><TravelPlannerPage /></AuthGuard>}
           />
           <Route path="/accounts/:id/clients/new" element={<AuthGuard><NewAccountClientPage /></AuthGuard>} />
 
