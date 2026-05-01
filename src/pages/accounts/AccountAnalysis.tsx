@@ -1109,6 +1109,7 @@ export default function AccountAnalysisPage() {
               existingBranches={existingBranches}
               referenceCentroids={modalCentroids}
               sourceAnalysisId={modalSourceAnalysisId}
+              prefillSelection={selectedBranches ?? undefined}
               onConfirm={handleConfirmSelection}
             />
           )}

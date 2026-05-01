@@ -58,6 +58,11 @@ interface Props {
   existingBranches: ExistingBranch[]
   referenceCentroids: ReferenceCentroid[]
   sourceAnalysisId: string | null
+  // When the user is SWITCHING K (already has a selection), carry
+  // their current branches into the modal as the starting rows so they
+  // don't have to re-pick from scratch. Locked infrastructure rows
+  // still come first; current selection fills the editable rows.
+  prefillSelection?: SelectedBranch[]
   onConfirm: (payload: {
     k: number
     branches: SelectedBranch[]
@@ -87,6 +92,7 @@ export default function BuildSelectionModal({
   existingBranches,
   referenceCentroids,
   sourceAnalysisId,
+  prefillSelection,
   onConfirm,
 }: Props) {
   const initialRows = useMemo<RowDraft[]>(() => {
@@ -109,6 +115,23 @@ export default function BuildSelectionModal({
         },
       })
     }
+    // After locked infrastructure rows, carry over the user's current
+    // selection (skipping any already in existingBranches by name) so
+    // a K-switch doesn't lose their work. They can edit any of these
+    // rows afterward.
+    if (prefillSelection && prefillSelection.length > 0) {
+      const lockedNames = new Set(
+        existingBranches.map((b) => (b.name ?? '').toLowerCase())
+      )
+      for (const sel of prefillSelection) {
+        if (rows.length >= k) break
+        if (lockedNames.has((sel.name ?? '').toLowerCase())) continue
+        rows.push({
+          kind: 'filled',
+          branch: { ...sel },
+        })
+      }
+    }
     while (rows.length < k) rows.push({ kind: 'empty' })
     if (k === 1 && rows[0]?.kind === 'filled') {
       rows[0] = {
@@ -117,7 +140,7 @@ export default function BuildSelectionModal({
       }
     }
     return rows
-  }, [existingBranches, k])
+  }, [existingBranches, prefillSelection, k])
 
   const [rows, setRows] = useState<RowDraft[]>(initialRows)
   const [activePicker, setActivePicker] = useState<number | null>(null)
