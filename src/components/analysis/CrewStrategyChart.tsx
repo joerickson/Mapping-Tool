@@ -52,6 +52,7 @@ interface BranchUtilRow {
 interface CrewOption {
   label: string
   crew_count: number
+  crew_count_ceiling?: number
   crew_count_optimistic?: number
   surge_crew_count?: number
   surge_weeks?: number
@@ -360,17 +361,19 @@ export default function CrewStrategyChart({
           </p>
           <p className="mt-1 text-sm text-fg">
             <span className="font-tabular font-semibold">
-              {data.crew_count_analysis.conservative.crews_needed} crews
+              {data.crew_count_analysis.optimistic.crews_needed} crews
             </span>{' '}
-            assuming 1 building/day
-            {data.crew_count_analysis.optimistic.crews_needed !==
-              data.crew_count_analysis.conservative.crews_needed && (
+            recommended (small buildings paired)
+            {data.crew_count_analysis.conservative.crews_needed !==
+              data.crew_count_analysis.optimistic.crews_needed && (
               <>
-                {' — drops to '}
-                <span className="font-tabular font-semibold">
-                  {data.crew_count_analysis.optimistic.crews_needed}
+                {' — '}
+                <span className="font-tabular">
+                  {data.crew_count_analysis.conservative.crews_needed}
                 </span>{' '}
-                if dispatchers pair up small (≤4 hr) buildings 2-per-day
+                <span className="text-fg-muted">
+                  if dispatch can&apos;t pair adjacent small (≤4 hr) buildings
+                </span>
               </>
             )}
           </p>
@@ -684,14 +687,16 @@ export default function CrewStrategyChart({
             <dl className="my-3 grid grid-cols-2 gap-3 border-y border-border py-3 text-sm">
               <Stat label="Crews">
                 <span className="font-tabular">{o.crew_count}</span>
-                {o.crew_count_optimistic != null &&
-                  o.crew_count_optimistic !== o.crew_count && (
+                {o.crew_count_ceiling != null &&
+                  o.crew_count_ceiling !== o.crew_count && (
                     <span
                       className="text-fg-muted text-xs"
-                      title={`Optimistic count assumes small buildings (≤4 work-hours each) get paired so a crew handles two of them in one day. ${o.crew_count_optimistic} is the floor if your dispatchers consistently pair them; ${o.crew_count} is the ceiling without pairing.`}
+                      title={`Recommended count assumes small buildings (≤4 work-hours each) get paired so a crew handles two of them in one day. Ceiling is what you'd need if pairing isn't realized.`}
                     >
                       {' '}
-                      (down to <span className="font-tabular">{o.crew_count_optimistic}</span> if small buildings are paired)
+                      <span className="text-fg-subtle">
+                        (up to {o.crew_count_ceiling} without pairing)
+                      </span>
                     </span>
                   )}
                 {o.surge_crew_count ? (
