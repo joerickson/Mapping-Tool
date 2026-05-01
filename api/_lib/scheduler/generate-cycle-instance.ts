@@ -10,6 +10,7 @@
 // this cycle's visit).
 import type { SupabaseClient } from '@supabase/supabase-js'
 import crypto from 'crypto'
+import { haversineMiles, driveTimeMinutes } from '../analysis/haversine.js'
 
 interface GenerateOptions {
   applyTemplateChanges?: boolean
@@ -225,32 +226,40 @@ export async function generateCycleInstance(
     }
   }
 
-  // Phase 4.4-fix — overflow visits (workday past cycle_end_date) get
-  // surfaced as unplaced so the operator knows the engine couldn't
-  // squeeze them in. They have valid stop data (property_id, hours, etc.)
-  // so we can build full unplaced rows.
+  // ── Build unified candidate list of unplaced visits ───────────────
+  // We collect ALL unplaced candidates from BOTH sources (template-
+  // build overflow + cycle-gen workday overflow) into one list, then
+  // try gap-fill BEFORE deciding which become unplaced rows. The rule:
+  // unplaced + idle days simultaneously is unacceptable. If a visit
+  // can fit in an idle slot economically (drive + work fits the day),
+  // it gets placed there.
+  type UnplacedCandidate = {
+    service_location_id: string
+    property_id: string
+    reason: string
+    hours_base: number
+    hours_total: number
+    visit_number: number
+  }
+  const candidates: UnplacedCandidate[] = []
+
   for (const ov of overflowVisits) {
     if (!ov.stop?.property_id || !ov.stop?.service_location_id) continue
-    scheduledVisits.push({
-      cycle_instance_id: cycleInstanceId,
-      template_id: templateId,
+    const baseH = ov.stop.hours_per_visit_base ?? 0
+    const addonH = (ov.stop.attached_addons ?? []).reduce(
+      (s: number, a: any) => s + (a.hours ?? 0),
+      0
+    )
+    candidates.push({
       service_location_id: ov.stop.service_location_id,
       property_id: ov.stop.property_id,
-      visit_number_in_cycle: ov.stop.visit_number_in_cycle ?? 1,
-      status: 'unplaced',
-      unplaced_reason: `Trip "${ov.tripLabel}" extended past cycle end (target workday mapped to ${ov.scheduledDate}). Add a crew, extend the cycle, or rebalance to fit this visit.`,
-      hours_per_visit_base: ov.stop.hours_per_visit_base ?? 0,
-      hours_per_visit_total:
-        (ov.stop.hours_per_visit_base ?? 0) +
-        ((ov.stop.attached_addons ?? []).reduce((s: number, a: any) => s + (a.hours ?? 0), 0)),
+      reason: `Trip "${ov.tripLabel}" extended past cycle end (target workday mapped to ${ov.scheduledDate}).`,
+      hours_base: baseH,
+      hours_total: baseH + addonH,
+      visit_number: ov.stop.visit_number_in_cycle ?? 1,
     })
   }
 
-  // Surface unplaced visits as scheduled_visits with status='unplaced'.
-  // Older templates (pre-fix) may be missing property_id on unplaced
-  // entries; look them up from service_locations rather than fall back
-  // to the SL id (which violates the property_id FK and rolls back the
-  // entire batch insert via Postgres single-statement semantics).
   const unplacedRaw = (template.unplaced_visits ?? []) as any[]
   const slIdsNeedingPropId = unplacedRaw
     .filter((u) => u.service_location_id && !u.property_id)
@@ -268,24 +277,249 @@ export async function generateCycleInstance(
   for (const u of unplacedRaw) {
     if (!u.service_location_id) continue
     const propertyId = u.property_id ?? propIdBySlId.get(u.service_location_id)
-    if (!propertyId) {
-      // Skip rather than break the whole batch with a bad FK.
-      console.warn(
-        `[generate-cycle] skipping unplaced visit for SL ${u.service_location_id}: no property_id resolvable`
-      )
+    if (!propertyId) continue
+    candidates.push({
+      service_location_id: u.service_location_id,
+      property_id: propertyId,
+      reason: u.detail ?? u.reason ?? 'unknown',
+      hours_base: 0,
+      hours_total: 0,
+      visit_number: 1,
+    })
+  }
+
+  // ── Gap-fill: assign each unplaced candidate to an idle workday ───
+  // Look at every crew's idle workdays in this cycle. For each
+  // candidate, find the (crew, day) pair that fits within work hours
+  // (2 × drive + property work ≤ work_hours_per_day) and minimizes
+  // drive cost. If found, schedule it. Otherwise the candidate stays
+  // unplaced.
+  const cfg = (template.config ?? {}) as Record<string, unknown>
+  const driveSpeed = (cfg.drive_speed_mph as number) ?? 60
+  const workHoursPerDay = (cfg.hours_per_day as number) ?? 10
+  const workMinutesPerDay = workHoursPerDay * 60
+
+  // Crew → branch coords. Pull from the first crew_day_route for that
+  // crew (start_location). Falls back to cycle_instance_id's template
+  // branches if no routes were created for that crew.
+  const branchByCrewIdx = new Map<number, { lat: number; lng: number; name: string }>()
+  for (const cd of crewDayRoutes) {
+    if (branchByCrewIdx.has(cd.crew_index)) continue
+    const sl = cd.start_location ?? null
+    if (sl && typeof sl.lat === 'number' && typeof sl.lng === 'number') {
+      branchByCrewIdx.set(cd.crew_index, {
+        lat: sl.lat,
+        lng: sl.lng,
+        name: sl.name ?? `Crew ${cd.crew_index + 1}`,
+      })
+    }
+  }
+  // For crews with no routes at all (empty crews), use template branches
+  // round-robin so they're still candidates for gap-fill.
+  const tplBranches = (template.branches ?? []) as Array<{
+    name?: string
+    lat?: number
+    lng?: number
+  }>
+  const declaredCrewCount = (template.crew_count as number) ?? branchByCrewIdx.size
+  for (let i = 0; i < declaredCrewCount; i++) {
+    if (branchByCrewIdx.has(i)) continue
+    const b = tplBranches[i % Math.max(1, tplBranches.length)]
+    if (b && typeof b.lat === 'number' && typeof b.lng === 'number') {
+      branchByCrewIdx.set(i, { lat: b.lat, lng: b.lng, name: b.name ?? `Branch ${i}` })
+    }
+  }
+
+  // Build the workday calendar (M-F) and idle day set per crew.
+  const cycleStart = startDate
+  const cycleEnd = endDate
+  const workdays: string[] = []
+  {
+    const [y, m, d] = cycleStart.split('-').map(Number)
+    const dt = new Date(Date.UTC(y, m - 1, d))
+    const [ey, em, ed] = cycleEnd.split('-').map(Number)
+    const endDt = new Date(Date.UTC(ey, em - 1, ed))
+    while (dt <= endDt) {
+      const dow = dt.getUTCDay()
+      if (dow !== 0 && dow !== 6) {
+        workdays.push(dt.toISOString().slice(0, 10))
+      }
+      dt.setUTCDate(dt.getUTCDate() + 1)
+    }
+  }
+  const usedByCrew = new Map<number, Set<string>>()
+  for (const cd of crewDayRoutes) {
+    const set = usedByCrew.get(cd.crew_index) ?? new Set<string>()
+    set.add(cd.scheduled_date)
+    usedByCrew.set(cd.crew_index, set)
+  }
+  const idleByCrew = new Map<number, string[]>()
+  for (const idx of branchByCrewIdx.keys()) {
+    const used = usedByCrew.get(idx) ?? new Set()
+    idleByCrew.set(idx, workdays.filter((d) => !used.has(d)))
+  }
+
+  // Look up coords + addresses for candidates.
+  let propsByIdMap = new Map<string, { lat: number | null; lng: number | null; address: string | null }>()
+  if (candidates.length > 0) {
+    const propIds = Array.from(new Set(candidates.map((c) => c.property_id)))
+    for (let i = 0; i < propIds.length; i += 250) {
+      const chunk = propIds.slice(i, i + 250)
+      const { data } = await db
+        .from('properties')
+        .select('id, latitude, longitude, address_line1')
+        .in('id', chunk)
+      for (const r of (data ?? []) as any[]) {
+        propsByIdMap.set(r.id, {
+          lat: r.latitude,
+          lng: r.longitude,
+          address: r.address_line1,
+        })
+      }
+    }
+  }
+
+  // Greedy gap-fill: for each candidate, find the (crew, day) that
+  // minimizes total day minutes (2×drive + work). Reject slots that
+  // don't fit in workMinutesPerDay.
+  let gapFilled = 0
+  let gapRejected = 0
+  for (const cand of candidates) {
+    const prop = propsByIdMap.get(cand.property_id)
+    if (!prop || prop.lat == null || prop.lng == null) {
+      // Can't gap-fill without coords — push as unplaced.
+      scheduledVisits.push({
+        cycle_instance_id: cycleInstanceId,
+        template_id: templateId,
+        service_location_id: cand.service_location_id,
+        property_id: cand.property_id,
+        visit_number_in_cycle: cand.visit_number,
+        status: 'unplaced',
+        unplaced_reason: cand.reason,
+        hours_per_visit_base: cand.hours_base,
+        hours_per_visit_total: cand.hours_total,
+      })
       continue
     }
+
+    const propWorkMin = Math.max(1, Math.round(cand.hours_total * 60))
+
+    let best: {
+      crewIdx: number
+      branch: { lat: number; lng: number; name: string }
+      date: string
+      driveMin: number
+      distMi: number
+      totalMin: number
+    } | null = null
+
+    for (const [crewIdx, idleDays] of idleByCrew) {
+      const branch = branchByCrewIdx.get(crewIdx)!
+      const distMi = haversineMiles(
+        { lat: prop.lat, lng: prop.lng },
+        { lat: branch.lat, lng: branch.lng }
+      )
+      const driveMin = driveTimeMinutes(distMi, driveSpeed)
+      const totalMin = 2 * driveMin + propWorkMin
+      if (totalMin > workMinutesPerDay) continue
+      if (idleDays.length === 0) continue
+      // Earliest idle day on this crew is the cheapest slot for them.
+      const date = idleDays[0]
+      if (!best || totalMin < best.totalMin) {
+        best = { crewIdx, branch, date, driveMin, distMi, totalMin }
+      }
+    }
+
+    if (!best) {
+      gapRejected++
+      scheduledVisits.push({
+        cycle_instance_id: cycleInstanceId,
+        template_id: templateId,
+        service_location_id: cand.service_location_id,
+        property_id: cand.property_id,
+        visit_number_in_cycle: cand.visit_number,
+        status: 'unplaced',
+        unplaced_reason:
+          `${cand.reason} (Gap-fill checked all ${idleByCrew.size} crews and found no idle workday where 2×drive + work fits the ${workHoursPerDay}h day.)`,
+        hours_per_visit_base: cand.hours_base,
+        hours_per_visit_total: cand.hours_total,
+      })
+      continue
+    }
+
+    // Place it. Build a synthetic single-stop crew_day_route + a
+    // status='placed' scheduled_visit. Mark the slot as used so a
+    // subsequent candidate can't take the same day on the same crew.
+    const newRouteId = crypto.randomUUID()
+    const arrivalMin = 8 * 60 + best.driveMin // assume 08:00 start
+    const departureMin = arrivalMin + propWorkMin
+    const fmt = (mins: number) => {
+      const h = Math.floor(mins / 60)
+      const m = mins % 60
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+    }
+
+    crewDayRoutes.push({
+      id: newRouteId,
+      cycle_instance_id: cycleInstanceId,
+      template_id: templateId,
+      trip_id: `gapfill-${best.crewIdx}-${best.date}`,
+      trip_label: `Gap-fill: ${prop.address ?? cand.property_id.slice(0, 8)}`,
+      crew_index: best.crewIdx,
+      crew_label: best.branch.name,
+      scheduled_date: best.date,
+      day_type: 'local',
+      start_location: best.branch,
+      end_location: best.branch,
+      route: [
+        {
+          sequence: 1,
+          service_location_id: cand.service_location_id,
+          property_id: cand.property_id,
+          address: prop.address ?? '',
+          arrival_time: fmt(arrivalMin),
+          departure_time: fmt(departureMin),
+          drive_minutes_from_previous: best.driveMin,
+          drive_distance_miles_from_previous: Math.round(best.distMi * 10) / 10,
+          work_minutes: propWorkMin,
+          constraint_violations: [],
+        },
+      ],
+      total_drive_minutes: 2 * best.driveMin,
+      total_work_minutes: propWorkMin,
+      total_buffer_minutes: 0,
+      total_day_minutes: best.totalMin,
+      total_drive_miles: Math.round(best.distMi * 2 * 10) / 10,
+      trip_day_number: 1,
+      trip_total_days: 1,
+    })
+
     scheduledVisits.push({
       cycle_instance_id: cycleInstanceId,
       template_id: templateId,
-      service_location_id: u.service_location_id,
-      property_id: propertyId,
-      visit_number_in_cycle: 1,
-      status: 'unplaced',
-      unplaced_reason: u.detail ?? u.reason,
-      hours_per_visit_base: 0,
-      hours_per_visit_total: 0,
+      service_location_id: cand.service_location_id,
+      property_id: cand.property_id,
+      visit_number_in_cycle: cand.visit_number,
+      crew_day_route_id: newRouteId,
+      scheduled_date: best.date,
+      arrival_time: fmt(arrivalMin),
+      departure_time: fmt(departureMin),
+      sequence_in_day: 1,
+      hours_per_visit_base: cand.hours_base,
+      hours_per_visit_total: cand.hours_total,
+      status: 'placed',
     })
+
+    // Consume this slot so the next candidate doesn't double-book it.
+    const remaining = (idleByCrew.get(best.crewIdx) ?? []).filter((d) => d !== best.date)
+    idleByCrew.set(best.crewIdx, remaining)
+    gapFilled++
+  }
+
+  if (gapFilled > 0) {
+    console.log(
+      `[generate-cycle] gap-fill placed ${gapFilled} previously-unplaced visit(s) onto idle workdays; ${gapRejected} couldn't fit any idle slot.`
+    )
   }
 
   // Bulk-insert in chunks. THROW on failure rather than swallow — a
