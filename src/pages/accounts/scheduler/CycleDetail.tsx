@@ -83,6 +83,8 @@ export default function CycleDetailPage() {
   const [optimizationScore, setOptimizationScore] = useState<number | null>(null)
   const [pacing, setPacing] = useState<any | null>(null)
   const [pacingWarnings, setPacingWarnings] = useState<Array<{ type: string; message: string }>>([])
+  const [templateRequiredVisits, setTemplateRequiredVisits] = useState<number | null>(null)
+  const [templateCrewCount, setTemplateCrewCount] = useState<number | null>(null)
   const [branches, setBranches] = useState<Array<{ name: string; lat: number; lng: number }>>([])
   const [selectedVisitIds, setSelectedVisitIds] = useState<Set<string>>(new Set())
 
@@ -116,6 +118,10 @@ export default function CycleDetailPage() {
           setPacingWarnings(
             Array.isArray(tpl.template?.warnings) ? tpl.template.warnings : []
           )
+          setTemplateRequiredVisits(
+            tpl.template?.total_visits_required_per_cycle ?? null
+          )
+          setTemplateCrewCount(tpl.template?.crew_count ?? null)
           setBranches(
             (tpl.template?.branches ?? []).map((b: any) => ({
               name: b.name,
@@ -424,6 +430,54 @@ export default function CycleDetailPage() {
             is open. Triggered automatically after auto-generation; can
             be re-run on demand. */}
         <PreflightIssuesBanner cycleId={cycle.id} />
+
+        {/* Phase 4.4 — schedule-coverage banner. Critical for scenario
+            analysis (e.g. did reducing crew_count from 4 to 3 silently
+            drop properties?). Compares visits in the cycle against the
+            template's expected count and surfaces unplaced rows. */}
+        {(() => {
+          const placedCount = placedVisits.length + completedVisits.length
+          const unplacedCount = unplacedVisits.length
+          const inCycle = visits.length
+          const requiredTotal = templateRequiredVisits ?? inCycle
+          const missingFromCycle = Math.max(0, requiredTotal - inCycle)
+          const totalMissing = missingFromCycle + unplacedCount
+          if (totalMissing === 0) return null
+          const tone = totalMissing > placedCount * 0.05 ? 'danger' : 'warning'
+          const wrap =
+            tone === 'danger'
+              ? 'border-danger/40 bg-danger-subtle text-fg'
+              : 'border-warning/40 bg-warning-subtle text-fg'
+          return (
+            <div className={`rounded-md border px-4 py-3 ${wrap}`}>
+              <p className="text-sm font-semibold">
+                ⚠ {totalMissing} of {requiredTotal} visit
+                {requiredTotal === 1 ? '' : 's'} couldn't be scheduled
+                {templateCrewCount != null ? ` with crew_count=${templateCrewCount}` : ''}.
+              </p>
+              <ul className="mt-1.5 text-xs text-fg-muted space-y-0.5">
+                {missingFromCycle > 0 && (
+                  <li>
+                    <span className="font-tabular font-medium text-fg">{missingFromCycle}</span>{' '}
+                    were dropped before reaching the cycle (template build couldn't fit them).
+                  </li>
+                )}
+                {unplacedCount > 0 && (
+                  <li>
+                    <span className="font-tabular font-medium text-fg">{unplacedCount}</span>{' '}
+                    landed in the cycle as <code className="rounded bg-surface-subtle px-1 text-[11px]">unplaced</code>{' '}
+                    — see them in the visits list filtered by status.
+                  </li>
+                )}
+                <li className="mt-1">
+                  Try adding a crew, extending the cycle, or removing
+                  constraints. For scenario analysis, this is the headline
+                  number — record it before changing crew_count again.
+                </li>
+              </ul>
+            </div>
+          )
+        })()}
 
         {/* Polished summary cards (4 across). Color-coded for at-a-
             glance status. */}
