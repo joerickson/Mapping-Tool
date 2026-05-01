@@ -259,7 +259,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           (r.sl as any).building_size_class_override ?? null,
         eligible_addons: eligibleAddons,
       }
-    }).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
+    })
+
+    // Capture properties that have no lat/lng — they can't enter the
+    // routing engine but the operator needs to see them in the cycle's
+    // unplaced list with a clear reason. Previously these were filtered
+    // out silently and the user couldn't tell why N properties were
+    // missing from the cycle.
+    const propertiesMissingCoords = propertiesForBuild.filter(
+      (p) => !Number.isFinite(p.lat) || !Number.isFinite(p.lng)
+    )
+    const propertiesForEngine = propertiesForBuild.filter(
+      (p) => Number.isFinite(p.lat) && Number.isFinite(p.lng)
+    )
 
     // Insert template row up front in 'optimizing' state.
     const cycleStartYear = (body.cycle_start_year as number | undefined) ?? new Date().getUTCFullYear()
@@ -320,7 +332,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const result = buildRoutingTemplate({
         account_id: accountId,
         client_id: clientId,
-        routed_properties: propertiesForBuild,
+        routed_properties: propertiesForEngine,
         branches,
         crew_count: crewCount,
         config: cfg,
@@ -332,6 +344,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         },
         cycle_start_year: cycleStartYear,
       })
+
+      // Splice in the missing-coords properties so the cycle UI surfaces
+      // them. They never reached the engine — the user needs to know
+      // because the only fix is geocoding the address.
+      if (propertiesMissingCoords.length > 0) {
+        const missingUnplaced = propertiesMissingCoords.map((p) => ({
+          service_location_id: p.service_location_id,
+          property_id: p.property_id,
+          address: p.address,
+          reason: 'not_geocoded',
+          detail: 'Property has no latitude/longitude — geocode the address before this property can be routed.',
+        }))
+        result.unplaced_visits = [...(result.unplaced_visits ?? []), ...missingUnplaced]
+        result.total_visits_required_per_cycle += propertiesMissingCoords.length
+      }
 
       const status = result.total_visits_per_cycle === 0 ? 'failed' : 'active'
       await db

@@ -238,7 +238,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         (r.sl as any).building_size_class_override ?? null,
       eligible_addons: eligibleAddons,
     }
-  }).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
+  })
+
+  // Same split as the create path: missing-coords properties get
+  // surfaced as unplaced rather than silently dropped.
+  const propertiesMissingCoords = propertiesForBuild.filter(
+    (p) => !Number.isFinite(p.lat) || !Number.isFinite(p.lng)
+  )
+  const propertiesForEngine = propertiesForBuild.filter(
+    (p) => Number.isFinite(p.lat) && Number.isFinite(p.lng)
+  )
 
   try {
     const tplConfig = (tpl.config ?? {}) as Record<string, unknown>
@@ -266,7 +275,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const result = buildRoutingTemplate({
       account_id: accountId,
       client_id: clientId,
-      routed_properties: propertiesForBuild,
+      routed_properties: propertiesForEngine,
       branches,
       crew_count: crewCount,
       config: cfg as any,
@@ -278,6 +287,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
       cycle_start_year: new Date().getUTCFullYear(),
     })
+
+    if (propertiesMissingCoords.length > 0) {
+      const missingUnplaced = propertiesMissingCoords.map((p) => ({
+        service_location_id: p.service_location_id,
+        property_id: p.property_id,
+        address: p.address,
+        reason: 'not_geocoded',
+        detail: 'Property has no latitude/longitude — geocode the address before this property can be routed.',
+      }))
+      result.unplaced_visits = [...(result.unplaced_visits ?? []), ...missingUnplaced]
+      result.total_visits_required_per_cycle += propertiesMissingCoords.length
+    }
 
     const status = result.total_visits_per_cycle === 0 ? 'failed' : 'active'
     await db
