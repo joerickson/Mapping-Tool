@@ -207,6 +207,7 @@ export interface TemplateBuildResult {
     assigned_branch_idx: number
     transferred: boolean
     overridden: boolean
+    is_remote: boolean
   }>
 }
 
@@ -573,6 +574,35 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
         assigned_branch_idx: assigned,
         transferred: assigned !== e.nearest_idx && assigned >= 0,
         overridden: overriddenIds.has(e.v.service_location_id),
+        is_remote: false,
+      })
+    }
+  }
+
+  // Include REMOTE properties in branch_assignments too so the UI count
+  // matches the total property count. Remotes always go to their
+  // nearest branch (no rebalance — the geography forces it). The UI
+  // disables override on these.
+  if (remote.length > 0 && input.branches.length > 0) {
+    for (const v of remote) {
+      let nearest = 0
+      let bestDist = Number.POSITIVE_INFINITY
+      for (let i = 0; i < input.branches.length; i++) {
+        const d = haversineMiles({ lat: v.lat, lng: v.lng }, input.branches[i])
+        if (d < bestDist) {
+          bestDist = d
+          nearest = i
+        }
+      }
+      branchAssignmentsOutput.push({
+        service_location_id: v.service_location_id,
+        property_id: v.property_id,
+        address: v.address,
+        nearest_branch_idx: nearest,
+        assigned_branch_idx: nearest,
+        transferred: false,
+        overridden: false,
+        is_remote: true,
       })
     }
   }
