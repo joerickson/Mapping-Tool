@@ -73,7 +73,7 @@ h1{color:#111827;margin:0 0 .5rem}p{color:#6b7280;margin:0}</style></head>
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>${portfolio.name} — RBM Geo</title>
+  <title>${portfolio.name} — PortfolioIQ</title>
   <link href="https://api.mapbox.com/mapbox-gl-js/v3.9.0/mapbox-gl.css" rel="stylesheet"/>
   <script src="https://api.mapbox.com/mapbox-gl-js/v3.9.0/mapbox-gl.js"></script>
   <style>

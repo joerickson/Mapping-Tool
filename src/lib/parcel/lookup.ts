@@ -299,9 +299,9 @@ async function checkAndNotifyThreshold(
       const { Resend } = await import('resend')
       const resend = new Resend(process.env.RESEND_API_KEY)
       await resend.emails.send({
-        from: 'RBM Geo <noreply@rbm-geo.com>',
+        from: 'PortfolioIQ <noreply@rbm-geo.com>',
         to: email,
-        subject: `[RBM Geo] Buy county alert: ${county_name ?? county_fips} (${state})`,
+        subject: `[PortfolioIQ] Buy county alert: ${county_name ?? county_fips} (${state})`,
         html: `
           <p>County <strong>${county_name ?? county_fips}</strong> (${state}) has exceeded
           ${FALLBACK_THRESHOLD} Regrid API fallback calls in the last 90 days.</p>
