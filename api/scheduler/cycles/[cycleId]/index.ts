@@ -13,18 +13,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'GET') {
     const { data: cycle } = await db.from('cycle_instances').select('*').eq('id', id).maybeSingle()
     if (!cycle) return res.status(404).json({ error: 'Cycle not found' })
-    const { data: visits } = await db
-      .from('scheduled_visits')
-      .select('*, service_locations(id, display_name, property:properties(id, address_line1, latitude, longitude))')
-      .eq('cycle_instance_id', id)
-      .order('scheduled_date', { ascending: true })
-    const { data: crewDays } = await db
-      .from('crew_day_routes')
-      .select('*')
-      .eq('cycle_instance_id', id)
-      .order('scheduled_date', { ascending: true })
-      .order('crew_index', { ascending: true })
-    return res.status(200).json({ cycle, visits: visits ?? [], crew_days: crewDays ?? [] })
+
+    // PostgREST silently caps a single fetch (this project's config caps
+    // around 500-1000 rows). For cycles with many visits/days we MUST
+    // page until we get a short batch back, otherwise the UI shows e.g.
+    // 500 of 509 visits with no error surfaced.
+    const PAGE = 1000
+    const MAX_PAGES = 50
+    const visits: any[] = []
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const from = page * PAGE
+      const to = from + PAGE - 1
+      const { data, error } = await db
+        .from('scheduled_visits')
+        .select('*, service_locations(id, display_name, property:properties(id, address_line1, latitude, longitude))')
+        .eq('cycle_instance_id', id)
+        .order('scheduled_date', { ascending: true })
+        .range(from, to)
+      if (error) return res.status(500).json({ error: error.message })
+      const batch = data ?? []
+      visits.push(...batch)
+      if (batch.length < PAGE) break
+    }
+    const crewDays: any[] = []
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const from = page * PAGE
+      const to = from + PAGE - 1
+      const { data, error } = await db
+        .from('crew_day_routes')
+        .select('*')
+        .eq('cycle_instance_id', id)
+        .order('scheduled_date', { ascending: true })
+        .order('crew_index', { ascending: true })
+        .range(from, to)
+      if (error) return res.status(500).json({ error: error.message })
+      const batch = data ?? []
+      crewDays.push(...batch)
+      if (batch.length < PAGE) break
+    }
+    return res.status(200).json({ cycle, visits, crew_days: crewDays })
   }
   if (req.method === 'PATCH') {
     const body = (req.body ?? {}) as Record<string, unknown>
