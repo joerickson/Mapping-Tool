@@ -5,6 +5,22 @@
 // can just read `constraints.crew_size` and always get a number.
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+// Phase 4.3 — client-level scheduling preferences. Drives the routing
+// engine's clustering radius and same-day pairing rules.
+export interface SchedulingPreferences {
+  cluster_radius_miles: number
+  pairing_max_drive_minutes: number
+  pairing_max_combined_sqft: number
+  pairing_max_buildings_per_day: number
+}
+
+export const SCHEDULING_PREFERENCES_DEFAULTS: SchedulingPreferences = {
+  cluster_radius_miles: 30,
+  pairing_max_drive_minutes: 30,
+  pairing_max_combined_sqft: 20000,
+  pairing_max_buildings_per_day: 2,
+}
+
 export interface HotelCostConfig {
   cost_per_night: number
   overnight_trigger_one_way_hours: number
@@ -197,6 +213,9 @@ export interface OperationalConstraints {
     scope: 'per_branch' | 'per_region' | 'portfolio'
   }
 
+  // Phase 4.3 — scheduling preferences flowed into the routing engine.
+  scheduling_preferences: SchedulingPreferences
+
   // Phase 4.2 — user picks one of A/B/C from Crew Strategy as the
   // "active" option flowed into Bid Pricing, Workforce Sizing, and
   // Seasonality. Null = use analysis's recommended_option.
@@ -341,6 +360,30 @@ function clone<T>(o: T): T {
   return JSON.parse(JSON.stringify(o)) as T
 }
 
+function mergeSchedulingPreferences(saved: any): SchedulingPreferences {
+  if (!saved || typeof saved !== 'object') {
+    return { ...SCHEDULING_PREFERENCES_DEFAULTS }
+  }
+  return {
+    cluster_radius_miles:
+      typeof saved.cluster_radius_miles === 'number'
+        ? saved.cluster_radius_miles
+        : SCHEDULING_PREFERENCES_DEFAULTS.cluster_radius_miles,
+    pairing_max_drive_minutes:
+      typeof saved.pairing_max_drive_minutes === 'number'
+        ? saved.pairing_max_drive_minutes
+        : SCHEDULING_PREFERENCES_DEFAULTS.pairing_max_drive_minutes,
+    pairing_max_combined_sqft:
+      typeof saved.pairing_max_combined_sqft === 'number'
+        ? saved.pairing_max_combined_sqft
+        : SCHEDULING_PREFERENCES_DEFAULTS.pairing_max_combined_sqft,
+    pairing_max_buildings_per_day:
+      typeof saved.pairing_max_buildings_per_day === 'number'
+        ? saved.pairing_max_buildings_per_day
+        : SCHEDULING_PREFERENCES_DEFAULTS.pairing_max_buildings_per_day,
+  }
+}
+
 function mergeHotelConfig(saved: any): HotelCostConfig {
   if (!saved || typeof saved !== 'object') return { ...HOTEL_COST_CONFIG_DEFAULTS }
   return {
@@ -474,6 +517,8 @@ export async function loadConstraints(
           | 'per_region'
           | 'portfolio') ?? 'per_branch',
     },
+
+    scheduling_preferences: mergeSchedulingPreferences(r?.scheduling_preferences),
 
     crew_strategy_selected_option:
       r?.crew_strategy_selected_option === 'A' ||

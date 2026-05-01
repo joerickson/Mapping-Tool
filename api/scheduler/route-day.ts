@@ -158,6 +158,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       lng: Number(prop?.longitude ?? NaN),
       hours_per_visit,
       visits_per_year,
+      // Phase 4.3 — full property sqft for the same-day pairing rule.
+      serviceable_sqft: totalSqft,
       constraints: constraintsBySl.get(sl.id) ?? [],
     }
   })

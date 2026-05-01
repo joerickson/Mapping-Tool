@@ -197,6 +197,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (body.vehicle_config && typeof body.vehicle_config === 'object') {
       upsert.vehicle_config = body.vehicle_config
     }
+    // Phase 4.3 — scheduling preferences (cluster radius + same-day pairing).
+    if (body.scheduling_preferences && typeof body.scheduling_preferences === 'object') {
+      upsert.scheduling_preferences = body.scheduling_preferences
+    }
     if ('vehicle_lease_annual_per_crew_override' in body) {
       const raw = body.vehicle_lease_annual_per_crew_override
       if (raw === null || raw === '' || raw === undefined) {
@@ -275,6 +279,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       'population_constraint',
       'utilization_constraint',
       'crew_count_per_branch_override',
+      'scheduling_preferences',
     ])
 
     const patch: Record<string, unknown> = {
