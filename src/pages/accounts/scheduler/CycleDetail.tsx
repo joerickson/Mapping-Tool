@@ -81,6 +81,8 @@ export default function CycleDetailPage() {
   const [view, setView] = useState<CycleViewKind>('gantt')
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [optimizationScore, setOptimizationScore] = useState<number | null>(null)
+  const [pacing, setPacing] = useState<any | null>(null)
+  const [pacingWarnings, setPacingWarnings] = useState<Array<{ type: string; message: string }>>([])
   const [branches, setBranches] = useState<Array<{ name: string; lat: number; lng: number }>>([])
   const [selectedVisitIds, setSelectedVisitIds] = useState<Set<string>>(new Set())
 
@@ -110,6 +112,10 @@ export default function CycleDetailPage() {
         if (tplRes.ok) {
           const tpl = await tplRes.json()
           setOptimizationScore(tpl.template?.optimization_score ?? null)
+          setPacing(tpl.template?.pacing_analysis ?? null)
+          setPacingWarnings(
+            Array.isArray(tpl.template?.warnings) ? tpl.template.warnings : []
+          )
           setBranches(
             (tpl.template?.branches ?? []).map((b: any) => ({
               name: b.name,
@@ -453,6 +459,57 @@ export default function CycleDetailPage() {
             tone={optimizationScore != null && optimizationScore >= 80 ? 'success' : 'default'}
           />
         </div>
+
+        {/* Phase 4.4 — pairing + pacing summary */}
+        {pacing && (
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <Stat
+              label="Pair rate"
+              value={`${pacing.pairing_stats?.pair_rate_pct ?? 0}%`}
+              sub={`${pacing.pairing_stats?.paired_days ?? 0} paired · ${pacing.pairing_stats?.single_stop_days ?? 0} single`}
+              tone={
+                (pacing.pairing_stats?.pair_rate_pct ?? 0) >= 40
+                  ? 'success'
+                  : (pacing.pairing_stats?.pair_rate_pct ?? 0) >= 20
+                    ? 'warning'
+                    : 'default'
+              }
+            />
+            <Stat
+              label="Crew end-day spread"
+              value={`${pacing.crew_end_workday_spread ?? 0} days`}
+              sub={`target ≤${pacing.target_spread_workdays ?? 10}`}
+              tone={
+                (pacing.crew_end_workday_spread ?? 0) <= (pacing.target_spread_workdays ?? 10)
+                  ? 'success'
+                  : 'warning'
+              }
+            />
+            <Stat
+              label="Crews used"
+              value={String((pacing.per_crew ?? []).length)}
+              sub={(pacing.per_crew ?? [])
+                .map((p: any) => `${p.crew_label ?? `Crew ${p.crew_index + 1}`}: ${p.pair_rate_pct}% paired`)
+                .join(' · ')}
+            />
+          </div>
+        )}
+
+        {pacingWarnings.length > 0 && (
+          <div className="space-y-2">
+            {pacingWarnings.map((w, i) => (
+              <div
+                key={i}
+                className="rounded-md border border-warning/30 bg-warning-subtle px-3 py-2 text-xs text-fg"
+              >
+                <span className="font-semibold">⚠ {w.message}</span>
+                {(w as any).suggested_action && (
+                  <span className="ml-1 text-fg-muted">— {(w as any).suggested_action}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* View switcher content */}
         {view === 'gantt' && (
