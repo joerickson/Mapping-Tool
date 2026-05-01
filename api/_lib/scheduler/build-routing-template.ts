@@ -838,7 +838,36 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
     }
   }
 
+  // Phase 4.5f — workday cap. cycle_length_days is in CALENDAR days
+  // (e.g. 365 for an annual cycle), but trip-build sequences trips
+  // by workday count. addWorkdays in cycle-gen maps workday N → the
+  // Nth Mon-Fri date from cycle.start_date, which is ~N × 7/5
+  // calendar days in. Without this conversion, trip-build thinks it
+  // has 365 workdays of room when really it has ~261, and the last
+  // ~104 workdays' worth of visits land past cycle_end_date and get
+  // silently dropped.
+  const cycleWorkdays = Math.max(1, Math.floor((cycleDays * 5) / 7))
+
   // ── 5. Sequence trips on cycle calendar ───────────────────────────
+  // Phase 4.5f — schedule REMOTE clusters first per crew. Overnight
+  // trips are multi-day contiguous blocks; if local trips eat up the
+  // early cycle workdays, the overnights end up landing past
+  // cycle_end_date and getting dropped (gap-fill can't recover them
+  // because it only handles single-day visits). Locals are more
+  // flexible — gap-fill catches single-day overflow on idle days
+  // from any crew. So overnights take priority for the early slots.
+  for (const crew of crews) {
+    crew.cluster_ids.sort((a, b) => {
+      const ca = clusters.find((c) => c.cluster_id === a)
+      const cb = clusters.find((c) => c.cluster_id === b)
+      const ar = ca?.cluster_type === 'remote' ? 0 : 1
+      const br = cb?.cluster_type === 'remote' ? 0 : 1
+      if (ar !== br) return ar - br
+      // Tiebreak: bigger clusters first within the same type.
+      return (cb?.total_work_hours ?? 0) - (ca?.total_work_hours ?? 0)
+    })
+  }
+
   const trips: any[] = []
   const unplaced: any[] = []
 
@@ -858,15 +887,17 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
         // since they're continuous work, not discrete visits.
         let tripStart: number
         if (cluster.cluster_type === 'remote') {
+          // Target the midpoint of each visit's segment of the cycle.
+          // Use cycleWorkdays here — tripStart is a workday count.
           const targetStart = Math.floor(
-            (cycleDays * (visitIdx + 0.5)) / cluster.trips_per_cycle
+            (cycleWorkdays * (visitIdx + 0.5)) / cluster.trips_per_cycle
           )
           tripStart = Math.max(targetStart, nextAvailableDay)
         } else {
           tripStart = nextAvailableDay
         }
         // Hard cap: trip can't run past the cycle window.
-        const maxDaysForTrip = Math.max(1, cycleDays - tripStart)
+        const maxDaysForTrip = Math.max(1, cycleWorkdays - tripStart)
 
         // Build per-day routes via routeDay(). Visits eligible for THIS
         // visit_index of THIS cluster:
@@ -1144,7 +1175,7 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
     list.sort((a, b) => (a.relative_start_day ?? 0) - (b.relative_start_day ?? 0))
     const naturalEnd = naturalEndByCrew.get(crewIdx) ?? 0
     if (naturalEnd >= latestNaturalEnd) continue
-    const slack = Math.min(latestNaturalEnd - naturalEnd, Math.max(0, cycleDays - naturalEnd))
+    const slack = Math.min(latestNaturalEnd - naturalEnd, Math.max(0, cycleWorkdays - naturalEnd))
     if (slack <= 0) continue
     // Distribute slack across the gaps after each trip except the last.
     // For N trips → N-1 gap slots; if there's 1 trip, just delay it.
