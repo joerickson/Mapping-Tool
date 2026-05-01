@@ -8,7 +8,7 @@
 // propose groupings the user can accept verbatim.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Plus, Sparkles, Trash2, Pencil, MapPin, Route } from 'lucide-react'
+import { Plus, Sparkles, Trash2, Pencil, MapPin, Route, Split } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import AppShell from '../../components/layout/AppShell'
 import Button from '../../components/ui/Button'
@@ -100,6 +100,7 @@ export default function TravelPlannerPage() {
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<ManualTripWithMetrics | null>(null)
   const [editingSuggestion, setEditingSuggestion] = useState<Suggestion | null>(null)
+  const [splitting, setSplitting] = useState<ManualTripWithMetrics | null>(null)
   const [suggestions, setSuggestions] = useState<Suggestion[] | null>(null)
   const [suggesting, setSuggesting] = useState(false)
   const [propertyFilter, setPropertyFilter] = useState('')
@@ -436,6 +437,16 @@ export default function TravelPlannerPage() {
                           </p>
                         </div>
                         <div className="flex gap-1">
+                          {t.property_count >= 2 && (
+                            <button
+                              type="button"
+                              onClick={() => setSplitting(t)}
+                              title="Split into multiple trips"
+                              className="text-fg-subtle hover:text-accent"
+                            >
+                              <Split className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => setEditing(t)}
@@ -649,6 +660,16 @@ export default function TravelPlannerPage() {
           setCreating(false)
           setEditing(null)
           setEditingSuggestion(null)
+          refresh()
+        }}
+      />
+
+      <SplitTripDialog
+        trip={splitting}
+        clientId={clientId!}
+        onClose={() => setSplitting(null)}
+        onSplit={() => {
+          setSplitting(null)
           refresh()
         }}
       />
@@ -901,6 +922,118 @@ function TripDialog({
           <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
           <Button onClick={save} loading={saving}>
             {existingTrip ? 'Save changes' : 'Create trip'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function SplitTripDialog({
+  trip,
+  clientId,
+  onClose,
+  onSplit,
+}: {
+  trip: ManualTripWithMetrics | null
+  clientId: string
+  onClose: () => void
+  onSplit: () => void
+}) {
+  const { getToken } = useAuth()
+  // Default split = ceil(properties / 5) — typical week-of-work upper bound.
+  const defaultSplits = trip ? Math.max(2, Math.ceil(trip.property_count / 5)) : 2
+  const [numSplits, setNumSplits] = useState(String(defaultSplits))
+  const [splitting, setSplitting] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (trip) {
+      setNumSplits(String(Math.max(2, Math.ceil(trip.property_count / 5))))
+      setErr(null)
+    }
+  }, [trip])
+
+  if (!trip) return null
+
+  const n = Math.max(2, Math.min(trip.property_count, Math.floor(Number(numSplits) || 2)))
+  const baseSize = Math.floor(trip.property_count / n)
+  const remainder = trip.property_count % n
+  const sizePreview =
+    remainder === 0
+      ? `${baseSize} properties each`
+      : `${baseSize}–${baseSize + 1} properties each`
+
+  const submit = async () => {
+    setSplitting(true)
+    setErr(null)
+    try {
+      const token = await getToken()
+      const res = await fetch(
+        `/api/v1/clients/${clientId}/manual-trips/split`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ trip_id: trip.id, num_splits: n }),
+        }
+      )
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error((j as any).error ?? `HTTP ${res.status}`)
+      }
+      onSplit()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSplitting(false)
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Split "{trip.name}"</DialogTitle>
+          <DialogDescription>
+            Group this trip's {trip.property_count} properties into smaller
+            trips. Each split is created as its own trip with the same
+            branch and visits/year — you can edit each one individually
+            afterward.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3 py-2">
+          <FormField label="Number of trips">
+            <Input
+              type="number"
+              min={2}
+              max={Math.min(20, trip.property_count)}
+              value={numSplits}
+              onChange={(e) => setNumSplits(e.target.value)}
+            />
+          </FormField>
+          <p className="text-xs text-fg-muted">
+            Result: <span className="font-semibold text-fg">{n}</span> trips,{' '}
+            {sizePreview}. Properties are grouped geographically along the
+            cluster's longest axis so each sub-trip stays compact.
+          </p>
+        </div>
+
+        {err && (
+          <p className="text-xs text-danger border border-danger/30 bg-danger-subtle rounded-md px-2 py-1">
+            {err}
+          </p>
+        )}
+
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={splitting}>
+            Cancel
+          </Button>
+          <Button onClick={submit} loading={splitting}>
+            Split into {n} trips
           </Button>
         </DialogFooter>
       </DialogContent>
