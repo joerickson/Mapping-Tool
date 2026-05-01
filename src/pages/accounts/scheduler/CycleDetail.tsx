@@ -86,6 +86,12 @@ export default function CycleDetailPage() {
   const [pacingWarnings, setPacingWarnings] = useState<Array<{ type: string; message: string }>>([])
   const [templateRequiredVisits, setTemplateRequiredVisits] = useState<number | null>(null)
   const [templateCrewCount, setTemplateCrewCount] = useState<number | null>(null)
+  const [templateUnplaced, setTemplateUnplaced] = useState<Array<{
+    service_location_id?: string
+    address?: string
+    reason?: string
+    detail?: string
+  }>>([])
   const [branches, setBranches] = useState<Array<{ name: string; lat: number; lng: number }>>([])
   const [selectedVisitIds, setSelectedVisitIds] = useState<Set<string>>(new Set())
 
@@ -123,6 +129,11 @@ export default function CycleDetailPage() {
             tpl.template?.total_visits_required_per_cycle ?? null
           )
           setTemplateCrewCount(tpl.template?.crew_count ?? null)
+          setTemplateUnplaced(
+            Array.isArray(tpl.template?.unplaced_visits)
+              ? tpl.template.unplaced_visits
+              : []
+          )
           setBranches(
             (tpl.template?.branches ?? []).map((b: any) => ({
               name: b.name,
@@ -455,14 +466,23 @@ export default function CycleDetailPage() {
             tone === 'danger'
               ? 'border-danger/40 bg-danger-subtle text-fg'
               : 'border-warning/40 bg-warning-subtle text-fg'
+          // Cluster the unplaced reasons so the user can spot patterns
+          // ("8 of 9 say trip ran out of cycle days for cluster X").
+          const reasonCounts = new Map<string, number>()
+          for (const u of templateUnplaced) {
+            const key = (u.detail ?? u.reason ?? 'unknown').toString()
+            reasonCounts.set(key, (reasonCounts.get(key) ?? 0) + 1)
+          }
+          const reasonRows = Array.from(reasonCounts.entries()).sort((a, b) => b[1] - a[1])
+
           return (
-            <div className={`rounded-md border px-4 py-3 ${wrap}`}>
+            <div className={`rounded-md border px-4 py-3 ${wrap} space-y-2`}>
               <p className="text-sm font-semibold">
                 ⚠ {totalMissing} of {requiredTotal} visit
                 {requiredTotal === 1 ? '' : 's'} couldn't be scheduled
                 {templateCrewCount != null ? ` with crew_count=${templateCrewCount}` : ''}.
               </p>
-              <ul className="mt-1.5 text-xs text-fg-muted space-y-0.5">
+              <ul className="text-xs text-fg-muted space-y-0.5">
                 {missingFromCycle > 0 && (
                   <li>
                     <span className="font-tabular font-medium text-fg">{missingFromCycle}</span>{' '}
@@ -476,12 +496,50 @@ export default function CycleDetailPage() {
                     — see them in the visits list filtered by status.
                   </li>
                 )}
-                <li className="mt-1">
-                  Try adding a crew, extending the cycle, or removing
-                  constraints. For scenario analysis, this is the headline
-                  number — record it before changing crew_count again.
-                </li>
               </ul>
+
+              {templateUnplaced.length > 0 && (
+                <details className="text-xs">
+                  <summary className="cursor-pointer text-accent hover:underline">
+                    Show {templateUnplaced.length} dropped propert
+                    {templateUnplaced.length === 1 ? 'y' : 'ies'}
+                  </summary>
+                  {reasonRows.length > 0 && (
+                    <div className="mt-2 rounded border border-border bg-surface px-2 py-1.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-fg-subtle mb-1">
+                        Reason breakdown
+                      </p>
+                      <ul className="space-y-0.5 text-fg-muted">
+                        {reasonRows.map(([reason, count]) => (
+                          <li key={reason}>
+                            <span className="font-tabular font-medium text-fg">{count}×</span>{' '}
+                            {reason}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  <ul className="mt-2 max-h-48 overflow-y-auto rounded border border-border bg-surface divide-y divide-border">
+                    {templateUnplaced.map((u, i) => (
+                      <li key={u.service_location_id ?? i} className="px-2 py-1">
+                        <p className="font-medium text-fg truncate">
+                          {u.address ?? u.service_location_id ?? '—'}
+                        </p>
+                        <p className="text-[11px] text-fg-muted truncate">
+                          {u.detail ?? u.reason ?? 'unknown'}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+
+              <p className="text-xs text-fg-muted">
+                Try adding a crew, extending the cycle, or removing
+                constraints. If reasons say <em>"trip ran out of cycle days"</em>
+                {' '}but you still see idle days, that's an engine bug — surface
+                it via the cycle Chat for quick triage.
+              </p>
             </div>
           )
         })()}
