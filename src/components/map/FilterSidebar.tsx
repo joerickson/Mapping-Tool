@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 import { useClient } from '../../context/ClientContext'
 import { Input } from '../ui/Input'
@@ -10,12 +10,24 @@ interface FilterSidebarProps {
   onChange: (filter: MapFilter) => void
 }
 
+interface CustomFieldDef {
+  id: string
+  field_key: string
+  field_label: string
+  field_type: 'text' | 'number' | 'date' | 'select'
+  select_options: string[] | null
+  client_id: string | null
+  appears_in_filters: boolean
+  sort_order: number
+}
+
 const STATUSES: ServiceLocationStatus[] = ['active', 'paused', 'terminated', 'prospect']
 
 export default function FilterSidebar({ filter, onChange }: FilterSidebarProps) {
   const { getToken } = useAuth()
   const { clients: allClients } = useClient()
   const [portfolios, setPortfolios] = useState<{ portfolio_id: string; name: string }[]>([])
+  const [customDefs, setCustomDefs] = useState<CustomFieldDef[]>([])
 
   // Only show active+prospect clients in filter
   const clients = allClients.filter((c) => c.status !== 'churned')
@@ -36,6 +48,74 @@ export default function FilterSidebar({ filter, onChange }: FilterSidebarProps) 
     load()
   }, [getToken])
 
+  // Custom-field defs are per-client. When clients are selected, union the
+  // filterable defs across those clients. With no client filter, hide the
+  // section (custom fields are noise without a scope).
+  useEffect(() => {
+    let cancelled = false
+    async function loadCustom() {
+      if (filter.clients.length === 0) {
+        setCustomDefs([])
+        return
+      }
+      const token = await getToken()
+      const headers = { Authorization: `Bearer ${token}` }
+      const all: CustomFieldDef[] = []
+      const seen = new Set<string>()
+      for (const cid of filter.clients) {
+        try {
+          const res = await fetch(
+            `/api/v1/custom-field-definitions?client_id=${cid}`,
+            { headers }
+          )
+          if (!res.ok) continue
+          const defs = (await res.json()) as CustomFieldDef[]
+          for (const d of defs) {
+            if (!d.appears_in_filters) continue
+            if (seen.has(d.field_key)) continue
+            seen.add(d.field_key)
+            all.push(d)
+          }
+        } catch {
+          // ignore — partial result is fine
+        }
+      }
+      if (!cancelled) {
+        all.sort((a, b) => a.sort_order - b.sort_order || a.field_label.localeCompare(b.field_label))
+        setCustomDefs(all)
+      }
+    }
+    loadCustom()
+    return () => {
+      cancelled = true
+    }
+  }, [filter.clients, getToken])
+
+  const customFilter = filter.custom ?? {}
+
+  const setCustomText = (key: string, value: string) => {
+    const next = { ...customFilter }
+    if (value.trim() === '') delete next[key]
+    else next[key] = value
+    onChange({ ...filter, custom: next })
+  }
+
+  const toggleCustomSelect = (key: string, value: string) => {
+    const next = { ...customFilter }
+    const cur = next[key]
+    const arr = Array.isArray(cur) ? cur : []
+    const has = arr.includes(value)
+    const updated = has ? arr.filter((v) => v !== value) : [...arr, value]
+    if (updated.length === 0) delete next[key]
+    else next[key] = updated
+    onChange({ ...filter, custom: next })
+  }
+
+  const hasActiveCustom = useMemo(
+    () => Object.keys(customFilter).length > 0,
+    [customFilter]
+  )
+
   const toggleMulti = (key: keyof MapFilter, value: string) => {
     const arr = filter[key] as string[]
     onChange({
@@ -45,13 +125,14 @@ export default function FilterSidebar({ filter, onChange }: FilterSidebarProps) 
   }
 
   const clearAll = () =>
-    onChange({ clients: [], cityState: '', statuses: [], portfolios: [] })
+    onChange({ clients: [], cityState: '', statuses: [], portfolios: [], custom: {} })
 
   const hasActive =
     filter.clients.length > 0 ||
     filter.cityState !== '' ||
     filter.statuses.length > 0 ||
-    filter.portfolios.length > 0
+    filter.portfolios.length > 0 ||
+    hasActiveCustom
 
   return (
     <div className="hidden md:flex w-64 shrink-0 flex-col h-full overflow-hidden border-r border-border bg-surface-subtle">
@@ -124,6 +205,45 @@ export default function FilterSidebar({ filter, onChange }: FilterSidebarProps) 
             </ul>
           </FilterGroup>
         )}
+
+        {/* Custom fields — only when a client is selected (defs are per-client). */}
+        {customDefs.map((def) => {
+          const value = customFilter[def.field_key]
+          if (def.field_type === 'select') {
+            const options = def.select_options ?? []
+            const selected = Array.isArray(value) ? value : []
+            return (
+              <FilterGroup key={def.id} label={def.field_label}>
+                <ul className="max-h-36 space-y-1 overflow-y-auto pr-1">
+                  {options.length === 0 ? (
+                    <li className="text-xs text-fg-subtle italic">No options defined.</li>
+                  ) : (
+                    options.map((opt) => (
+                      <FilterOption
+                        key={opt}
+                        checked={selected.includes(opt)}
+                        onToggle={() => toggleCustomSelect(def.field_key, opt)}
+                        label={opt}
+                      />
+                    ))
+                  )}
+                </ul>
+              </FilterGroup>
+            )
+          }
+          // text / number / date — single text input with contains-match
+          // semantics. Number/date refinement (range) is a follow-up.
+          return (
+            <FilterGroup key={def.id} label={def.field_label}>
+              <Input
+                type={def.field_type === 'date' ? 'date' : 'text'}
+                placeholder={def.field_type === 'number' ? 'Match contains…' : 'Contains…'}
+                value={typeof value === 'string' ? value : ''}
+                onChange={(e) => setCustomText(def.field_key, e.target.value)}
+              />
+            </FilterGroup>
+          )
+        })}
       </div>
     </div>
   )

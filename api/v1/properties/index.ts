@@ -37,9 +37,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       status,
       portfolio_id,
       enrichment_status,
+      custom_filter,
       limit: limitParam = '100',
       offset: offsetParam = '0',
     } = req.query
+
+    // Parse custom_filter — JSON-encoded { field_key: string | string[] }.
+    // Strings → ilike contains; arrays → any-of (overlap-style match).
+    // Empty / unparseable → ignored.
+    let customFilter: Record<string, string | string[]> | null = null
+    if (custom_filter) {
+      try {
+        const parsed = JSON.parse(String(custom_filter))
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          customFilter = parsed
+        }
+      } catch {
+        return res.status(400).json({ error: 'custom_filter must be JSON' })
+      }
+    }
+    const hasCustomFilter = !!customFilter && Object.keys(customFilter).length > 0
 
     // Service-key callers must scope to a client
     if (ctx.mode === 'service' && !client_id) {
@@ -58,7 +75,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const hasStatusFilter = status && String(status).trim().length > 0
     const hasPortfolioFilter = portfolio_id && String(portfolio_id).trim().length > 0
 
-    if (hasClientFilter || hasStatusFilter || hasPortfolioFilter) {
+    if (hasClientFilter || hasStatusFilter || hasPortfolioFilter || hasCustomFilter) {
       // Strip empty/whitespace-only ids — Postgres uuid type rejects ''
       // with a 22P02 error which would surface as a 500 here.
       const cleanIds = (csv: string) =>
@@ -76,9 +93,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // legitimate portfolio. Beyond that something is wrong upstream.
       const MAX_SL_PAGES = 100
       for (let page = 0; page < MAX_SL_PAGES; page++) {
+        // Pull custom_fields too when a custom_filter is present so we can
+        // post-filter in JS (cleaner than betting on PostgREST jsonb syntax).
+        const slSelect = hasCustomFilter ? 'property_id, custom_fields' : 'property_id'
         let slQuery = db
           .from('service_locations')
-          .select('property_id')
+          .select(slSelect)
           .range(slOffset, slOffset + SL_PAGE - 1)
         if (hasClientFilter) {
           const ids = cleanIds(String(client_id))
@@ -103,8 +123,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         const batch = sls ?? []
         for (const r of batch) {
-          const id = (r as any).property_id
-          if (id) propIdSet.add(id)
+          const row = r as any
+          const id = row.property_id
+          if (!id) continue
+          if (hasCustomFilter && customFilter) {
+            const cf = (row.custom_fields ?? {}) as Record<string, unknown>
+            let pass = true
+            for (const [key, expected] of Object.entries(customFilter)) {
+              const actual = cf[key]
+              if (Array.isArray(expected)) {
+                if (expected.length === 0) continue
+                if (actual == null || !expected.map(String).includes(String(actual))) {
+                  pass = false
+                  break
+                }
+              } else if (typeof expected === 'string') {
+                const needle = expected.trim().toLowerCase()
+                if (needle.length === 0) continue
+                if (actual == null || !String(actual).toLowerCase().includes(needle)) {
+                  pass = false
+                  break
+                }
+              }
+            }
+            if (!pass) continue
+          }
+          propIdSet.add(id)
         }
         if (batch.length < SL_PAGE) break
         slOffset += SL_PAGE

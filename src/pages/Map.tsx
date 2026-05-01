@@ -26,6 +26,7 @@ const DEFAULT_FILTER: MapFilter = {
   cityState: '',
   statuses: [],
   portfolios: [],
+  custom: {},
 }
 
 export default function MapPage() {
@@ -80,6 +81,22 @@ export default function MapPage() {
           )
           if (portfoliosClean.length) params.set('portfolio_id', portfoliosClean.join(','))
           if (filter.cityState) params.set('city_state', filter.cityState)
+          // Custom filters — JSON-encoded blob the server post-filters on.
+          // Empty values get stripped client-side already (FilterSidebar)
+          // but defend in case the shape leaks through.
+          const cf = filter.custom ?? {}
+          const cfClean: Record<string, string | string[]> = {}
+          for (const [k, v] of Object.entries(cf)) {
+            if (Array.isArray(v)) {
+              const arr = v.filter((x) => typeof x === 'string' && x.trim().length > 0)
+              if (arr.length) cfClean[k] = arr
+            } else if (typeof v === 'string' && v.trim().length > 0) {
+              cfClean[k] = v
+            }
+          }
+          if (Object.keys(cfClean).length) {
+            params.set('custom_filter', JSON.stringify(cfClean))
+          }
           params.set('limit', '2000')
           params.set('offset', String(offset))
           return params

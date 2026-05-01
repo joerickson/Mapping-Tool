@@ -11,6 +11,7 @@ import {
   Pencil,
   Plane,
   Sparkles,
+  SlidersHorizontal,
 } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import Button from '../../components/ui/Button'
@@ -1288,6 +1289,12 @@ function AnalysisSidebar({
           to={`/accounts/${accountId}/clients/${clientId}/admin/constraint-templates`}
         >
           Constraint templates
+        </SidebarItem>
+        <SidebarItem
+          icon={SlidersHorizontal}
+          to={`/accounts/${accountId}/clients/${clientId}/admin/custom-fields`}
+        >
+          Custom fields
         </SidebarItem>
         <SidebarItem
           icon={Sparkles}

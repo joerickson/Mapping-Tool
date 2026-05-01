@@ -39,6 +39,7 @@ import TemplateDetailPage from './pages/accounts/scheduler/TemplateDetail'
 import CycleComparePage from './pages/accounts/scheduler/CycleCompare'
 import CycleDetailPage from './pages/accounts/scheduler/CycleDetail'
 import TravelPlannerPage from './pages/accounts/TravelPlanner'
+import CustomFieldsAdminPage from './pages/accounts/CustomFieldsAdmin'
 import NewAccountClientPage from './pages/accounts/NewAccountClient'
 import ClientsListPage from './pages/clients/ClientsList'
 import NewClientPage from './pages/clients/NewClient'
@@ -174,6 +175,10 @@ export default function App() {
           <Route
             path="/accounts/:accountId/clients/:clientId/travel"
             element={<AuthGuard><TravelPlannerPage /></AuthGuard>}
+          />
+          <Route
+            path="/accounts/:accountId/clients/:clientId/admin/custom-fields"
+            element={<AuthGuard><CustomFieldsAdminPage /></AuthGuard>}
           />
           <Route path="/accounts/:id/clients/new" element={<AuthGuard><NewAccountClientPage /></AuthGuard>} />
 
