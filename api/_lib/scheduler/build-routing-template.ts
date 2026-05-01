@@ -345,10 +345,202 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
   const remotePct =
     visitSpecs.length > 0 ? (remote.length / visitSpecs.length) * 100 : 0
 
+  // ── Phase 4.5d — Pre-cluster property rebalance (formula-driven) ──
+  // Operator's algorithm:
+  //   1. Define each branch's hours-capacity from crews × cycleDays × hours_per_day.
+  //   2. Each branch independently picks its closest properties (lowest
+  //      cost = work + 2×drive/speed) until its capacity is full —
+  //      this is its "wants list."
+  //   3. For any property wanted by multiple branches, the closest
+  //      branch wins; the others lose that capacity slot, which
+  //      becomes idle days for those branches.
+  //   4. Properties not on any wants list (every nearby branch was
+  //      already full) try to place on whatever branch still has room,
+  //      closest first.
+  //   5. Anything still unplaced is genuine overflow that no branch
+  //      can fit — surfaces via the existing unplaced path.
+  //
+  // No hardcoded distance ratios. Capacity is the only gate, and cost
+  // includes round-trip drive — so a transfer's recipient is charged
+  // for the long drive in its budget, naturally rejecting transfers
+  // that would actually cost more than they save.
+  const localBranchAssignment = new Map<string, number>()
+  let propertiesTransferred = 0
+  if (local.length > 0 && input.branches.length > 1) {
+    type EnrichedVisit = {
+      v: VisitSpec
+      distances: number[]
+      nearest_idx: number
+    }
+    const enriched: EnrichedVisit[] = local.map((v) => {
+      const distances = input.branches.map((b) =>
+        haversineMiles({ lat: v.lat, lng: v.lng }, b)
+      )
+      let nearest = 0
+      for (let i = 1; i < distances.length; i++) {
+        if (distances[i] < distances[nearest]) nearest = i
+      }
+      return { v, distances, nearest_idx: nearest }
+    })
+    const costOn = (e: EnrichedVisit, branchIdx: number): number => {
+      const driveHours = (e.distances[branchIdx] * 2) / Math.max(speed, 1)
+      return e.v.hours_per_visit + driveHours
+    }
+
+    // Remote work hours pinned to nearest branch — these can't be
+    // moved (overnight clusters are already remote), so they consume
+    // capacity that the local rebalance can't reclaim.
+    const remoteHoursByBranch = new Map<number, number>()
+    for (const v of remote) {
+      let nIdx = 0
+      let nDist = Number.POSITIVE_INFINITY
+      for (let i = 0; i < input.branches.length; i++) {
+        const d = haversineMiles({ lat: v.lat, lng: v.lng }, input.branches[i])
+        if (d < nDist) {
+          nDist = d
+          nIdx = i
+        }
+      }
+      const drv = (nDist * 2) / Math.max(speed, 1)
+      remoteHoursByBranch.set(
+        nIdx,
+        (remoteHoursByBranch.get(nIdx) ?? 0) + v.hours_per_visit + drv
+      )
+    }
+
+    // Crew distribution proportional to total cost (local + remote).
+    const initialCostByBranch = new Map<number, number>()
+    for (const e of enriched) {
+      initialCostByBranch.set(
+        e.nearest_idx,
+        (initialCostByBranch.get(e.nearest_idx) ?? 0) + costOn(e, e.nearest_idx)
+      )
+    }
+    for (const [idx, hrs] of remoteHoursByBranch) {
+      initialCostByBranch.set(idx, (initialCostByBranch.get(idx) ?? 0) + hrs)
+    }
+    const branchesByLoad = Array.from(initialCostByBranch.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([idx]) => idx)
+    const grandTotal =
+      Array.from(initialCostByBranch.values()).reduce((s, v) => s + v, 0) || 1
+    const crewsPerBranch = new Map<number, number>()
+    let remCrews = input.crew_count
+    for (const idx of branchesByLoad) {
+      if (remCrews <= 0) {
+        crewsPerBranch.set(idx, 0)
+        continue
+      }
+      const share = (initialCostByBranch.get(idx) ?? 0) / grandTotal
+      const allocated = Math.max(1, Math.floor(share * input.crew_count))
+      const give = Math.min(allocated, remCrews)
+      crewsPerBranch.set(idx, give)
+      remCrews -= give
+    }
+    let cur = 0
+    while (remCrews > 0 && branchesByLoad.length > 0) {
+      const idx = branchesByLoad[cur % branchesByLoad.length]
+      crewsPerBranch.set(idx, (crewsPerBranch.get(idx) ?? 0) + 1)
+      remCrews--
+      cur++
+    }
+
+    const hoursPerDay = input.config.hours_per_day || 10
+    // Local-rebalance capacity = total branch capacity minus its remote
+    // commitments (Frisco's OK overnight work pre-claims part of Frisco's
+    // hours; the rebalance can only shuffle locals into what's left).
+    const capacityByBranch = new Map<number, number>()
+    for (let b = 0; b < input.branches.length; b++) {
+      const crews = crewsPerBranch.get(b) ?? 0
+      const totalCap = crews * cycleDays * hoursPerDay
+      const remoteCommitted = remoteHoursByBranch.get(b) ?? 0
+      capacityByBranch.set(b, Math.max(0, totalCap - remoteCommitted))
+    }
+
+    // Step 1: each branch picks its closest-fit properties until its
+    // capacity (after subtracting remote commitments) is full.
+    const wantsByBranch = new Map<number, Set<string>>()
+    for (let b = 0; b < input.branches.length; b++) {
+      const cap = capacityByBranch.get(b) ?? 0
+      const sorted = [...enriched].sort((a, c) => costOn(a, b) - costOn(c, b))
+      const wants = new Set<string>()
+      let used = 0
+      for (const e of sorted) {
+        const c = costOn(e, b)
+        if (used + c > cap) continue
+        wants.add(e.v.service_location_id)
+        used += c
+      }
+      wantsByBranch.set(b, wants)
+    }
+
+    // Step 2: conflict resolution — each property goes to the wanter
+    // with the lowest cost (closest = best fit).
+    for (const e of enriched) {
+      const wanters: number[] = []
+      for (const [b, set] of wantsByBranch) {
+        if (set.has(e.v.service_location_id)) wanters.push(b)
+      }
+      if (wanters.length === 0) continue
+      let best = wanters[0]
+      let bestC = costOn(e, best)
+      for (const b of wanters) {
+        const c = costOn(e, b)
+        if (c < bestC) {
+          best = b
+          bestC = c
+        }
+      }
+      localBranchAssignment.set(e.v.service_location_id, best)
+      if (best !== e.nearest_idx) propertiesTransferred++
+    }
+
+    // Step 3: any property no branch wanted gets placed wherever has
+    // remaining hours-budget, closest first.
+    const usedByBranch = new Map<number, number>()
+    for (const e of enriched) {
+      const b = localBranchAssignment.get(e.v.service_location_id)
+      if (b == null) continue
+      usedByBranch.set(b, (usedByBranch.get(b) ?? 0) + costOn(e, b))
+    }
+    for (const e of enriched) {
+      if (localBranchAssignment.has(e.v.service_location_id)) continue
+      const branchOrder = Array.from({ length: input.branches.length }, (_, i) => i).sort(
+        (a, b) => costOn(e, a) - costOn(e, b)
+      )
+      for (const b of branchOrder) {
+        const cap = capacityByBranch.get(b) ?? 0
+        const used = usedByBranch.get(b) ?? 0
+        const c = costOn(e, b)
+        if (used + c > cap) continue
+        localBranchAssignment.set(e.v.service_location_id, b)
+        usedByBranch.set(b, used + c)
+        if (b !== e.nearest_idx) propertiesTransferred++
+        break
+      }
+      // Anything still unassigned is genuine overflow — falls through
+      // to the engine's existing unplaced-visits path. Gap-fill (#196)
+      // takes a final crack on idle workdays.
+    }
+  }
+
   const clusters: ClusterSpec[] = []
-  // Local clusters: one per branch.
+  // Local clusters: one per branch (post-rebalance assignment).
   if (local.length > 0 && input.branches.length > 0) {
-    const grouped = groupByNearestBranch(local, input.branches)
+    const grouped =
+      localBranchAssignment.size > 0
+        ? (() => {
+            const map = new Map<number, VisitSpec[]>()
+            for (const v of local) {
+              const idx = localBranchAssignment.get(v.service_location_id)
+              if (idx == null) continue
+              const arr = map.get(idx) ?? []
+              arr.push(v)
+              map.set(idx, arr)
+            }
+            return map
+          })()
+        : groupByNearestBranch(local, input.branches)
     for (const [branchIdx, group] of grouped) {
       const c = centroid(group.map((v) => ({ lat: v.lat, lng: v.lng })))
       clusters.push(makeCluster(`local-${branchIdx}`, 'local', branchIdx, c, group, input))
@@ -910,6 +1102,11 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
   }
 
   const warnings: TemplateBuildResult['warnings'] = []
+  if (propertiesTransferred > 0) {
+    notes.push(
+      `Pre-cluster rebalance reassigned ${propertiesTransferred} property(s) to a non-nearest branch (closer-by-cost branch was full; this branch was the next-best fit with capacity).`
+    )
+  }
   if (rebalanceSpillCount > 0) {
     notes.push(
       `Capacity-aware rebalance spilled ${rebalanceSpillCount} cluster(s) from their natural home-branch crew to a next-closest crew with room.`
