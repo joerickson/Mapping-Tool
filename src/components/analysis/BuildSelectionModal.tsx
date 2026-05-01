@@ -197,8 +197,11 @@ export default function BuildSelectionModal({
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i]
       if (r.kind !== 'filled') {
+        // Auto-open the picker for the first empty row instead of forcing
+        // the user to find the "Set location" button on a crowded row.
+        setActivePicker(i)
         setError(
-          `Row ${i + 1} is missing a location. Click "Set location" to choose one.`
+          `Row ${i + 1} needs a location — pick one below.`
         )
         return
       }
@@ -244,8 +247,12 @@ export default function BuildSelectionModal({
             <TableBody>
               {rows.map((row, idx) => {
                 const isLocked = idx < lockedCount
+                const isEmpty = row.kind === 'empty'
                 return (
-                  <TableRow key={idx}>
+                  <TableRow
+                    key={idx}
+                    className={isEmpty ? 'bg-warning-subtle' : undefined}
+                  >
                     <TableCell className="text-fg-subtle font-tabular">
                       {idx + 1}
                     </TableCell>
@@ -330,7 +337,11 @@ export default function BuildSelectionModal({
                           <button
                             type="button"
                             onClick={() => setActivePicker(idx)}
-                            className="rounded-sm text-xs text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                            className={
+                              row.kind === 'filled'
+                                ? 'rounded-sm text-xs text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent'
+                                : 'inline-flex items-center rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-white shadow-sm hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent'
+                            }
                           >
                             {row.kind === 'filled' ? 'Change' : 'Set location'}
                           </button>
