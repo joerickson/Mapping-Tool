@@ -79,6 +79,11 @@ export interface BuildTemplateInput {
     allow_hard_constraint_violation: boolean
   }
   cycle_start_year: number
+  // Phase 4.5d — operator-supplied branch overrides keyed by SL id.
+  // When present, the rebalance pass FORCES that property to the
+  // specified branch (no auto-rebalance for it). All other properties
+  // run through the normal capacity-circle algorithm.
+  branch_assignment_overrides?: Record<string, number>
 }
 
 interface VisitSpec {
@@ -189,6 +194,19 @@ export interface TemplateBuildResult {
     message: string
     affected_crews?: number[]
     suggested_action?: string
+  }>
+  // Phase 4.5d — per-property branch recommendations from the
+  // capacity-circle rebalance. UI renders this as the "Branch
+  // Assignments" view where operators can override a property's
+  // assigned branch (those overrides flow back as input next build).
+  branch_assignments: Array<{
+    service_location_id: string
+    property_id: string
+    address: string
+    nearest_branch_idx: number
+    assigned_branch_idx: number
+    transferred: boolean
+    overridden: boolean
   }>
 }
 
@@ -365,6 +383,7 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
   // for the long drive in its budget, naturally rejecting transfers
   // that would actually cost more than they save.
   const localBranchAssignment = new Map<string, number>()
+  const branchAssignmentsOutput: TemplateBuildResult['branch_assignments'] = []
   let propertiesTransferred = 0
   if (local.length > 0 && input.branches.length > 1) {
     type EnrichedVisit = {
@@ -457,12 +476,31 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
       capacityByBranch.set(b, Math.max(0, totalCap - remoteCommitted))
     }
 
+    // Apply operator overrides first — those properties are FORCED to
+    // their override branch and don't enter the wants-list competition.
+    // Their cost still counts against their target branch's capacity
+    // so the engine doesn't double-book.
+    const overrides = input.branch_assignment_overrides ?? {}
+    const overriddenIds = new Set<string>()
+    const usedFromOverrides = new Map<number, number>()
+    for (const e of enriched) {
+      const override = overrides[e.v.service_location_id]
+      if (typeof override === 'number' && override >= 0 && override < input.branches.length) {
+        localBranchAssignment.set(e.v.service_location_id, override)
+        overriddenIds.add(e.v.service_location_id)
+        usedFromOverrides.set(override, (usedFromOverrides.get(override) ?? 0) + costOn(e, override))
+      }
+    }
+
     // Step 1: each branch picks its closest-fit properties until its
-    // capacity (after subtracting remote commitments) is full.
+    // capacity (after subtracting remote commitments AND override-
+    // claimed hours) is full. Overridden properties are skipped here.
     const wantsByBranch = new Map<number, Set<string>>()
     for (let b = 0; b < input.branches.length; b++) {
-      const cap = capacityByBranch.get(b) ?? 0
-      const sorted = [...enriched].sort((a, c) => costOn(a, b) - costOn(c, b))
+      const cap = (capacityByBranch.get(b) ?? 0) - (usedFromOverrides.get(b) ?? 0)
+      const sorted = [...enriched]
+        .filter((e) => !overriddenIds.has(e.v.service_location_id))
+        .sort((a, c) => costOn(a, b) - costOn(c, b))
       const wants = new Set<string>()
       let used = 0
       for (const e of sorted) {
@@ -521,6 +559,21 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
       // Anything still unassigned is genuine overflow — falls through
       // to the engine's existing unplaced-visits path. Gap-fill (#196)
       // takes a final crack on idle workdays.
+    }
+
+    // Emit per-property branch_assignments so the UI can show the
+    // recommendation and let operators override.
+    for (const e of enriched) {
+      const assigned = localBranchAssignment.get(e.v.service_location_id) ?? -1
+      branchAssignmentsOutput.push({
+        service_location_id: e.v.service_location_id,
+        property_id: e.v.property_id,
+        address: e.v.address,
+        nearest_branch_idx: e.nearest_idx,
+        assigned_branch_idx: assigned,
+        transferred: assigned !== e.nearest_idx && assigned >= 0,
+        overridden: overriddenIds.has(e.v.service_location_id),
+      })
     }
   }
 
@@ -1185,6 +1238,7 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
     },
     pacing_analysis,
     warnings,
+    branch_assignments: branchAssignmentsOutput,
   }
 }
 

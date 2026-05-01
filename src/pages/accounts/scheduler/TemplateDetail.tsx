@@ -17,6 +17,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '../../../components/ui/Table'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../../components/ui/Tabs'
+import BranchAssignmentsPanel from '../../../components/scheduler/BranchAssignmentsPanel'
 
 interface Template {
   id: string
@@ -43,6 +44,9 @@ interface Template {
   crew_assignments: any[]
   trips: any[]
   unplaced_visits: any[]
+  branches?: Array<{ name: string; lat: number; lng: number }>
+  branch_assignments?: any[]
+  branch_assignment_overrides?: Record<string, number>
 }
 
 interface Cycle {
@@ -295,6 +299,20 @@ export default function TemplateDetailPage() {
             {template.optimizer_notes}
           </div>
         )}
+
+        {/* Branch assignments — engine recommendations + per-property overrides */}
+        {Array.isArray(template.branch_assignments) &&
+          template.branch_assignments.length > 0 &&
+          Array.isArray(template.branches) &&
+          template.branches.length > 0 && (
+            <BranchAssignmentsPanel
+              templateId={templateId!}
+              branches={template.branches}
+              assignments={template.branch_assignments as any}
+              overrides={template.branch_assignment_overrides ?? {}}
+              onChanged={() => load()}
+            />
+          )}
 
         {/* Cycle instances */}
         <Card padding="none">
