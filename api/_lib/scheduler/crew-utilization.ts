@@ -94,12 +94,26 @@ export async function computeCrewUtilization(
       ? tplHoursPerDay
       : DEFAULT_CAPACITY_HOURS)
 
-  const { data: routes } = await db
-    .from('crew_day_routes')
-    .select(
-      'crew_index, crew_label, scheduled_date, day_type, total_work_minutes, trip_id, trip_label, trip_day_number, trip_total_days, route'
-    )
-    .eq('cycle_instance_id', cycleInstanceId)
+  // Page explicitly — PostgREST silently caps a single fetch and large
+  // cycles can exceed it (a recent JLL cycle hit exactly 500 returned
+  // rows out of 509 expected).
+  const ROUTE_PAGE = 1000
+  const ROUTE_MAX_PAGES = 50
+  const routes: any[] = []
+  for (let page = 0; page < ROUTE_MAX_PAGES; page++) {
+    const from = page * ROUTE_PAGE
+    const to = from + ROUTE_PAGE - 1
+    const { data } = await db
+      .from('crew_day_routes')
+      .select(
+        'crew_index, crew_label, scheduled_date, day_type, total_work_minutes, trip_id, trip_label, trip_day_number, trip_total_days, route'
+      )
+      .eq('cycle_instance_id', cycleInstanceId)
+      .range(from, to)
+    const batch = data ?? []
+    routes.push(...batch)
+    if (batch.length < ROUTE_PAGE) break
+  }
 
   // Index routes by (crew_index, scheduled_date) for O(1) lookup.
   const routeByKey = new Map<string, any>()
