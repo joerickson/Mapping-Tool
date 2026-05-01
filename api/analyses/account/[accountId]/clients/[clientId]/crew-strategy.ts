@@ -424,6 +424,8 @@ export function computeCrewStrategy(
     routed_visits: routedVisits,
     cycle_length_days: 365,
     cycles_per_year: 1,
+    crew_size: inputs.crew_size,
+    hours_per_day: inputs.hours_per_day,
   })
   // Per-branch slice for Option B (each branch's crews scale with its own
   // building-day workload).
@@ -441,6 +443,8 @@ export function computeCrewStrategy(
       routed_visits: branchVisits,
       cycle_length_days: 365,
       cycles_per_year: 1,
+      crew_size: inputs.crew_size,
+      hours_per_day: inputs.hours_per_day,
     })
     return {
       conservative: a.conservative.crews_needed,

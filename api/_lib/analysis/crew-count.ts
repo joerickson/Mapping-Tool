@@ -8,6 +8,7 @@ import {
   crewDaysPerVisit,
   effectiveSizeClass,
   type BuildingSizeClass,
+  type ClassifyContext,
 } from './building-size.js'
 import { countWorkingDays, getDefaultHolidays } from './working-days.js'
 
@@ -20,6 +21,13 @@ export interface CrewCountInput {
   cycle_length_days: number
   cycle_start_date?: Date
   cycles_per_year: number
+  // Phase 4 follow-up — passed to the classifier so we use crew-clock
+  // hours instead of raw labor hours. Default: 3-person crew, 10-hr
+  // day. Without this, a 24-hour cleaning task gets classified as
+  // multi-day (3 crew-days) when in reality a 3-person crew finishes
+  // in 8 clock hours (1 crew-day).
+  crew_size?: number
+  hours_per_day?: number
 }
 
 export interface CrewCountModeResult {
@@ -73,19 +81,25 @@ export function computeCrewCount(input: CrewCountInput): CrewCountResult {
   }
   const contributors: Contributor[] = []
 
+  const ctx: ClassifyContext = {
+    crew_size: input.crew_size ?? 3,
+    hours_per_day: input.hours_per_day ?? 10,
+  }
   for (const visit of input.routed_visits) {
-    const sizeClass = effectiveSizeClass(visit)
+    const sizeClass = effectiveSizeClass(visit, ctx)
     sizeBreakdown[sizeClass]++
     const dConservative = crewDaysPerVisit(
       sizeClass,
       visit.hours_per_visit,
-      'conservative'
+      'conservative',
+      ctx
     )
     conservativeCrewDays += dConservative
     optimisticCrewDays += crewDaysPerVisit(
       sizeClass,
       visit.hours_per_visit,
-      'optimistic'
+      'optimistic',
+      ctx
     )
     if (sizeClass === 'multi_day') {
       multiDayVisits += 1
