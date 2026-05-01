@@ -28,6 +28,7 @@ interface PropertyRow {
   state: string | null
   latitude: number | null
   longitude: number | null
+  serviceable_sqft: number | null
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -70,14 +71,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ? Math.max(5, Number(body.cluster_radius_miles))
     : DEFAULT_CLUSTER_RADIUS_MILES
 
-  // Pull all properties that have at least one SL on this client.
+  // Pull all properties that have at least one SL on this client,
+  // along with serviceable_sqft so we can sum it per cluster.
   const { data: slRows } = await db
     .from('service_locations')
-    .select('property_id')
+    .select('property_id, serviceable_sqft')
     .eq('client_id', clientId)
-  const propIds = Array.from(
-    new Set((slRows ?? []).map((r) => (r as any).property_id as string))
-  ).filter((id) => !exclude.has(id))
+  const slData = (slRows ?? []) as { property_id: string; serviceable_sqft: number | null }[]
+  const sqftByProperty = new Map<string, number>()
+  for (const r of slData) {
+    if (r.serviceable_sqft == null) continue
+    sqftByProperty.set(
+      r.property_id,
+      (sqftByProperty.get(r.property_id) ?? 0) + r.serviceable_sqft
+    )
+  }
+  const propIds = Array.from(new Set(slData.map((r) => r.property_id))).filter(
+    (id) => !exclude.has(id)
+  )
   if (propIds.length === 0) {
     return res.status(200).json({ suggestions: [] })
   }
@@ -88,7 +99,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .from('properties')
       .select('id, address_line1, city, state, latitude, longitude')
       .in('id', chunk)
-    for (const p of data ?? []) properties.push(p as PropertyRow)
+    for (const p of data ?? []) {
+      properties.push({
+        ...(p as Omit<PropertyRow, 'serviceable_sqft'>),
+        serviceable_sqft: sqftByProperty.get((p as any).id) ?? null,
+      })
+    }
   }
 
   // 1. Bucket each property into "remote enough to suggest as a trip"
@@ -134,6 +150,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     one_way_drive_hours_to_centroid: number
     miles_per_trip_estimate: number
     estimated_nights_per_trip: number
+    total_sqft: number
     rationale: string
   }
   const suggestions: Suggestion[] = []
@@ -176,6 +193,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         ? `${firstCity} ${firstState}`
         : firstCity || firstState || 'cluster'
 
+      const clusterSqft = inCluster.reduce(
+        (sum, p) => sum + (p.serviceable_sqft ?? 0),
+        0
+      )
+
       suggestions.push({
         suggested_name: `${labelLoc} (${inCluster.length} properties)`,
         branch_name: branch.name,
@@ -188,6 +210,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         centroid_lng: cLng,
         one_way_drive_hours_to_centroid: Math.round(oneWayHours * 100) / 100,
         miles_per_trip_estimate: Math.round(milesEstimate * 10) / 10,
+        total_sqft: clusterSqft,
         // Clean one on arrival day, one on departure day → hotel nights
         // = mid days = property_count - 2 (floor of 1).
         estimated_nights_per_trip: Math.max(1, inCluster.length - 2),

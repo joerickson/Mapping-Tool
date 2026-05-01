@@ -33,6 +33,7 @@ interface PropertyRow {
   state: string | null
   latitude: number | null
   longitude: number | null
+  serviceable_sqft: number | null
 }
 
 interface TripRow {
@@ -182,15 +183,24 @@ async function loadTripsAndProperties(
       .eq('account_id', accountId)
       .eq('client_id', clientId)
       .order('created_at', { ascending: true }),
+    // Pull SLs once with serviceable_sqft so we can sum per property
+    // (a property may have multiple SLs on this client).
     db
       .from('service_locations')
-      .select('property_id')
+      .select('property_id, serviceable_sqft')
       .eq('client_id', clientId),
   ])
   const trips = ((tripsRes.data ?? []) as TripRow[])
-  const propIds = Array.from(
-    new Set(((slRes.data ?? []) as { property_id: string }[]).map((r) => r.property_id))
-  )
+  const slRows = (slRes.data ?? []) as { property_id: string; serviceable_sqft: number | null }[]
+  const sqftByProperty = new Map<string, number>()
+  for (const r of slRows) {
+    if (r.serviceable_sqft == null) continue
+    sqftByProperty.set(
+      r.property_id,
+      (sqftByProperty.get(r.property_id) ?? 0) + r.serviceable_sqft
+    )
+  }
+  const propIds = Array.from(new Set(slRows.map((r) => r.property_id)))
   let properties: PropertyRow[] = []
   // Chunk to stay under PostgREST's URL length limit on huge clients.
   for (let i = 0; i < propIds.length; i += 250) {
@@ -199,7 +209,12 @@ async function loadTripsAndProperties(
       .from('properties')
       .select('id, address_line1, city, state, latitude, longitude')
       .in('id', chunk)
-    for (const p of data ?? []) properties.push(p as PropertyRow)
+    for (const p of data ?? []) {
+      properties.push({
+        ...(p as Omit<PropertyRow, 'serviceable_sqft'>),
+        serviceable_sqft: sqftByProperty.get((p as any).id) ?? null,
+      })
+    }
   }
   return { trips, properties }
 }
@@ -245,6 +260,7 @@ function annotateProperties(
       state: p.state,
       lat: p.latitude,
       lng: p.longitude,
+      serviceable_sqft: p.serviceable_sqft,
       assigned_branch: branch?.name ?? null,
       assigned_branch_city_state: branch?.city_state ?? null,
       miles_to_branch: Math.round(miles * 10) / 10,
@@ -331,10 +347,16 @@ function annotateTrip(
     : 0
   const annualLodgingCost = annualHotelCost + annualPerDiemCost
 
+  const totalSqft = tripProps.reduce(
+    (sum, p) => sum + (p.serviceable_sqft ?? 0),
+    0
+  )
+
   return {
     ...trip,
     property_count: tripProps.length,
     properties_missing_coords: tripProps.length - validProps.length,
+    total_sqft: totalSqft,
     miles_per_trip: Math.round(totalDriveMiles * 10) / 10,
     annual_miles: Math.round(annualMiles * 10) / 10,
     one_way_drive_hours_to_centroid: Math.round(oneWayHours * 100) / 100,
