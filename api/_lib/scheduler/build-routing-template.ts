@@ -386,10 +386,26 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
     // Initial: each property on its nearest branch.
     for (const e of enriched) localBranchAssignment.set(e.v.service_location_id, e.nearest_idx)
 
-    // Hours per branch (initial).
+    // Hours per branch (initial). Include REMOTE-cluster hours too,
+    // because the same crews that handle a branch's local properties
+    // also drive that branch's remote trips. Frisco-OK overnight work
+    // counts against Frisco's capacity even though it's not in the
+    // local-rebalance pool.
     const hoursByBranch = new Map<number, number>()
     for (const e of enriched) {
       hoursByBranch.set(e.nearest_idx, (hoursByBranch.get(e.nearest_idx) ?? 0) + e.v.hours_per_visit)
+    }
+    for (const v of remote) {
+      let bestIdx = 0
+      let bestDist = Infinity
+      for (let i = 0; i < input.branches.length; i++) {
+        const d = haversineMiles({ lat: v.lat, lng: v.lng }, input.branches[i])
+        if (d < bestDist) {
+          bestDist = d
+          bestIdx = i
+        }
+      }
+      hoursByBranch.set(bestIdx, (hoursByBranch.get(bestIdx) ?? 0) + v.hours_per_visit)
     }
 
     // Distribute crew_count across branches proportional to load. Each
@@ -428,25 +444,27 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
       capacityByBranch.set(idx, crews * cycleDays * hoursPerDay)
     }
 
-    // Transfer cap: only move a property if its second-nearest branch
-    // is within 1.5× the nearest distance (i.e., border property, not
-    // a deep-territory or far-flung outlier).
-    const TRANSFER_DIST_RATIO_CAP = 1.5
-
+    // No source-side distance cap. The rule is: as long as some
+    // recipient branch has idle capacity AND the source is over its
+    // capacity, transfers continue. Sort by ratio ascending so the
+    // most-borderline (cheapest-to-move) properties go FIRST, with
+    // deeper-territory properties moving only if border ones don't
+    // close the gap. This is intentional — operator's stance is "any
+    // placement is better than dropping a property entirely."
+    //
+    // The recipient-capacity check below is the only binding gate:
+    // we won't push a recipient past its own crews' workday budget,
+    // so the system never trades one overflow for another.
     for (const overloadedIdx of branchesByLoad) {
       let currentHours = hoursByBranch.get(overloadedIdx) ?? 0
       const capacity = capacityByBranch.get(overloadedIdx) ?? Number.POSITIVE_INFINITY
       if (currentHours <= capacity) continue
 
-      // Candidates: properties currently on this branch with a viable
-      // second-nearest. Sort by ratio ascending so the most-transferable
-      // (closest to second-nearest) move first.
       const candidates = enriched
         .filter(
           (e) =>
             (localBranchAssignment.get(e.v.service_location_id) ?? e.nearest_idx) === overloadedIdx &&
-            e.second_idx != null &&
-            e.second_miles / Math.max(e.nearest_miles, 0.1) <= TRANSFER_DIST_RATIO_CAP
+            e.second_idx != null
         )
         .sort(
           (a, b) =>
