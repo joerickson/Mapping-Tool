@@ -222,6 +222,89 @@ export default function CycleDetailPage() {
     })
   }
 
+  // One row per stop in each crew day so the user can see drive time
+  // per property. Falls back to a one-row-per-day summary when a day
+  // has no stops attached (e.g. travel day with start/end at branch).
+  function exportCrewDaysCsv() {
+    const header = [
+      'Date',
+      'Crew',
+      'Trip',
+      'Day type',
+      'Trip day',
+      'Stop #',
+      'Property',
+      'Drive min from previous',
+      'Drive miles from previous',
+      'Work min',
+      'Arrival',
+      'Departure',
+      'Day total drive min',
+      'Day total drive miles',
+      'Day total work min',
+      'Day total minutes',
+    ]
+    const rows: (string | number)[][] = [header]
+    for (const cd of crewDays) {
+      const route = Array.isArray((cd as any).route) ? ((cd as any).route as any[]) : []
+      const tripDayLabel =
+        cd.trip_total_days && cd.trip_total_days > 1
+          ? `${cd.trip_day_number}/${cd.trip_total_days}`
+          : ''
+      const baseDayCols = [
+        cd.total_drive_minutes ?? '',
+        cd.total_drive_miles != null ? Math.round(Number(cd.total_drive_miles)) : '',
+        cd.total_work_minutes ?? '',
+        cd.total_day_minutes ?? '',
+      ]
+      if (route.length === 0) {
+        rows.push([
+          cd.scheduled_date ?? '',
+          cd.crew_index + 1,
+          cd.trip_label ?? '',
+          cd.day_type,
+          tripDayLabel,
+          '', '', '', '', '', '', '',
+          ...baseDayCols,
+        ])
+        continue
+      }
+      for (const stop of route) {
+        rows.push([
+          cd.scheduled_date ?? '',
+          cd.crew_index + 1,
+          cd.trip_label ?? '',
+          cd.day_type,
+          tripDayLabel,
+          stop.sequence ?? '',
+          stop.address ?? '',
+          stop.drive_minutes_from_previous ?? '',
+          stop.drive_distance_miles_from_previous ?? '',
+          stop.work_minutes ?? '',
+          stop.arrival_time ?? '',
+          stop.departure_time ?? '',
+          ...baseDayCols,
+        ])
+      }
+    }
+    const csv = rows
+      .map((r) => r.map((c) => {
+        const s = String(c ?? '')
+        if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`
+        return s
+      }).join(','))
+      .join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `cycle-${cycle?.cycle_number ?? 'export'}-crew-days.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
   function exportVisitsCsv() {
     const rows = [
       ['Date', 'Time', 'Property', 'Hours', 'Status', 'Locked', 'Add-ons'],
@@ -426,8 +509,17 @@ export default function CycleDetailPage() {
         <>
         {/* Crew days */}
         <Card padding="none">
-          <div className="border-b border-border px-4 py-3">
+          <div className="border-b border-border px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
             <CardTitle>Crew days</CardTitle>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={exportCrewDaysCsv}
+              disabled={crewDays.length === 0}
+              title="Download per-property drive time as CSV"
+            >
+              Export CSV
+            </Button>
           </div>
           {crewDays.length === 0 ? (
             <p className="px-4 py-6 text-sm text-fg-muted">No crew days in this cycle.</p>
