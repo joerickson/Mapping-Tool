@@ -22,6 +22,7 @@ interface Assignment {
   assigned_branch_idx: number
   transferred: boolean
   overridden: boolean
+  is_remote?: boolean
 }
 
 interface Props {
@@ -49,7 +50,8 @@ export default function BranchAssignmentsPanel({
   const counts = useMemo(() => {
     const transferred = assignments.filter((a) => a.transferred && !a.overridden).length
     const overridden = assignments.filter((a) => a.overridden).length
-    return { total: assignments.length, transferred, overridden }
+    const remote = assignments.filter((a) => a.is_remote).length
+    return { total: assignments.length, transferred, overridden, remote }
   }, [assignments])
 
   const filtered = useMemo(() => {
@@ -112,6 +114,12 @@ export default function BranchAssignmentsPanel({
           <span><span className="font-tabular text-fg">{counts.transferred}</span> auto-transferred</span>
           <span>·</span>
           <span><span className="font-tabular text-fg">{counts.overridden}</span> overridden</span>
+          {counts.remote > 0 && (
+            <>
+              <span>·</span>
+              <span><span className="font-tabular text-fg">{counts.remote}</span> remote</span>
+            </>
+          )}
         </div>
       </div>
 
@@ -183,6 +191,9 @@ export default function BranchAssignmentsPanel({
                           → engine moved to {branchLabel(a.assigned_branch_idx)}
                         </span>
                       )}
+                      {a.is_remote && (
+                        <span className="ml-1 text-fg-muted">· remote (overnight)</span>
+                      )}
                     </p>
                   </TableCell>
                   <TableCell>
@@ -196,7 +207,8 @@ export default function BranchAssignmentsPanel({
                   <TableCell>
                     <select
                       value={overrideVal != null ? String(overrideVal) : 'auto'}
-                      disabled={savingId === a.service_location_id}
+                      disabled={savingId === a.service_location_id || a.is_remote}
+                      title={a.is_remote ? 'Remote properties auto-route to nearest branch' : undefined}
                       onChange={(e) => {
                         const v = e.target.value
                         setOverride(
@@ -204,7 +216,10 @@ export default function BranchAssignmentsPanel({
                           v === 'auto' ? null : Number(v)
                         )
                       }}
-                      className="h-7 rounded-md border border-border bg-surface px-2 text-xs text-fg"
+                      className={
+                        'h-7 rounded-md border border-border bg-surface px-2 text-xs text-fg ' +
+                        (a.is_remote ? 'opacity-50' : '')
+                      }
                     >
                       <option value="auto">Auto (engine)</option>
                       {branches.map((b, i) => (
