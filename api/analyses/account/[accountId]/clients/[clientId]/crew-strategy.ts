@@ -85,10 +85,29 @@ export interface CrewStrategyInputs {
     ideal_max_pct: number
     scope: 'per_branch' | 'per_region' | 'portfolio'
   }
+  // Phase 4 follow-up — used to derive FTE capacity from the user's
+  // actual config (working_days_per_year × hours_per_day) instead of
+  // a hardcoded 47 × 40 = 1880 that assumed 8-hour days.
+  working_days_per_year?: number | null
 }
 
-const FTE_HOURS_PER_YEAR = 1880 // 47 weeks × 40 hours
+// FTE capacity is now derived per-call from
+// constraints.working_days_per_year × constraints.hours_per_day so
+// utilization scales with the user's actual day length (default
+// 250 × 10 = 2500, not the legacy 47 × 40 = 1880 which assumed
+// 8-hour days and overstated utilization by ~33%).
+const DEFAULT_WORKING_DAYS_PER_YEAR = 250
 const ROVING_ESTIMATED_ANNUAL_MILES_PER_CREW = 30000
+
+function computeFteHoursPerYear(inputs: { hours_per_day: number }, workingDaysPerYear?: number | null): number {
+  const days = Number.isFinite(workingDaysPerYear) && (workingDaysPerYear ?? 0) > 0
+    ? Number(workingDaysPerYear)
+    : DEFAULT_WORKING_DAYS_PER_YEAR
+  const hpd = Number.isFinite(inputs.hours_per_day) && inputs.hours_per_day > 0
+    ? inputs.hours_per_day
+    : 8
+  return days * hpd
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end()
@@ -137,6 +156,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     drive_speed_mph: body.drive_speed_mph ?? constraints.drive_speed_mph,
     utilization_constraint:
       (body as any).utilization_constraint ?? constraints.utilization_constraint,
+    working_days_per_year: constraints.working_days_per_year ?? null,
   }
 
   let analysisId: string
@@ -231,6 +251,10 @@ export function computeCrewStrategy(
   inputs: CrewStrategyInputs,
   overnight?: OvernightResult
 ) {
+  const fteHoursPerYear = computeFteHoursPerYear(
+    inputs,
+    inputs.working_days_per_year ?? null
+  )
   // ── Per-property work hours per year ──────────────────────────────────────
   // For each property we want total annual project-crew hours. A property may
   // have multiple service_locations (e.g. project clean + upholstery for the
@@ -430,7 +454,7 @@ export function computeCrewStrategy(
     optionA_crews > 0
       ? Math.min(
           100,
-          Math.round((totalAnnualHours / (optionA_crews * FTE_HOURS_PER_YEAR)) * 100)
+          Math.round((totalAnnualHours / (optionA_crews * fteHoursPerYear)) * 100)
         )
       : 0
   const optionA_vehicle =
@@ -473,7 +497,7 @@ export function computeCrewStrategy(
   )
 
   const optionB_labor =
-    optionB_crews * FTE_HOURS_PER_YEAR * inputs.hourly_loaded_labor_cost * inputs.crew_size
+    optionB_crews * fteHoursPerYear * inputs.hourly_loaded_labor_cost * inputs.crew_size
 
   // Per-branch utilization rows for output.
   let optionB_util_sum = 0
@@ -497,7 +521,7 @@ export function computeCrewStrategy(
   }> = []
   for (let i = 0; i < branches.length; i++) {
     const crews = crewsPerBranch[i]
-    const available = crews * FTE_HOURS_PER_YEAR
+    const available = crews * fteHoursPerYear
     const utilPct = available > 0 ? Math.round((branchHours[i] / available) * 100) : 0
     const status = classifyUtilization(utilPct, band)
     optionB_util_sum += utilPct
@@ -566,7 +590,7 @@ export function computeCrewStrategy(
   const optionC_labor = optionC_FT_labor + optionC_surge_labor
   // FT crews are highly utilized year-round; surge crews are utilized only
   // when active. A blended utilization estimate.
-  const optionC_FT_capacity = optionC_FT_crews * FTE_HOURS_PER_YEAR
+  const optionC_FT_capacity = optionC_FT_crews * fteHoursPerYear
   const optionC_FT_util = Math.min(
     1,
     totalAnnualHours / (optionC_FT_capacity + inputs.surge_crew_count * inputs.surge_weeks_per_year * hoursPerWeek)
@@ -622,7 +646,7 @@ export function computeCrewStrategy(
       regionMap.get(region) ?? { branches_in_region: [], work_hours: 0, available_hours: 0 }
     cur.branches_in_region.push(branchMeta[i].city_state)
     cur.work_hours += branchHours[i]
-    cur.available_hours += crewsPerBranch[i] * FTE_HOURS_PER_YEAR
+    cur.available_hours += crewsPerBranch[i] * fteHoursPerYear
     regionMap.set(region, cur)
   }
   const optionB_per_region = Array.from(regionMap.entries()).map(([region, v]) => {
@@ -640,12 +664,12 @@ export function computeCrewStrategy(
 
   const optionB_portfolio_pct =
     optionB_crews > 0
-      ? Math.round((totalProjectHours / (optionB_crews * FTE_HOURS_PER_YEAR)) * 100)
+      ? Math.round((totalProjectHours / (optionB_crews * fteHoursPerYear)) * 100)
       : 0
   const optionB_portfolio = {
     crew_count: optionB_crews,
     work_hours: Math.round(totalProjectHours),
-    available_hours: optionB_crews * FTE_HOURS_PER_YEAR,
+    available_hours: optionB_crews * fteHoursPerYear,
     utilization_pct: optionB_portfolio_pct,
     status: classifyUtilization(optionB_portfolio_pct, band),
   }
@@ -655,7 +679,7 @@ export function computeCrewStrategy(
   const optionA_portfolio = {
     crew_count: optionA_crews,
     work_hours: Math.round(totalProjectHours),
-    available_hours: optionA_crews * FTE_HOURS_PER_YEAR,
+    available_hours: optionA_crews * fteHoursPerYear,
     utilization_pct: optionA_util_pct,
     status: classifyUtilization(optionA_util_pct, band),
   }
@@ -665,7 +689,7 @@ export function computeCrewStrategy(
     crew_count: optionC_FT_crews,
     surge_crew_count: inputs.surge_crew_count,
     work_hours: Math.round(totalProjectHours),
-    available_hours: optionC_FT_crews * FTE_HOURS_PER_YEAR,
+    available_hours: optionC_FT_crews * fteHoursPerYear,
     utilization_pct: optionC_util_pct,
     status: classifyUtilization(optionC_util_pct, band),
   }

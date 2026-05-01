@@ -55,6 +55,11 @@ interface ComputeOptions {
   between_trips_gap_max_days?: number
 }
 
+// Fallback only — actual capacity should come from the routing
+// template's config.hours_per_day. The old hardcoded 8 produced a
+// utilization that was 25%+ too high when the real config was 10
+// (hours_per_day default), because (work_hours / 8) is bigger than
+// (work_hours / 10) for the same numerator.
 const DEFAULT_CAPACITY_HOURS = 8
 const DEFAULT_GAP_MAX_DAYS = 3
 
@@ -64,7 +69,6 @@ export async function computeCrewUtilization(
   options: ComputeOptions = {}
 ): Promise<CrewUtilizationDay[]> {
   const includeWeekends = options.include_weekends ?? false
-  const capacity = options.workdays_capacity_hours ?? DEFAULT_CAPACITY_HOURS
   const gapMax = options.between_trips_gap_max_days ?? DEFAULT_GAP_MAX_DAYS
 
   const { data: cycle, error: cycleErr } = await db
@@ -76,10 +80,19 @@ export async function computeCrewUtilization(
 
   const { data: tpl } = await db
     .from('routing_templates')
-    .select('crew_count, crew_assignments')
+    .select('crew_count, crew_assignments, config')
     .eq('id', (cycle as any).template_id)
     .single()
   const crewCount = (tpl as any)?.crew_count ?? 1
+  // Pull capacity from the routing template's saved config so the
+  // utilization denominator matches the day length the template was
+  // built against (e.g. 10 hr/day) rather than the legacy hardcoded 8.
+  const tplHoursPerDay = Number((tpl as any)?.config?.hours_per_day)
+  const capacity =
+    options.workdays_capacity_hours ??
+    (Number.isFinite(tplHoursPerDay) && tplHoursPerDay > 0
+      ? tplHoursPerDay
+      : DEFAULT_CAPACITY_HOURS)
 
   const { data: routes } = await db
     .from('crew_day_routes')
