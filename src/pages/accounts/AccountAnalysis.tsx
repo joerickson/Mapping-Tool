@@ -9,6 +9,7 @@ import {
   ListChecks,
   Map as MapIcon,
   Pencil,
+  Plane,
   Sparkles,
 } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
@@ -1266,6 +1267,12 @@ function AnalysisSidebar({
           to={`/accounts/${accountId}/clients/${clientId}/scheduler/templates`}
         >
           Routing templates
+        </SidebarItem>
+        <SidebarItem
+          icon={Plane}
+          to={`/accounts/${accountId}/clients/${clientId}/travel`}
+        >
+          Travel & trips
         </SidebarItem>
       </SidebarSection>
 
