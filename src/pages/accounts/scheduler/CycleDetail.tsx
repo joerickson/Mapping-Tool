@@ -22,6 +22,7 @@ import GanttView, { type UtilDay } from '../../../components/scheduler/GanttView
 import CalendarView from '../../../components/scheduler/CalendarView'
 import CycleMapView from '../../../components/scheduler/CycleMapView'
 import HistoryDrawer from '../../../components/scheduler/HistoryDrawer'
+import CycleChatDrawer from '../../../components/scheduler/CycleChatDrawer'
 import StatusBar, { type SaveState } from '../../../components/scheduler/StatusBar'
 
 interface Cycle {
@@ -420,7 +421,13 @@ export default function CycleDetailPage() {
                 </Link>
               )}
             </div>
-            <ViewSwitcher value={view} onChange={setView} />
+            <div className="flex items-center gap-2">
+              <CycleChatDrawer
+                cycleId={cycleId!}
+                cycleLabel={cycle.cycle_number ? `Cycle #${cycle.cycle_number}` : null}
+              />
+              <ViewSwitcher value={view} onChange={setView} />
+            </div>
           </div>
         </header>
 
