@@ -8,7 +8,7 @@
 // propose groupings the user can accept verbatim.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Plus, Sparkles, Trash2, Pencil, MapPin, Route, Split } from 'lucide-react'
+import { Plus, Sparkles, Trash2, Pencil, MapPin, Route, Split, Download } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import AppShell from '../../components/layout/AppShell'
 import Button from '../../components/ui/Button'
@@ -245,6 +245,50 @@ export default function TravelPlannerPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
+  }
+
+  const exportCsv = () => {
+    const rows = filteredProperties.map((p) => {
+      const trip = trips.find((t) => t.property_ids.includes(p.property_id))
+      return [
+        p.address_line1 ?? '',
+        p.city ?? '',
+        p.state ?? '',
+        p.serviceable_sqft ?? '',
+        p.assigned_branch ?? '',
+        p.assigned_branch_city_state ?? '',
+        p.miles_to_branch ?? '',
+        p.drive_minutes_to_branch ?? '',
+        trip?.name ?? '',
+      ]
+    })
+    const header = [
+      'Address',
+      'City',
+      'State',
+      'Serviceable sq ft',
+      'Branch',
+      'Branch city/state',
+      'Distance (mi)',
+      'Drive time (min)',
+      'Trip',
+    ]
+    const csv = [header, ...rows]
+      .map((row) => row.map((v) => csvEscape(String(v))).join(','))
+      .join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const slug = (client?.display_name ?? client?.name ?? 'client')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+    a.download = `${slug}-drive-times-${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
   }
 
   return (
@@ -567,6 +611,15 @@ export default function TravelPlannerPage() {
                       </option>
                     ))}
                   </select>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={exportCsv}
+                    disabled={filteredProperties.length === 0}
+                    title="Download visible rows as CSV"
+                  >
+                    <Download className="h-3.5 w-3.5" /> CSV
+                  </Button>
                 </div>
               </div>
               <div className="rounded-md border border-border bg-surface overflow-hidden">
@@ -675,6 +728,13 @@ export default function TravelPlannerPage() {
       />
     </AppShell>
   )
+}
+
+function csvEscape(v: string): string {
+  if (v.includes(',') || v.includes('"') || v.includes('\n')) {
+    return `"${v.replace(/"/g, '""')}"`
+  }
+  return v
 }
 
 function Stat({ label, value }: { label: string; value: string | number }) {
