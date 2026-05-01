@@ -86,6 +86,8 @@ export default function CycleDetailPage() {
   const [pacingWarnings, setPacingWarnings] = useState<Array<{ type: string; message: string }>>([])
   const [templateRequiredVisits, setTemplateRequiredVisits] = useState<number | null>(null)
   const [templateCrewCount, setTemplateCrewCount] = useState<number | null>(null)
+  const [templateOptimizedAt, setTemplateOptimizedAt] = useState<string | null>(null)
+  const [regeneratingTemplate, setRegeneratingTemplate] = useState(false)
   const [templateUnplaced, setTemplateUnplaced] = useState<Array<{
     service_location_id?: string
     property_id?: string
@@ -135,6 +137,7 @@ export default function CycleDetailPage() {
               ? tpl.template.unplaced_visits
               : []
           )
+          setTemplateOptimizedAt(tpl.template?.optimized_at ?? null)
           setBranches(
             (tpl.template?.branches ?? []).map((b: any) => ({
               name: b.name,
@@ -152,6 +155,36 @@ export default function CycleDetailPage() {
   }, [cycleId, getToken])
 
   useEffect(() => { load() }, [load])
+
+  // Regenerate the parent template in-place. The cycle reads its
+  // unplaced_visits from the template, so when engine code changes
+  // (e.g. a recent fix to surface ungeocoded properties) the template
+  // must be rebuilt for the cycle UI to reflect the new logic.
+  const regenerateTemplate = useCallback(async () => {
+    if (!cycle?.template_id) return
+    setRegeneratingTemplate(true)
+    setError(null)
+    try {
+      const token = await getToken()
+      const res = await fetch(
+        `/api/scheduler/templates/${cycle.template_id}/regenerate`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({}),
+        }
+      )
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        throw new Error((j as any).error ?? `HTTP ${res.status}`)
+      }
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRegeneratingTemplate(false)
+    }
+  }, [cycle?.template_id, getToken, load])
 
   const placedVisits = visits.filter((v) => v.status === 'placed')
   const unplacedVisits = visits.filter((v) => v.status === 'unplaced')
@@ -544,12 +577,25 @@ export default function CycleDetailPage() {
                 </details>
               )}
 
-              <p className="text-xs text-fg-muted">
-                Try adding a crew, extending the cycle, or removing
-                constraints. If reasons say <em>"trip ran out of cycle days"</em>
-                {' '}but you still see idle days, that's an engine bug — surface
-                it via the cycle Chat for quick triage.
-              </p>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <p className="text-xs text-fg-muted flex-1 min-w-0">
+                  Template last built{' '}
+                  <span className="font-tabular text-fg">
+                    {templateOptimizedAt ? templateOptimizedAt.slice(0, 16).replace('T', ' ') : 'unknown'}
+                  </span>
+                  . If recent engine fixes shipped after that, regenerate
+                  to refresh the dropped-property list and reasons.
+                </p>
+                {cycle.template_id && (
+                  <Button
+                    size="sm"
+                    onClick={regenerateTemplate}
+                    loading={regeneratingTemplate}
+                  >
+                    Regenerate template
+                  </Button>
+                )}
+              </div>
             </div>
           )
         })()}
