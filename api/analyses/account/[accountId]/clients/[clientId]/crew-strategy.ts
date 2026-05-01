@@ -89,6 +89,11 @@ export interface CrewStrategyInputs {
   // actual config (working_days_per_year × hours_per_day) instead of
   // a hardcoded 47 × 40 = 1880 that assumed 8-hour days.
   working_days_per_year?: number | null
+  // Phase 4 follow-up — manual per-branch crew override carried into
+  // crew strategy so the per-branch utilization table reflects what
+  // the user actually selected. Special '__roving' key counts toward
+  // total but isn't tied to a specific branch.
+  crew_count_per_branch_override?: Record<string, number> | null
 }
 
 // FTE capacity is now derived per-call from
@@ -157,6 +162,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     utilization_constraint:
       (body as any).utilization_constraint ?? constraints.utilization_constraint,
     working_days_per_year: constraints.working_days_per_year ?? null,
+    crew_count_per_branch_override:
+      constraints.crew_count_per_branch_override ?? null,
   }
 
   let analysisId: string
@@ -485,15 +492,14 @@ export function computeCrewStrategy(
   // vs how many workdays we're paying the crews to be available?
   // Pairing-aware (uses optimistic count if it pulled small buildings
   // together) since paired days only count as 1 used day.
+  // Don't cap at 100 — over-utilization is a real signal the user
+  // needs to see (means current crew count is short).
   const optionA_util_pct =
     optionA_crews > 0
-      ? Math.min(
-          100,
-          Math.round(
-            (annualBuildingDaysOptimistic /
-              (optionA_crews * workingDaysPerYearForUtil)) *
-              100
-          )
+      ? Math.round(
+          (annualBuildingDaysOptimistic /
+            (optionA_crews * workingDaysPerYearForUtil)) *
+            100
         )
       : 0
   const optionA_vehicle =
@@ -527,13 +533,72 @@ export function computeCrewStrategy(
   // below as informational annotation on the per-branch breakdown.
   const band = inputs.utilization_constraint
   const bandActive = band.enabled
-  // Phase 4 follow-up — primary count = optimistic (paired). The
-  // conservative "1 building/day no pairing" is kept as a ceiling
-  // annotation so the user can see the worst case if dispatchers
-  // don't realize the pairing.
-  const crewsPerBranch = crewCountPerBranch.map((c) => Math.max(1, c.optimistic))
-  const crewsPerBranchCeiling = crewCountPerBranch.map((c) => Math.max(1, c.conservative))
-  const optionB_crews = crewsPerBranch.reduce((a: number, b: number) => a + b, 0)
+  // Phase 4 follow-up — Option B is now a HYBRID: each branch gets
+  // dedicated crews for the workload that fully utilizes them, and a
+  // roving pool absorbs the leftover. Without this, every branch was
+  // ceil()'d to its own dedicated count — which over-staffed any
+  // branch whose workload didn't divide evenly into a working year
+  // (the source of the user's "fire an analyst that recommended 48%
+  // util" complaint). 3 branches × 1 dedicated each + 1 roving for
+  // overflow is what an operations analyst actually does.
+  //
+  // User's manual per-branch override (if present) wins over the
+  // recommendation. Special key '__roving' = floating crews not tied
+  // to a single branch.
+  const perBranchOverride = inputs.crew_count_per_branch_override ?? null
+  const branchBuildingDaysList = crewCountPerBranch.map((c) => c.building_days)
+
+  // Compute the recommendation when no manual override is in play.
+  // Each branch: floor(building_days / working_days) dedicated crews
+  // (each fully utilized). Anything left over in fractional days
+  // gets aggregated and absorbed by a roving pool.
+  const recommendedDedicatedPerBranch = branchBuildingDaysList.map((bd) => {
+    if (bd <= 0) return 0
+    return Math.floor(bd / workingDaysPerYearForUtil)
+  })
+  const recommendedRemainderDays = branchBuildingDaysList.reduce(
+    (sum, bd, i) =>
+      sum +
+      Math.max(0, bd - recommendedDedicatedPerBranch[i] * workingDaysPerYearForUtil),
+    0
+  )
+  // Total crews must still cover the work — if no branch hits a full
+  // dedicated crew (e.g. all branches small), we still need at least
+  // ceil(remainder / working_days) roving to cover.
+  const recommendedRoving =
+    recommendedRemainderDays > 0
+      ? Math.ceil(recommendedRemainderDays / workingDaysPerYearForUtil)
+      : 0
+  // If everything dedicated and no roving but a branch has 0 — that's
+  // a branch with no work, fine (return 0 dedicated).
+  // Floor: every branch with any workload gets at least 1 dedicated
+  // unless the user explicitly set it to 0 via override. Without this
+  // a branch with <250 building-days would have zero dedicated and
+  // entirely depend on the roving pool.
+  // Actually: not enforced. Let the math speak. A branch with 100
+  // building-days legitimately doesn't need a dedicated crew if a
+  // roving crew can serve it.
+
+  // Apply override if present, else use the recommendation.
+  const rovingOverride =
+    perBranchOverride && Number.isFinite(perBranchOverride['__roving'])
+      ? Math.max(0, Math.floor(Number(perBranchOverride['__roving'])))
+      : null
+  const crewsPerBranch = branches.map((b, i) => {
+    if (perBranchOverride) {
+      const ovr = perBranchOverride[b.name]
+      if (Number.isFinite(ovr) && (ovr ?? 0) >= 0) {
+        return Math.floor(Number(ovr))
+      }
+    }
+    return recommendedDedicatedPerBranch[i]
+  })
+  const rovingCrews = rovingOverride != null ? rovingOverride : recommendedRoving
+  const crewsPerBranchCeiling = crewCountPerBranch.map((c) =>
+    Math.max(1, c.conservative)
+  )
+  const optionB_crews =
+    crewsPerBranch.reduce((a: number, b: number) => a + b, 0) + rovingCrews
   const optionB_crews_ceiling = crewsPerBranchCeiling.reduce(
     (a: number, b: number) => a + b,
     0
@@ -574,7 +639,7 @@ export function computeCrewStrategy(
     const branchAvailableDays = crews * workingDaysPerYearForUtil
     const utilPct =
       branchAvailableDays > 0
-        ? Math.min(100, Math.round((branchBuildingDays / branchAvailableDays) * 100))
+        ? Math.round((branchBuildingDays / branchAvailableDays) * 100)
         : 0
     const status = classifyUtilization(utilPct, band)
     optionB_util_sum += utilPct
@@ -653,7 +718,7 @@ export function computeCrewStrategy(
     inputs.surge_crew_count * inputs.surge_weeks_per_year * 5
   const optionC_util_pct =
     optionC_capacity_days > 0
-      ? Math.min(99, Math.round((annualBuildingDaysOptimistic / optionC_capacity_days) * 100))
+      ? Math.round((annualBuildingDaysOptimistic / optionC_capacity_days) * 100)
       : 0
   const optionC_vehicle =
     (optionC_FT_crews + inputs.surge_crew_count) *
@@ -728,7 +793,7 @@ export function computeCrewStrategy(
   const optionB_per_region = Array.from(regionMap.entries()).map(([region, v]) => {
     const utilPct =
       v.available_days > 0
-        ? Math.min(100, Math.round((v.building_days / v.available_days) * 100))
+        ? Math.round((v.building_days / v.available_days) * 100)
         : 0
     return {
       region,
@@ -742,13 +807,10 @@ export function computeCrewStrategy(
 
   const optionB_portfolio_pct =
     optionB_crews > 0
-      ? Math.min(
-          100,
-          Math.round(
-            (annualBuildingDays /
-              (optionB_crews * workingDaysPerYearForUtil)) *
-              100
-          )
+      ? Math.round(
+          (annualBuildingDays /
+            (optionB_crews * workingDaysPerYearForUtil)) *
+            100
         )
       : 0
   const optionB_portfolio = {
@@ -908,10 +970,19 @@ export function computeCrewStrategy(
         'Mature operations with strong dispatch + consistent year-round volume.',
     },
     B: {
-      label: 'Dedicated Crews',
+      label: 'Dedicated + Roving',
       crew_count: optionB_crews,
       crew_count_ceiling: optionB_crews_ceiling,
       crew_count_optimistic: optionB_crews,
+      // Phase 4 follow-up — split out the dedicated vs roving counts.
+      // Total crew_count = dedicated_total + roving.
+      dedicated_per_branch: branches.map((b, i) => ({
+        branch_name: b.name,
+        city_state: branchMeta[i].city_state,
+        crew_count: crewsPerBranch[i],
+      })),
+      roving_crews: rovingCrews,
+      dedicated_total: crewsPerBranch.reduce((a, b) => a + b, 0),
       utilization_pct: optionB_util_pct,
       annual_labor_cost: Math.round(optionB_labor),
       annual_vehicle_cost: Math.round(optionB_vehicle),
@@ -924,17 +995,17 @@ export function computeCrewStrategy(
       },
       overnight_summary: overnightSummary,
       pros: [
-        'Simple — each crew owns one cluster',
-        'Defensible to clients — predictable, named teams',
-        'Lower coordination overhead',
+        'Each branch has dedicated crews fully utilized year-round',
+        'Roving pool absorbs leftover work — no per-branch idle time',
+        'Defensible to clients — named teams per branch',
       ],
       cons: [
-        'Lower average utilization (paid for some idle time)',
-        'Branches outside the band need surge crews or consolidation',
-        'Harder to flex across branches when seasonal demand shifts',
+        'Roving crew needs a dispatcher who can cross-branch route',
+        'Higher coordination overhead than pure dedicated',
+        'Roving crew\'s fuel + drive time higher than dedicated',
       ],
       recommended_use_case:
-        'Year 1 of a new portfolio. Best when geographic spread > 5 states.',
+        'Year 1+ of a portfolio with uneven branch workloads. Most common operating pattern.',
     },
     C: {
       label: 'Surge Model',
