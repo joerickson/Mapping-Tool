@@ -378,22 +378,88 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
     }
   }
 
-  // ── 4. Crew assignment (load balanced, descending sort) ───────────
+  // ── 4. Crew assignment (Phase 4.5 — capacity-aware geographic) ────
+  // Each cluster goes to the geographically closest crew that has
+  // remaining workday capacity. When the closest crew is full, the
+  // cluster spills to the next-closest, naturally absorbing overflow
+  // before the schedule is built (rather than letting one crew's
+  // overflow drop visits while another sits idle).
+  //
+  // Capacity per crew = cycleDays workdays. The cluster's projected
+  // workday cost = days_on_site_per_trip × trips_per_cycle.
+  //
+  // Distance metric = haversine from the cluster's centroid to the
+  // crew's "primary branch" (the branch with the most work hours
+  // among the clusters already assigned to that crew). Crews with no
+  // primary branch yet (no clusters assigned) get distance 0 — the
+  // first cluster to land on them sets their primary.
   const crews = Array.from({ length: input.crew_count }, (_, i) => ({
     index: i,
     label: `Crew ${i + 1}`,
     cluster_ids: [] as string[],
     total_work_hours: 0,
     total_drive_hours: 0,
+    workdays_assigned: 0,
   }))
-  const sorted = [...clusters].sort((a, b) => b.total_work_hours - a.total_work_hours)
-  for (const cluster of sorted) {
-    const target = crews.reduce((min, c) =>
-      c.total_work_hours + c.total_drive_hours < min.total_work_hours + min.total_drive_hours ? c : min
-    )
+
+  const dominantBranchOf = (crew: typeof crews[number]): number | null => {
+    if (crew.cluster_ids.length === 0) return null
+    const work = new Map<number, number>()
+    for (const cid of crew.cluster_ids) {
+      const cl = clusters.find((c) => c.cluster_id === cid)
+      if (!cl) continue
+      work.set(cl.base_branch_index, (work.get(cl.base_branch_index) ?? 0) + cl.total_work_hours)
+    }
+    let bestIdx: number | null = null
+    let bestVal = -1
+    for (const [idx, val] of work) {
+      if (val > bestVal) {
+        bestVal = val
+        bestIdx = idx
+      }
+    }
+    return bestIdx
+  }
+
+  // Sort clusters biggest-first so the heaviest clusters get the most
+  // freedom of placement (they're more likely to define a crew's
+  // primary branch).
+  const sortedClusters = [...clusters].sort((a, b) => b.total_work_hours - a.total_work_hours)
+
+  let rebalanceWarning: string | null = null
+  for (const cluster of sortedClusters) {
+    const clusterWorkdays = cluster.days_on_site_per_trip * cluster.trips_per_cycle
+
+    const scored = crews.map((c) => {
+      const branchIdx = dominantBranchOf(c)
+      const branch = branchIdx != null ? input.branches[branchIdx] : null
+      const dist = branch
+        ? haversineMiles(
+            { lat: cluster.centroid_lat, lng: cluster.centroid_lng },
+            { lat: branch.lat, lng: branch.lng }
+          )
+        : 0
+      const wouldFit = c.workdays_assigned + clusterWorkdays <= cycleDays
+      return { crew: c, dist, wouldFit }
+    })
+
+    const fitting = scored.filter((s) => s.wouldFit)
+    const candidates = fitting.length > 0 ? fitting : scored
+    candidates.sort((a, b) => {
+      if (a.dist !== b.dist) return a.dist - b.dist
+      return a.crew.workdays_assigned - b.crew.workdays_assigned
+    })
+    const target = candidates[0].crew
+
+    if (fitting.length === 0 && rebalanceWarning == null) {
+      rebalanceWarning =
+        'All crews exceed cycle capacity for at least one cluster — overflow will surface as unplaced. Consider adding a crew or extending the cycle.'
+    }
+
     target.cluster_ids.push(cluster.cluster_id)
     target.total_work_hours += cluster.total_work_hours
     target.total_drive_hours += cluster.estimated_drive_hours
+    target.workdays_assigned += clusterWorkdays
   }
 
   // Branch-prefixed crew labels: pick each crew's dominant branch
@@ -813,6 +879,13 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
   }
 
   const warnings: TemplateBuildResult['warnings'] = []
+  if (rebalanceWarning) {
+    warnings.push({
+      type: 'crew_load_imbalance',
+      message: rebalanceWarning,
+      suggested_action: 'add a crew or extend cycle_length_days',
+    })
+  }
   if (crewEndSpread > TARGET_SPREAD) {
     const slowest = pacingPerCrew.reduce((a, b) => (a.cycle_end_workday < b.cycle_end_workday ? b : a))
     const fastest = pacingPerCrew.reduce((a, b) => (a.cycle_end_workday > b.cycle_end_workday ? b : a))
