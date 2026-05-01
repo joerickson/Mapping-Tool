@@ -4,6 +4,7 @@
 // routing_templates.branch_assignment_overrides; the operator must
 // regenerate the template for them to affect the schedule.
 import { useMemo, useState } from 'react'
+import { Map as MapIcon, List as ListIcon } from 'lucide-react'
 import { Card, CardTitle, CardDescription } from '../ui/Card'
 import { Input } from '../ui/Input'
 import { Badge } from '../ui/Badge'
@@ -11,6 +12,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '../ui/Table'
 import { useAuth } from '../../hooks/useAuth'
+import BranchAssignmentsMap from './BranchAssignmentsMap'
 
 interface Branch { name: string; lat: number; lng: number }
 
@@ -18,6 +20,8 @@ interface Assignment {
   service_location_id: string
   property_id: string
   address: string
+  lat?: number
+  lng?: number
   nearest_branch_idx: number
   assigned_branch_idx: number
   transferred: boolean
@@ -30,6 +34,9 @@ interface Props {
   branches: Branch[]
   assignments: Assignment[]
   overrides: Record<string, number>
+  // From template.config.cluster_radius_miles — drives the visual
+  // capacity circles on the map view.
+  clusterRadiusMiles?: number
   onChanged: () => void
 }
 
@@ -38,6 +45,7 @@ export default function BranchAssignmentsPanel({
   branches,
   assignments,
   overrides,
+  clusterRadiusMiles = 30,
   onChanged,
 }: Props) {
   const { getToken } = useAuth()
@@ -46,6 +54,7 @@ export default function BranchAssignmentsPanel({
   const [showOnlyTransferred, setShowOnlyTransferred] = useState(false)
   const [savingId, setSavingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [view, setView] = useState<'list' | 'map'>('list')
 
   const counts = useMemo(() => {
     const transferred = assignments.filter((a) => a.transferred && !a.overridden).length
@@ -120,9 +129,48 @@ export default function BranchAssignmentsPanel({
               <span><span className="font-tabular text-fg">{counts.remote}</span> remote</span>
             </>
           )}
+          <div className="inline-flex rounded-md border border-border overflow-hidden ml-3">
+            <button
+              type="button"
+              onClick={() => setView('list')}
+              className={
+                'px-2 py-0.5 inline-flex items-center gap-1 ' +
+                (view === 'list'
+                  ? 'bg-accent text-white'
+                  : 'text-fg-muted hover:bg-surface-muted')
+              }
+            >
+              <ListIcon className="h-3 w-3" /> List
+            </button>
+            <button
+              type="button"
+              onClick={() => setView('map')}
+              className={
+                'px-2 py-0.5 inline-flex items-center gap-1 ' +
+                (view === 'map'
+                  ? 'bg-accent text-white'
+                  : 'text-fg-muted hover:bg-surface-muted')
+              }
+            >
+              <MapIcon className="h-3 w-3" /> Map
+            </button>
+          </div>
         </div>
       </div>
 
+      {view === 'map' ? (
+        <div className="p-3">
+          <BranchAssignmentsMap
+            templateId={templateId}
+            branches={branches}
+            assignments={assignments as any}
+            overrides={overrides}
+            clusterRadiusMiles={clusterRadiusMiles}
+            onChanged={onChanged}
+          />
+        </div>
+      ) : (
+        <>
       <div className="border-b border-border px-4 py-2 flex items-center gap-2 flex-wrap">
         <Input
           placeholder="Filter by address…"
@@ -244,6 +292,8 @@ export default function BranchAssignmentsPanel({
         <p className="px-4 py-2 text-xs text-fg-muted bg-surface-subtle border-t border-border">
           Showing first 500 of {filtered.length}. Filter to narrow the list.
         </p>
+      )}
+        </>
       )}
     </Card>
   )

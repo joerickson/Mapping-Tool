@@ -203,6 +203,8 @@ export interface TemplateBuildResult {
     service_location_id: string
     property_id: string
     address: string
+    lat: number
+    lng: number
     nearest_branch_idx: number
     assigned_branch_idx: number
     transferred: boolean
@@ -608,6 +610,8 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
         service_location_id: v.service_location_id,
         property_id: v.property_id,
         address: v.address,
+        lat: v.lat,
+        lng: v.lng,
         nearest_branch_idx: nearest,
         assigned_branch_idx: assigned,
         transferred: assigned !== nearest,
@@ -636,6 +640,8 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
         service_location_id: v.service_location_id,
         property_id: v.property_id,
         address: v.address,
+        lat: v.lat,
+        lng: v.lng,
         nearest_branch_idx: nearest,
         assigned_branch_idx: nearest,
         transferred: false,
