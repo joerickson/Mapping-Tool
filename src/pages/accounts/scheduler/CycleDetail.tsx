@@ -88,6 +88,7 @@ export default function CycleDetailPage() {
   const [templateCrewCount, setTemplateCrewCount] = useState<number | null>(null)
   const [templateOptimizedAt, setTemplateOptimizedAt] = useState<string | null>(null)
   const [regeneratingTemplate, setRegeneratingTemplate] = useState(false)
+  const [regeneratingCycle, setRegeneratingCycle] = useState(false)
   const [templateUnplaced, setTemplateUnplaced] = useState<Array<{
     service_location_id?: string
     property_id?: string
@@ -155,6 +156,40 @@ export default function CycleDetailPage() {
   }, [cycleId, getToken])
 
   useEffect(() => { load() }, [load])
+
+  // Re-derive THIS cycle from the parent template. Use this after a
+  // template regenerate to refresh the existing cycle's scheduled
+  // visits + crew_days. apply_template_changes=true tells generate-
+  // cycle to overwrite the existing cycle instead of skipping it.
+  const regenerateCycle = useCallback(async () => {
+    if (!cycle?.template_id || !cycle?.start_date) return
+    setRegeneratingCycle(true)
+    setError(null)
+    try {
+      const token = await getToken()
+      const res = await fetch(
+        `/api/scheduler/templates/${cycle.template_id}/generate-cycle`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            start_date: cycle.start_date,
+            cycle_number: cycle.cycle_number,
+            apply_template_changes: true,
+          }),
+        }
+      )
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        throw new Error((j as any).error ?? `HTTP ${res.status}`)
+      }
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRegeneratingCycle(false)
+    }
+  }, [cycle?.template_id, cycle?.start_date, cycle?.cycle_number, getToken, load])
 
   // Regenerate the parent template in-place. The cycle reads its
   // unplaced_visits from the template, so when engine code changes
@@ -583,17 +618,28 @@ export default function CycleDetailPage() {
                   <span className="font-tabular text-fg">
                     {templateOptimizedAt ? templateOptimizedAt.slice(0, 16).replace('T', ' ') : 'unknown'}
                   </span>
-                  . If recent engine fixes shipped after that, regenerate
-                  to refresh the dropped-property list and reasons.
+                  . If you recently regenerated the template, this cycle
+                  is still showing the OLD result — click "Regenerate
+                  cycle" to re-derive it from the latest template.
                 </p>
                 {cycle.template_id && (
-                  <Button
-                    size="sm"
-                    onClick={regenerateTemplate}
-                    loading={regeneratingTemplate}
-                  >
-                    Regenerate template
-                  </Button>
+                  <div className="flex gap-2 flex-wrap">
+                    <Button
+                      size="sm"
+                      onClick={regenerateCycle}
+                      loading={regeneratingCycle}
+                    >
+                      Regenerate cycle
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={regenerateTemplate}
+                      loading={regeneratingTemplate}
+                    >
+                      Regenerate template
+                    </Button>
+                  </div>
                 )}
               </div>
             </div>
