@@ -362,15 +362,15 @@ export default function CrewStrategyChart({
             <span className="font-tabular font-semibold">
               {data.crew_count_analysis.conservative.crews_needed} crews
             </span>{' '}
-            (conservative)
+            assuming 1 building/day
             {data.crew_count_analysis.optimistic.crews_needed !==
               data.crew_count_analysis.conservative.crews_needed && (
               <>
-                {' — '}
+                {' — drops to '}
                 <span className="font-tabular font-semibold">
                   {data.crew_count_analysis.optimistic.crews_needed}
                 </span>{' '}
-                with small-property pairing (optimistic)
+                if dispatchers pair up small (≤4 hr) buildings 2-per-day
               </>
             )}
           </p>
@@ -686,9 +686,12 @@ export default function CrewStrategyChart({
                 <span className="font-tabular">{o.crew_count}</span>
                 {o.crew_count_optimistic != null &&
                   o.crew_count_optimistic !== o.crew_count && (
-                    <span className="text-fg-muted text-xs">
+                    <span
+                      className="text-fg-muted text-xs"
+                      title={`Optimistic count assumes small buildings (≤4 work-hours each) get paired so a crew handles two of them in one day. ${o.crew_count_optimistic} is the floor if your dispatchers consistently pair them; ${o.crew_count} is the ceiling without pairing.`}
+                    >
                       {' '}
-                      (or <span className="font-tabular">{o.crew_count_optimistic}</span> w/ pairing)
+                      (down to <span className="font-tabular">{o.crew_count_optimistic}</span> if small buildings are paired)
                     </span>
                   )}
                 {o.surge_crew_count ? (
