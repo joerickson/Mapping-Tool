@@ -35,6 +35,20 @@ export interface CrewCountResult {
   size_class_breakdown: Record<BuildingSizeClass, number>
   total_visits_per_cycle: number
   cycles_per_year: number
+  // Phase 4 follow-up — surface the visits eating the most crew-days
+  // so the user can audit "why does it say 6 crews" — multi-day
+  // buildings + high visits_per_year are the usual suspects.
+  audit: {
+    top_consumers: Array<{
+      service_location_id: string
+      hours_per_visit: number
+      size_class: BuildingSizeClass
+      crew_days_per_visit_conservative: number
+    }>
+    multi_day_visits: number
+    multi_day_crew_days: number
+    visits_per_year_distribution: Record<number, number>
+  }
 }
 
 export function computeCrewCount(input: CrewCountInput): CrewCountResult {
@@ -46,21 +60,81 @@ export function computeCrewCount(input: CrewCountInput): CrewCountResult {
     large: 0,
     multi_day: 0,
   }
+  let multiDayVisits = 0
+  let multiDayCrewDays = 0
+  // Group visits by service_location_id to count visits/year.
+  const visitsBySl = new Map<string, number>()
+  // Per-visit contribution so we can surface the worst offenders.
+  type Contributor = {
+    service_location_id: string
+    hours_per_visit: number
+    size_class: BuildingSizeClass
+    crew_days_per_visit_conservative: number
+  }
+  const contributors: Contributor[] = []
 
   for (const visit of input.routed_visits) {
     const sizeClass = effectiveSizeClass(visit)
     sizeBreakdown[sizeClass]++
-    conservativeCrewDays += crewDaysPerVisit(
+    const dConservative = crewDaysPerVisit(
       sizeClass,
       visit.hours_per_visit,
       'conservative'
     )
+    conservativeCrewDays += dConservative
     optimisticCrewDays += crewDaysPerVisit(
       sizeClass,
       visit.hours_per_visit,
       'optimistic'
     )
+    if (sizeClass === 'multi_day') {
+      multiDayVisits += 1
+      multiDayCrewDays += dConservative
+    }
+    visitsBySl.set(
+      visit.service_location_id,
+      (visitsBySl.get(visit.service_location_id) ?? 0) + 1
+    )
+    contributors.push({
+      service_location_id: visit.service_location_id,
+      hours_per_visit: visit.hours_per_visit,
+      size_class: sizeClass,
+      crew_days_per_visit_conservative: dConservative,
+    })
   }
+
+  // Distribution of visits/year across service_locations — high
+  // visits_per_year (e.g. 6 instead of the default 2) is the other
+  // usual suspect for an inflated crew_count.
+  const visitsDistribution: Record<number, number> = {}
+  for (const count of visitsBySl.values()) {
+    visitsDistribution[count] = (visitsDistribution[count] ?? 0) + 1
+  }
+
+  // Top 8 unique service_locations sorted by crew-days they
+  // consumed (sum across all their visits in the cycle).
+  const totalsBySl = new Map<string, Contributor & { totalDays: number }>()
+  for (const c of contributors) {
+    const existing = totalsBySl.get(c.service_location_id)
+    if (existing) {
+      existing.totalDays += c.crew_days_per_visit_conservative
+    } else {
+      totalsBySl.set(c.service_location_id, {
+        ...c,
+        totalDays: c.crew_days_per_visit_conservative,
+      })
+    }
+  }
+  const topConsumers = Array.from(totalsBySl.values())
+    .sort((a, b) => b.totalDays - a.totalDays)
+    .slice(0, 8)
+    .map((c) => ({
+      service_location_id: c.service_location_id,
+      hours_per_visit: Math.round(c.hours_per_visit * 10) / 10,
+      size_class: c.size_class,
+      crew_days_per_visit_conservative:
+        Math.round(c.crew_days_per_visit_conservative * 10) / 10,
+    }))
 
   const start = input.cycle_start_date ?? new Date()
   const end = new Date(
@@ -105,6 +179,12 @@ export function computeCrewCount(input: CrewCountInput): CrewCountResult {
     size_class_breakdown: sizeBreakdown,
     total_visits_per_cycle: input.routed_visits.length,
     cycles_per_year: input.cycles_per_year,
+    audit: {
+      top_consumers: topConsumers,
+      multi_day_visits: multiDayVisits,
+      multi_day_crew_days: Math.round(multiDayCrewDays * 10) / 10,
+      visits_per_year_distribution: visitsDistribution,
+    },
   }
 }
 

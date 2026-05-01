@@ -427,10 +427,15 @@ export function computeCrewStrategy(
   })
   // Per-branch slice for Option B (each branch's crews scale with its own
   // building-day workload).
-  const crewCountPerBranch = branches.map((_, i) => {
+  const crewCountPerBranchFull = branches.map((_, i) => {
     const branchVisits = routedVisits.filter((v) => v.branch_idx === i)
     if (branchVisits.length === 0) {
-      return { conservative: 1, optimistic: 1 }
+      return {
+        conservative: 1,
+        optimistic: 1,
+        building_days: 0,
+        working_days: crewCountAnalysis.conservative.working_days_per_cycle,
+      }
     }
     const a = computeCrewCount({
       routed_visits: branchVisits,
@@ -440,8 +445,27 @@ export function computeCrewStrategy(
     return {
       conservative: a.conservative.crews_needed,
       optimistic: a.optimistic.crews_needed,
+      building_days: a.conservative.total_crew_days_per_cycle,
+      working_days: a.conservative.working_days_per_cycle,
     }
   })
+  const crewCountPerBranch = crewCountPerBranchFull
+  // Phase 4 follow-up — utilization is now BUILDING-DAY based, not
+  // hours-based. A crew can only do one building per day (with small-
+  // property pairing as the optimistic ceiling), so dividing total
+  // hours by total available hours gave a meaningless number — the
+  // crew might work 6 hours and still have used the entire day's
+  // capacity because they can't drive to a second building.
+  const annualBuildingDays =
+    crewCountAnalysis.conservative.total_crew_days_per_cycle *
+    (crewCountAnalysis.cycles_per_year ?? 1)
+  const annualBuildingDaysOptimistic =
+    crewCountAnalysis.optimistic.total_crew_days_per_cycle *
+    (crewCountAnalysis.cycles_per_year ?? 1)
+  const workingDaysPerYearForUtil =
+    Number.isFinite(inputs.working_days_per_year) && (inputs.working_days_per_year ?? 0) > 0
+      ? Number(inputs.working_days_per_year)
+      : DEFAULT_WORKING_DAYS_PER_YEAR
 
   // ── Option A: Roving ──────────────────────────────────────────────────────
   // Variable cost — paid only for hours worked. Crew count comes from the
@@ -450,11 +474,19 @@ export function computeCrewStrategy(
   const optionA_crews_optimistic = crewCountAnalysis.optimistic.crews_needed
   const optionA_labor =
     totalAnnualHours * inputs.hourly_loaded_labor_cost * inputs.crew_size
+  // Building-day utilization: how many crew-days of work do we have
+  // vs how many workdays we're paying the crews to be available?
+  // Pairing-aware (uses optimistic count if it pulled small buildings
+  // together) since paired days only count as 1 used day.
   const optionA_util_pct =
     optionA_crews > 0
       ? Math.min(
           100,
-          Math.round((totalAnnualHours / (optionA_crews * fteHoursPerYear)) * 100)
+          Math.round(
+            (annualBuildingDaysOptimistic /
+              (optionA_crews * workingDaysPerYearForUtil)) *
+              100
+          )
         )
       : 0
   const optionA_vehicle =
@@ -522,7 +554,14 @@ export function computeCrewStrategy(
   for (let i = 0; i < branches.length; i++) {
     const crews = crewsPerBranch[i]
     const available = crews * fteHoursPerYear
-    const utilPct = available > 0 ? Math.round((branchHours[i] / available) * 100) : 0
+    // Building-day util per branch — same shift as Option A.
+    const branchBuildingDays =
+      crewCountPerBranchFull[i]?.building_days ?? 0
+    const branchAvailableDays = crews * workingDaysPerYearForUtil
+    const utilPct =
+      branchAvailableDays > 0
+        ? Math.min(100, Math.round((branchBuildingDays / branchAvailableDays) * 100))
+        : 0
     const status = classifyUtilization(utilPct, band)
     optionB_util_sum += utilPct
     optionB_util_count += 1
@@ -588,14 +627,16 @@ export function computeCrewStrategy(
     inputs.surge_premium_multiplier *
     inputs.crew_size
   const optionC_labor = optionC_FT_labor + optionC_surge_labor
-  // FT crews are highly utilized year-round; surge crews are utilized only
-  // when active. A blended utilization estimate.
-  const optionC_FT_capacity = optionC_FT_crews * fteHoursPerYear
-  const optionC_FT_util = Math.min(
-    1,
-    totalAnnualHours / (optionC_FT_capacity + inputs.surge_crew_count * inputs.surge_weeks_per_year * hoursPerWeek)
-  )
-  const optionC_util_pct = Math.round(Math.min(0.99, optionC_FT_util * 1.07) * 100) // FT highly utilized
+  // FT crews handle the steady-state building-day load; surge crews
+  // pick up peak periods. Convert surge weeks into building-days
+  // (5 working days per week) for the same denominator.
+  const optionC_capacity_days =
+    optionC_FT_crews * workingDaysPerYearForUtil +
+    inputs.surge_crew_count * inputs.surge_weeks_per_year * 5
+  const optionC_util_pct =
+    optionC_capacity_days > 0
+      ? Math.min(99, Math.round((annualBuildingDaysOptimistic / optionC_capacity_days) * 100))
+      : 0
   const optionC_vehicle =
     (optionC_FT_crews + inputs.surge_crew_count) *
     inputs.vehicles_per_crew *
@@ -636,22 +677,41 @@ export function computeCrewStrategy(
   }
 
   // ── Per-region rollup for Option B ────────────────────────────────────────
+  // Building-day based: aggregate building-days needed across branches
+  // in the region, divided by total available crew-days for those
+  // branches. work_hours/available_hours kept for display only.
   const regionMap = new Map<
     string,
-    { branches_in_region: string[]; work_hours: number; available_hours: number }
+    {
+      branches_in_region: string[]
+      work_hours: number
+      available_hours: number
+      building_days: number
+      available_days: number
+    }
   >()
   for (let i = 0; i < branches.length; i++) {
     const region = branchMeta[i].region
     const cur =
-      regionMap.get(region) ?? { branches_in_region: [], work_hours: 0, available_hours: 0 }
+      regionMap.get(region) ?? {
+        branches_in_region: [],
+        work_hours: 0,
+        available_hours: 0,
+        building_days: 0,
+        available_days: 0,
+      }
     cur.branches_in_region.push(branchMeta[i].city_state)
     cur.work_hours += branchHours[i]
     cur.available_hours += crewsPerBranch[i] * fteHoursPerYear
+    cur.building_days += crewCountPerBranchFull[i]?.building_days ?? 0
+    cur.available_days += crewsPerBranch[i] * workingDaysPerYearForUtil
     regionMap.set(region, cur)
   }
   const optionB_per_region = Array.from(regionMap.entries()).map(([region, v]) => {
     const utilPct =
-      v.available_hours > 0 ? Math.round((v.work_hours / v.available_hours) * 100) : 0
+      v.available_days > 0
+        ? Math.min(100, Math.round((v.building_days / v.available_days) * 100))
+        : 0
     return {
       region,
       branches_in_region: v.branches_in_region,
@@ -664,7 +724,14 @@ export function computeCrewStrategy(
 
   const optionB_portfolio_pct =
     optionB_crews > 0
-      ? Math.round((totalProjectHours / (optionB_crews * fteHoursPerYear)) * 100)
+      ? Math.min(
+          100,
+          Math.round(
+            (annualBuildingDays /
+              (optionB_crews * workingDaysPerYearForUtil)) *
+              100
+          )
+        )
       : 0
   const optionB_portfolio = {
     crew_count: optionB_crews,

@@ -130,8 +130,16 @@ export async function computeCrewUtilization(
       const route = routeByKey.get(`${crewIdx}|${date}`)
       if (route) {
         const workHours = (route.total_work_minutes ?? 0) / 60
-        const utilPct =
-          capacity > 0 ? Math.round((workHours / capacity) * 100) : 0
+        const stops = Array.isArray(route.route) ? (route.route as any[]) : []
+        // Building-day utilization: a crew can only do one building
+        // per day (with small-property pairing as the optimistic
+        // ceiling). If the crew has any visits at all that day, the
+        // day is "used" — hours-fraction is informational only. The
+        // old hours/capacity ratio implied a 6-hour day was 60%
+        // utilized when in reality the crew can't go to a second
+        // building, so the day is fully consumed.
+        const dayIsUsed = stops.length > 0
+        const utilPct = dayIsUsed ? 100 : 0
         let kind: CrewDayStateKind
         if (route.day_type === 'travel') {
           kind = 'travel_day'
@@ -146,14 +154,11 @@ export async function computeCrewUtilization(
         ) {
           // Mid-stretch of a multi-day overnight trip.
           kind = 'overnight_continuation'
-        } else if (utilPct >= 90) {
+        } else if (dayIsUsed) {
           kind = 'fully_utilized'
-        } else if (utilPct >= 30) {
-          kind = 'partial'
         } else {
           kind = 'idle'
         }
-        const stops = Array.isArray(route.route) ? (route.route as any[]) : []
         const addresses = stops
           .map((s) => (typeof s?.address === 'string' ? s.address.trim() : null))
           .filter((s): s is string => !!s)

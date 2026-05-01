@@ -103,6 +103,17 @@ interface CrewCountAnalysis {
   }
   total_visits_per_cycle: number
   cycles_per_year: number
+  audit?: {
+    top_consumers: Array<{
+      service_location_id: string
+      hours_per_visit: number
+      size_class: 'small' | 'standard' | 'large' | 'multi_day'
+      crew_days_per_visit_conservative: number
+    }>
+    multi_day_visits: number
+    multi_day_crew_days: number
+    visits_per_year_distribution: Record<string, number>
+  }
 }
 
 interface CrewStrategyBranch {
@@ -392,6 +403,91 @@ export default function CrewStrategyChart({
               </span>
             </Stat>
           </dl>
+          {data.crew_count_analysis.audit && (
+            <details className="mt-4 group">
+              <summary className="cursor-pointer text-xs font-semibold text-accent hover:underline list-none">
+                Why this many crews? Audit the math ▾
+              </summary>
+              <div className="mt-3 space-y-3 text-xs">
+                {data.crew_count_analysis.audit.multi_day_visits > 0 && (
+                  <div className="rounded-md border border-warning/30 bg-warning/5 p-3">
+                    <p className="font-semibold text-fg">
+                      Multi-day buildings consume {data.crew_count_analysis.audit.multi_day_crew_days} crew-days
+                    </p>
+                    <p className="mt-1 text-fg-muted leading-relaxed">
+                      <span className="font-tabular">{data.crew_count_analysis.audit.multi_day_visits}</span> visit
+                      {data.crew_count_analysis.audit.multi_day_visits === 1 ? '' : 's'} are at buildings
+                      &gt;16 hours each, which take{' '}
+                      <span className="font-mono">ceil(hours ÷ 8)</span> crew-days per visit instead of 1.
+                      {' '}A 32-hour building = 4 crew-days, not 1.
+                    </p>
+                  </div>
+                )}
+                {Object.keys(data.crew_count_analysis.audit.visits_per_year_distribution).length > 1 && (
+                  <div className="rounded-md border border-border bg-surface p-3">
+                    <p className="font-semibold text-fg">Visits per year distribution</p>
+                    <ul className="mt-1 text-fg-muted">
+                      {Object.entries(
+                        data.crew_count_analysis.audit.visits_per_year_distribution
+                      )
+                        .sort(([a], [b]) => Number(a) - Number(b))
+                        .map(([visits, count]) => (
+                          <li key={visits}>
+                            <span className="font-tabular">{count}</span> propert
+                            {count === 1 ? 'y' : 'ies'} visited{' '}
+                            <span className="font-tabular">{visits}</span>×/year ={' '}
+                            <span className="font-tabular">{Number(visits) * count}</span> crew-days
+                          </li>
+                        ))}
+                    </ul>
+                    <p className="mt-2 text-fg-subtle italic">
+                      A property visited 4×/year contributes 4 crew-days, not 1.
+                      Default is 2; check Cost Assumptions or per-SL overrides if any are higher.
+                    </p>
+                  </div>
+                )}
+                {data.crew_count_analysis.audit.top_consumers.length > 0 && (
+                  <div className="rounded-md border border-border bg-surface p-3">
+                    <p className="font-semibold text-fg">Top crew-day consumers</p>
+                    <table className="mt-2 w-full text-[11px]">
+                      <thead className="text-fg-subtle text-[10px] uppercase tracking-wider">
+                        <tr>
+                          <th className="text-left pb-1">Property (id)</th>
+                          <th className="text-right pb-1">Hours/visit</th>
+                          <th className="text-right pb-1">Size class</th>
+                          <th className="text-right pb-1">Crew-days/visit</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.crew_count_analysis.audit.top_consumers.map((c) => (
+                          <tr key={c.service_location_id}>
+                            <td className="py-1 font-mono text-fg-muted">
+                              {c.service_location_id.slice(0, 8)}…
+                            </td>
+                            <td className="py-1 text-right font-tabular">
+                              {c.hours_per_visit}
+                            </td>
+                            <td className="py-1 text-right font-tabular">
+                              {c.size_class}
+                            </td>
+                            <td className="py-1 text-right font-mono font-semibold">
+                              {c.crew_days_per_visit_conservative}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                <p className="text-fg-subtle italic leading-relaxed">
+                  Formula: total crew-days ÷ working days/cycle = crews needed.
+                  Each visit contributes 1 crew-day (1 building/day rule), except
+                  multi-day buildings which consume <span className="font-mono">ceil(hours ÷ 8)</span> days.
+                  Optimistic mode pairs two small (≤4hr) buildings per day, halving their contribution.
+                </p>
+              </div>
+            </details>
+          )}
         </Card>
       )}
 
