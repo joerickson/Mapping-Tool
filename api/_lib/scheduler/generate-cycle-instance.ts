@@ -142,8 +142,14 @@ export async function generateCycleInstance(
 
   for (const trip of trips) {
     for (const day of trip.days ?? []) {
+      // dayOffset is a working-day count (the routing engine sequences
+      // trips back-to-back on workdays, not calendar days). crew-utilization
+      // also bucketizes by workdays. Cycle gen previously used addDays
+      // which counts calendar days, landing visits on Sat/Sun and creating
+      // a mismatch between Calendar view (workday-bucketized) and List view
+      // (raw DB rows).
       const dayOffset = (trip.relative_start_day ?? 0) + ((day.trip_day_number ?? 1) - 1)
-      const scheduledDate = addDays(startDate, dayOffset)
+      const scheduledDate = addWorkdays(startDate, dayOffset)
       if (scheduledDate > endDate) continue
 
       const crewDayRouteId = crypto.randomUUID()
@@ -289,6 +295,24 @@ function addDays(date: string, n: number): string {
   const [y, m, d] = date.split('-').map(Number)
   const dt = new Date(Date.UTC(y, m - 1, d))
   dt.setUTCDate(dt.getUTCDate() + n)
+  return dt.toISOString().slice(0, 10)
+}
+
+// Advance N working days (Mon-Fri) from a YYYY-MM-DD date. If the start
+// date itself is a weekend, rolls forward to the next Monday before
+// counting workdays — so cycle gen never returns a weekend date.
+function addWorkdays(date: string, n: number): string {
+  const [y, m, d] = date.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  while (dt.getUTCDay() === 0 || dt.getUTCDay() === 6) {
+    dt.setUTCDate(dt.getUTCDate() + 1)
+  }
+  let remaining = n
+  while (remaining > 0) {
+    dt.setUTCDate(dt.getUTCDate() + 1)
+    const dow = dt.getUTCDay()
+    if (dow !== 0 && dow !== 6) remaining--
+  }
   return dt.toISOString().slice(0, 10)
 }
 
