@@ -386,7 +386,19 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
   const localBranchAssignment = new Map<string, number>()
   const branchAssignmentsOutput: TemplateBuildResult['branch_assignments'] = []
   let propertiesTransferred = 0
-  if (local.length > 0 && input.branches.length > 1) {
+  // Phase 4.5e — auto-rebalance disabled. Pre-cluster transfers kept
+  // breaking clusters: moving a Frisco-border property to Sugar Land's
+  // bucket created longer-drive routes that inflated daysPerTrip
+  // estimates AND understaffed Frisco's crew so Frisco's overnight
+  // (OK) properties dropped. Net effect: more overflow, not less.
+  //
+  // The capacity-circle algorithm STAYS as the recommendation engine,
+  // but transfers only happen via explicit operator override (via
+  // Branch Assignments view + future map view). Gap-fill (#196)
+  // remains the safety net that turns idle days into placement slots
+  // for any single-day overflow.
+  const ENABLE_AUTO_REBALANCE = false
+  if (ENABLE_AUTO_REBALANCE && local.length > 0 && input.branches.length > 1) {
     type EnrichedVisit = {
       v: VisitSpec
       distances: number[]
@@ -561,19 +573,45 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
       // to the engine's existing unplaced-visits path. Gap-fill (#196)
       // takes a final crack on idle workdays.
     }
+  }
 
-    // Emit per-property branch_assignments so the UI can show the
-    // recommendation and let operators override.
-    for (const e of enriched) {
-      const assigned = localBranchAssignment.get(e.v.service_location_id) ?? -1
+  // Emit per-property branch_assignments output (always — even with
+  // auto-rebalance disabled). When auto-rebalance is off, every local
+  // property's assigned_branch_idx is its nearest branch unless the
+  // operator has set an explicit override; the UI uses this as the
+  // baseline for manual reassignment via Branch Assignments + map view.
+  if (local.length > 0 && input.branches.length > 0) {
+    const overrides = input.branch_assignment_overrides ?? {}
+    for (const v of local) {
+      let nearest = 0
+      let bestDist = Number.POSITIVE_INFINITY
+      for (let i = 0; i < input.branches.length; i++) {
+        const d = haversineMiles({ lat: v.lat, lng: v.lng }, input.branches[i])
+        if (d < bestDist) {
+          bestDist = d
+          nearest = i
+        }
+      }
+      const overrideVal = overrides[v.service_location_id]
+      const hasOverride =
+        typeof overrideVal === 'number' &&
+        overrideVal >= 0 &&
+        overrideVal < input.branches.length
+      const assigned = localBranchAssignment.get(v.service_location_id) ??
+        (hasOverride ? overrideVal : nearest)
+      // Apply override if set; otherwise keep nearest
+      if (!localBranchAssignment.has(v.service_location_id)) {
+        localBranchAssignment.set(v.service_location_id, assigned)
+        if (assigned !== nearest) propertiesTransferred++
+      }
       branchAssignmentsOutput.push({
-        service_location_id: e.v.service_location_id,
-        property_id: e.v.property_id,
-        address: e.v.address,
-        nearest_branch_idx: e.nearest_idx,
+        service_location_id: v.service_location_id,
+        property_id: v.property_id,
+        address: v.address,
+        nearest_branch_idx: nearest,
         assigned_branch_idx: assigned,
-        transferred: assigned !== e.nearest_idx && assigned >= 0,
-        overridden: overriddenIds.has(e.v.service_location_id),
+        transferred: assigned !== nearest,
+        overridden: hasOverride,
         is_remote: false,
       })
     }
