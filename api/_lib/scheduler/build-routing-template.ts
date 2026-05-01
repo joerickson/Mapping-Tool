@@ -139,6 +139,22 @@ export interface TemplateBuildResult {
   soft_constraint_violations: number
   optimization_score: number
   optimizer_notes: string
+  classification_audit: {
+    total_properties: number
+    local_count: number
+    remote_count: number
+    remote_pct: number
+    threshold_hours: number
+    drive_speed_mph: number
+    branch_validation_issues: string[]
+    sample: Array<{
+      address: string
+      nearest_branch: string
+      miles_to_nearest: number
+      drive_hours_to_nearest: number
+      classified: 'local' | 'remote'
+    }>
+  }
 }
 
 const DAYS_PER_YEAR = 365
@@ -223,22 +239,75 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
   const overnightTriggerHours = input.config.overnight_trigger_one_way_hours
   const speed = input.config.drive_speed_mph
 
+  // Defensive: branches with NaN/0 lat or lng cause haversine to return
+  // garbage (often huge), which marks every property as remote. This
+  // is a frequent root cause of "every property looks like overnight."
+  const branchValidationIssues: string[] = []
+  for (let i = 0; i < input.branches.length; i++) {
+    const b = input.branches[i]
+    if (
+      !Number.isFinite(b.lat) ||
+      !Number.isFinite(b.lng) ||
+      Math.abs(b.lat) < 1e-6 ||
+      Math.abs(b.lng) < 1e-6 ||
+      Math.abs(b.lat) > 90 ||
+      Math.abs(b.lng) > 180
+    ) {
+      branchValidationIssues.push(
+        `Branch "${b.name ?? `#${i + 1}`}" has invalid coordinates (${b.lat}, ${b.lng}); every property will look far from this branch.`
+      )
+    }
+  }
+  if (
+    !Number.isFinite(overnightTriggerHours) ||
+    overnightTriggerHours <= 0
+  ) {
+    branchValidationIssues.push(
+      `overnight_trigger_one_way_hours is ${overnightTriggerHours}; with a non-positive threshold every property classifies as overnight. Set to 3 hr unless you really mean it.`
+    )
+  }
+
   const local: VisitSpec[] = []
   const remote: VisitSpec[] = []
+  // Audit: per-property classification trace, sampled for the response
+  // notes when an unusually large fraction lands in "remote." Helps
+  // the user diagnose Cycle 7-style "everything is overnight" reports.
+  type ClassEntry = {
+    address: string
+    nearest_branch: string
+    miles_to_nearest: number
+    drive_hours_to_nearest: number
+    classified: 'local' | 'remote'
+  }
+  const classificationAudit: ClassEntry[] = []
   for (const v of visitSpecs) {
     if (input.branches.length === 0) {
       local.push(v)
       continue
     }
     let bestDist = Infinity
+    let bestBranchName = ''
     for (const b of input.branches) {
       const d = haversineMiles({ lat: v.lat, lng: v.lng }, b)
-      if (d < bestDist) bestDist = d
+      if (d < bestDist) {
+        bestDist = d
+        bestBranchName = b.name ?? ''
+      }
     }
     const hours = driveTimeMinutes(bestDist, speed) / 60
-    if (hours > overnightTriggerHours) remote.push(v)
+    const classified = hours > overnightTriggerHours ? 'remote' : 'local'
+    classificationAudit.push({
+      address: v.address,
+      nearest_branch: bestBranchName,
+      miles_to_nearest: Math.round(bestDist * 10) / 10,
+      drive_hours_to_nearest: Math.round(hours * 100) / 100,
+      classified,
+    })
+    if (classified === 'remote') remote.push(v)
     else local.push(v)
   }
+  const remotePct =
+    visitSpecs.length > 0 ? (remote.length / visitSpecs.length) * 100 : 0
 
   const clusters: ClusterSpec[] = []
   // Local clusters: one per branch.
@@ -587,6 +656,18 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
   if (totalNights > 0) {
     notes.push(`${totalNights} overnight nights/cycle across remote clusters.`)
   }
+  // Surface branch / config validation issues found during classification
+  // — the most common cause of "every property looks like overnight."
+  for (const issue of branchValidationIssues) {
+    notes.push(`⚠ ${issue}`)
+  }
+  if (remotePct >= 50 && visitSpecs.length >= 4) {
+    notes.push(
+      `⚠ ${Math.round(remotePct)}% of properties (${remote.length}/${visitSpecs.length}) classified as overnight. ` +
+        `Likely causes: branch coords wrong, overnight_trigger_one_way_hours too low (${overnightTriggerHours} hr), or drive_speed_mph too low (${speed} mph). ` +
+        `Sample: ${classificationAudit.slice(0, 3).map((c) => `"${c.address}" → ${c.miles_to_nearest}mi to ${c.nearest_branch} = ${c.drive_hours_to_nearest}hr (${c.classified})`).join('; ')}.`
+    )
+  }
 
   return {
     cycle_length_days: cycleDays,
@@ -624,6 +705,17 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
     soft_constraint_violations: softViolations,
     optimization_score: score,
     optimizer_notes: notes.join(' '),
+    classification_audit: {
+      total_properties: visitSpecs.length,
+      local_count: local.length,
+      remote_count: remote.length,
+      remote_pct: Math.round(remotePct * 10) / 10,
+      threshold_hours: overnightTriggerHours,
+      drive_speed_mph: speed,
+      branch_validation_issues: branchValidationIssues,
+      // First 10 sample classifications for user audit on the cycle UI.
+      sample: classificationAudit.slice(0, 10),
+    },
   }
 }
 
