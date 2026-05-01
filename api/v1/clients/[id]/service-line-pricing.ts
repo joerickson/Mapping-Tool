@@ -33,17 +33,66 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!accountId) return res.status(404).json({ error: 'Client not found' })
 
   if (req.method === 'GET') {
-    const { data, error } = await db
+    // Return ALL offerings the client has access to (account-scoped or
+    // shared), left-joined with any existing config row. Offerings
+    // without a config show up with nulls — the UI renders a "Set rate"
+    // CTA for those, eliminating the silent-exclusion bug where a new
+    // offering wasn't in the migration backfill and was therefore
+    // invisible to both the editor AND the bid breakdown.
+    const { data: offeringRows, error: offeringErr } = await db
+      .from('service_offerings')
+      .select('id, name, offering_role, account_id')
+      .or(`account_id.is.null,account_id.eq.${accountId}`)
+      .order('name', { ascending: true })
+    if (offeringErr) return res.status(500).json({ error: offeringErr.message })
+
+    const { data: configRows, error: configErr } = await db
       .from('service_line_pricing_config')
       .select(
-        'id, service_offering_id, pricing_model, rate_per_sqft_per_visit, rate_per_sqft_per_month, billable_sqft_pct, billable_sqft_pct_notes, target_gross_margin_pct_override, is_active, updated_at, service_offering:service_offerings(id, name, offering_role)'
+        'id, service_offering_id, pricing_model, rate_per_sqft_per_visit, rate_per_sqft_per_month, billable_sqft_pct, billable_sqft_pct_notes, target_gross_margin_pct_override, is_active, updated_at'
       )
       .eq('account_id', accountId)
       .eq('client_id', clientId)
       .eq('is_active', true)
-      .order('updated_at', { ascending: true })
-    if (error) return res.status(500).json({ error: error.message })
-    return res.status(200).json({ configs: data ?? [] })
+    if (configErr) return res.status(500).json({ error: configErr.message })
+
+    const configByOfferingId = new Map<string, any>()
+    for (const c of configRows ?? []) {
+      configByOfferingId.set((c as any).service_offering_id, c)
+    }
+
+    // Merge: every offering yields a row. Offerings with a config keep
+    // its values; offerings without get the placeholder shape with
+    // nulls + a sensible default pricing_model based on offering_role
+    // ('addon' / 'recurring' / 'project') so the UI's editor opens
+    // pre-filled with a reasonable starting point.
+    const configs = (offeringRows ?? []).map((o: any) => {
+      const cfg = configByOfferingId.get(o.id)
+      if (cfg) {
+        return {
+          ...cfg,
+          service_offering: { id: o.id, name: o.name, offering_role: o.offering_role },
+          has_config: true,
+        }
+      }
+      const defaultModel: 'per_visit_blended_sqft' | 'per_sqft_monthly' =
+        o.offering_role === 'recurring' ? 'per_sqft_monthly' : 'per_visit_blended_sqft'
+      return {
+        id: null,
+        service_offering_id: o.id,
+        pricing_model: defaultModel,
+        rate_per_sqft_per_visit: null,
+        rate_per_sqft_per_month: null,
+        billable_sqft_pct: 100,
+        billable_sqft_pct_notes: null,
+        target_gross_margin_pct_override: null,
+        is_active: true,
+        updated_at: null,
+        service_offering: { id: o.id, name: o.name, offering_role: o.offering_role },
+        has_config: false,
+      }
+    })
+    return res.status(200).json({ configs })
   }
 
   if (req.method === 'PUT') {

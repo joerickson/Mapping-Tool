@@ -34,7 +34,7 @@ import {
 type PricingModel = 'per_visit_blended_sqft' | 'per_sqft_monthly'
 
 interface PricingConfig {
-  id: string
+  id: string | null
   service_offering_id: string
   pricing_model: PricingModel
   rate_per_sqft_per_visit: number | null
@@ -43,6 +43,10 @@ interface PricingConfig {
   billable_sqft_pct_notes?: string | null
   target_gross_margin_pct_override: number | null
   service_offering: { id: string; name: string; offering_role?: string | null } | null
+  // Phase 4 follow-up — endpoint returns every offering, including
+  // those without a saved config. has_config = true when a row
+  // exists in service_line_pricing_config, false for placeholder rows.
+  has_config?: boolean
 }
 
 interface Props {
@@ -159,7 +163,8 @@ export default function ServiceLinePricingSection({
 
       {sorted.length === 0 ? (
         <p className="text-xs text-fg-muted italic">
-          No service offerings have pricing configured yet for this client.
+          No service offerings exist for this client yet. Create offerings first
+          and they'll show here for pricing.
         </p>
       ) : (
         <div className="rounded-md border border-border bg-surface overflow-hidden">
@@ -184,10 +189,19 @@ export default function ServiceLinePricingSection({
                   c.target_gross_margin_pct_override != null
                     ? `${c.target_gross_margin_pct_override}%`
                     : `${accountTargetMarginPct.toFixed(0)}% (default)`
+                const hasConfig = c.has_config !== false && rate != null
                 return (
-                  <TableRow key={c.id}>
+                  <TableRow
+                    key={c.service_offering_id}
+                    className={!hasConfig ? 'bg-warning-subtle/30' : undefined}
+                  >
                     <TableCell className="font-medium text-fg">
                       {c.service_offering?.name ?? '(unknown)'}
+                      {!hasConfig && (
+                        <span className="ml-2 text-[10px] text-warning font-medium">
+                          unpriced
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline" className="text-[10px]">
@@ -195,7 +209,9 @@ export default function ServiceLinePricingSection({
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right font-tabular text-xs">
-                      {rate != null ? `$${Number(rate).toFixed(2)}/sqft` : '—'}
+                      {rate != null
+                        ? `$${Number(rate).toFixed(2)}/sqft`
+                        : <span className="text-warning">no rate</span>}
                     </TableCell>
                     <TableCell className="text-right font-tabular text-xs">
                       {Number(c.billable_sqft_pct).toFixed(0)}%
@@ -207,10 +223,14 @@ export default function ServiceLinePricingSection({
                       <button
                         type="button"
                         onClick={() => setEditing(c)}
-                        className="text-fg-subtle hover:text-accent inline-flex items-center gap-1 text-xs"
+                        className={
+                          hasConfig
+                            ? 'text-fg-subtle hover:text-accent inline-flex items-center gap-1 text-xs'
+                            : 'text-accent hover:underline inline-flex items-center gap-1 text-xs font-medium'
+                        }
                       >
                         <Pencil className="h-3 w-3" />
-                        Edit
+                        {hasConfig ? 'Edit' : 'Set rate'}
                       </button>
                     </TableCell>
                   </TableRow>
