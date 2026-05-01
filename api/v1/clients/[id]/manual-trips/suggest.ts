@@ -188,7 +188,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         centroid_lng: cLng,
         one_way_drive_hours_to_centroid: Math.round(oneWayHours * 100) / 100,
         miles_per_trip_estimate: Math.round(milesEstimate * 10) / 10,
-        estimated_nights_per_trip: Math.max(1, inCluster.length),
+        // Clean one on arrival day, one on departure day → hotel nights
+        // = mid days = property_count - 2 (floor of 1).
+        estimated_nights_per_trip: Math.max(1, inCluster.length - 2),
         rationale: `${inCluster.length} properties within ${clusterRadius} mi of each other, ${Math.round(oneWayHours * 10) / 10} hr drive from ${branch.name}.`,
       })
     }
