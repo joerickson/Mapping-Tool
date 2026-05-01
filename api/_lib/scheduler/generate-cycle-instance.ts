@@ -140,6 +140,12 @@ export async function generateCycleInstance(
     }
   }
 
+  // Visits whose mapped workday falls past cycle_end_date — typically
+  // because Phase 4.4 pacing spread trips out and the last few workdays
+  // landed in the next calendar month past the cycle horizon. We don't
+  // silently drop these any more; capture them and insert as unplaced
+  // rows further down so the cycle UI surfaces them.
+  const overflowVisits: Array<{ stop: any; tripLabel: string; scheduledDate: string }> = []
   for (const trip of trips) {
     for (const day of trip.days ?? []) {
       // dayOffset is a working-day count (the routing engine sequences
@@ -150,7 +156,16 @@ export async function generateCycleInstance(
       // (raw DB rows).
       const dayOffset = (trip.relative_start_day ?? 0) + ((day.trip_day_number ?? 1) - 1)
       const scheduledDate = addWorkdays(startDate, dayOffset)
-      if (scheduledDate > endDate) continue
+      if (scheduledDate > endDate) {
+        for (const stop of day.stops ?? []) {
+          overflowVisits.push({
+            stop,
+            tripLabel: trip.trip_label ?? trip.trip_id,
+            scheduledDate,
+          })
+        }
+        continue
+      }
 
       const crewDayRouteId = crypto.randomUUID()
       crewDayRoutes.push({
@@ -208,6 +223,27 @@ export async function generateCycleInstance(
         })
       }
     }
+  }
+
+  // Phase 4.4-fix — overflow visits (workday past cycle_end_date) get
+  // surfaced as unplaced so the operator knows the engine couldn't
+  // squeeze them in. They have valid stop data (property_id, hours, etc.)
+  // so we can build full unplaced rows.
+  for (const ov of overflowVisits) {
+    if (!ov.stop?.property_id || !ov.stop?.service_location_id) continue
+    scheduledVisits.push({
+      cycle_instance_id: cycleInstanceId,
+      template_id: templateId,
+      service_location_id: ov.stop.service_location_id,
+      property_id: ov.stop.property_id,
+      visit_number_in_cycle: ov.stop.visit_number_in_cycle ?? 1,
+      status: 'unplaced',
+      unplaced_reason: `Trip "${ov.tripLabel}" extended past cycle end (target workday mapped to ${ov.scheduledDate}). Add a crew, extend the cycle, or rebalance to fit this visit.`,
+      hours_per_visit_base: ov.stop.hours_per_visit_base ?? 0,
+      hours_per_visit_total:
+        (ov.stop.hours_per_visit_base ?? 0) +
+        ((ov.stop.attached_addons ?? []).reduce((s: number, a: any) => s + (a.hours ?? 0), 0)),
+    })
   }
 
   // Surface unplaced visits as scheduled_visits with status='unplaced'.

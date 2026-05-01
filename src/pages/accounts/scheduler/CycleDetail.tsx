@@ -88,6 +88,7 @@ export default function CycleDetailPage() {
   const [templateCrewCount, setTemplateCrewCount] = useState<number | null>(null)
   const [templateOptimizedAt, setTemplateOptimizedAt] = useState<string | null>(null)
   const [regeneratingTemplate, setRegeneratingTemplate] = useState(false)
+  const [regeneratingCycle, setRegeneratingCycle] = useState(false)
   const [templateUnplaced, setTemplateUnplaced] = useState<Array<{
     service_location_id?: string
     property_id?: string
@@ -155,6 +156,40 @@ export default function CycleDetailPage() {
   }, [cycleId, getToken])
 
   useEffect(() => { load() }, [load])
+
+  // Re-derive THIS cycle from the parent template. Use this after a
+  // template regenerate to refresh the existing cycle's scheduled
+  // visits + crew_days. apply_template_changes=true tells generate-
+  // cycle to overwrite the existing cycle instead of skipping it.
+  const regenerateCycle = useCallback(async () => {
+    if (!cycle?.template_id || !cycle?.start_date) return
+    setRegeneratingCycle(true)
+    setError(null)
+    try {
+      const token = await getToken()
+      const res = await fetch(
+        `/api/scheduler/templates/${cycle.template_id}/generate-cycle`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            start_date: cycle.start_date,
+            cycle_number: cycle.cycle_number,
+            apply_template_changes: true,
+          }),
+        }
+      )
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        throw new Error((j as any).error ?? `HTTP ${res.status}`)
+      }
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRegeneratingCycle(false)
+    }
+  }, [cycle?.template_id, cycle?.start_date, cycle?.cycle_number, getToken, load])
 
   // Regenerate the parent template in-place. The cycle reads its
   // unplaced_visits from the template, so when engine code changes
@@ -500,12 +535,29 @@ export default function CycleDetailPage() {
             tone === 'danger'
               ? 'border-danger/40 bg-danger-subtle text-fg'
               : 'border-warning/40 bg-warning-subtle text-fg'
-          // Cluster the unplaced reasons so the user can spot patterns
-          // ("8 of 9 say trip ran out of cycle days for cluster X").
+          // Combine sources: template's pre-engine unplaced (e.g. missing
+          // coords) AND cycle-level unplaced rows (overflow + unplaceable
+          // residue). Either path produces a property the operator needs
+          // to see, so merge them into one list.
+          type DroppedRow = { property_id?: string; address: string; reason: string }
+          const cycleUnplacedRows: DroppedRow[] = unplacedVisits.map((v) => ({
+            property_id: (v as any).property_id ?? undefined,
+            address:
+              v.service_locations?.property?.address_line1 ??
+              v.service_locations?.display_name ??
+              v.service_location_id ??
+              '—',
+            reason: v.unplaced_reason ?? 'unknown',
+          }))
+          const templateUnplacedRows: DroppedRow[] = templateUnplaced.map((u) => ({
+            property_id: u.property_id,
+            address: u.address ?? u.service_location_id ?? '—',
+            reason: u.detail ?? u.reason ?? 'unknown',
+          }))
+          const allDropped: DroppedRow[] = [...cycleUnplacedRows, ...templateUnplacedRows]
           const reasonCounts = new Map<string, number>()
-          for (const u of templateUnplaced) {
-            const key = (u.detail ?? u.reason ?? 'unknown').toString()
-            reasonCounts.set(key, (reasonCounts.get(key) ?? 0) + 1)
+          for (const u of allDropped) {
+            reasonCounts.set(u.reason, (reasonCounts.get(u.reason) ?? 0) + 1)
           }
           const reasonRows = Array.from(reasonCounts.entries()).sort((a, b) => b[1] - a[1])
 
@@ -532,11 +584,11 @@ export default function CycleDetailPage() {
                 )}
               </ul>
 
-              {templateUnplaced.length > 0 && (
+              {allDropped.length > 0 && (
                 <details className="text-xs">
                   <summary className="cursor-pointer text-accent hover:underline">
-                    Show {templateUnplaced.length} dropped propert
-                    {templateUnplaced.length === 1 ? 'y' : 'ies'}
+                    Show {allDropped.length} dropped propert
+                    {allDropped.length === 1 ? 'y' : 'ies'}
                   </summary>
                   {reasonRows.length > 0 && (
                     <div className="mt-2 rounded border border-border bg-surface px-2 py-1.5">
@@ -554,23 +606,19 @@ export default function CycleDetailPage() {
                     </div>
                   )}
                   <ul className="mt-2 max-h-64 overflow-y-auto rounded border border-border bg-surface divide-y divide-border">
-                    {templateUnplaced.map((u, i) => (
-                      <li key={u.service_location_id ?? i} className="px-2 py-1.5">
+                    {allDropped.map((u, i) => (
+                      <li key={i} className="px-2 py-1.5">
                         {u.property_id ? (
                           <Link
                             to={`/properties/${u.property_id}`}
                             className="font-medium text-accent hover:underline"
                           >
-                            {u.address ?? u.service_location_id ?? '—'}
+                            {u.address}
                           </Link>
                         ) : (
-                          <p className="font-medium text-fg">
-                            {u.address ?? u.service_location_id ?? '—'}
-                          </p>
+                          <p className="font-medium text-fg">{u.address}</p>
                         )}
-                        <p className="text-[11px] text-fg-muted">
-                          {u.detail ?? u.reason ?? 'unknown'}
-                        </p>
+                        <p className="text-[11px] text-fg-muted">{u.reason}</p>
                       </li>
                     ))}
                   </ul>
@@ -583,17 +631,28 @@ export default function CycleDetailPage() {
                   <span className="font-tabular text-fg">
                     {templateOptimizedAt ? templateOptimizedAt.slice(0, 16).replace('T', ' ') : 'unknown'}
                   </span>
-                  . If recent engine fixes shipped after that, regenerate
-                  to refresh the dropped-property list and reasons.
+                  . If you recently regenerated the template, this cycle
+                  is still showing the OLD result — click "Regenerate
+                  cycle" to re-derive it from the latest template.
                 </p>
                 {cycle.template_id && (
-                  <Button
-                    size="sm"
-                    onClick={regenerateTemplate}
-                    loading={regeneratingTemplate}
-                  >
-                    Regenerate template
-                  </Button>
+                  <div className="flex gap-2 flex-wrap">
+                    <Button
+                      size="sm"
+                      onClick={regenerateCycle}
+                      loading={regeneratingCycle}
+                    >
+                      Regenerate cycle
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={regenerateTemplate}
+                      loading={regeneratingTemplate}
+                    >
+                      Regenerate template
+                    </Button>
+                  </div>
                 )}
               </div>
             </div>
