@@ -230,8 +230,32 @@ export default function BuildSelectionModal({
           </DialogDescription>
         </DialogHeader>
 
+        {/* Empty-row CTA — direct affordance so the user doesn't have
+            to find the inline "Set location" button on a wide table. */}
+        {(() => {
+          const firstEmpty = rows.findIndex((r) => r.kind === 'empty')
+          if (firstEmpty < 0) return null
+          const emptyCount = rows.filter((r) => r.kind === 'empty').length
+          return (
+            <div className="flex items-center justify-between gap-3 rounded-md border border-warning/30 bg-warning-subtle px-3 py-2">
+              <p className="text-sm text-fg">
+                <span className="font-semibold">
+                  {emptyCount} row{emptyCount === 1 ? '' : 's'} need
+                  {emptyCount === 1 ? 's' : ''} a location.
+                </span>{' '}
+                <span className="text-fg-muted">
+                  Click below to set the location for row {firstEmpty + 1}.
+                </span>
+              </p>
+              <Button size="sm" onClick={() => setActivePicker(firstEmpty)}>
+                Set location for row {firstEmpty + 1}
+              </Button>
+            </div>
+          )
+        })()}
+
         {/* Branch rows */}
-        <div className="rounded-md border border-border bg-surface overflow-hidden">
+        <div className="rounded-md border border-border bg-surface overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
