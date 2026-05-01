@@ -139,6 +139,17 @@ interface BidOutputs {
     margin: number
     other: number
   }
+  // Phase 4 follow-up — offerings the client serves but that have no
+  // pricing config (or config with zero rate). When non-empty, the
+  // service-line breakdown total is structurally lower than the
+  // headline bid; UI surfaces a banner.
+  unpriced_offerings?: Array<{
+    offering_id: string
+    offering_name: string
+    sl_count: number
+    total_sqft: number
+    reason: 'no_config' | 'zero_rate'
+  }>
   // Phase 4 — service line bid pricing structure. Per-line revenue/cost/
   // margin computed from configured rates × billable sqft, with shared
   // overhead allocated by revenue share.
@@ -277,6 +288,22 @@ export default function BidPricingChart({
     }
   })()
 
+  // Reconciliation between headline bid (cost-buildup math) and
+  // service-line breakdown (rate × billable sqft × frequency). When
+  // they diverge by >10%, surface a banner. Most common cause: some
+  // offerings have SLs but no entry in service_line_pricing_config,
+  // so they're invisible to the breakdown.
+  const headlineBid = data.bid_total
+  const serviceLineRevenue = data.service_line_bid?.summary.total_annual_revenue ?? 0
+  const reconciliationGapPct =
+    headlineBid > 0 ? Math.abs(headlineBid - serviceLineRevenue) / headlineBid : 0
+  const showReconciliation =
+    !!data.service_line_bid &&
+    serviceLineRevenue > 0 &&
+    (reconciliationGapPct > 0.1 || (data.unpriced_offerings ?? []).length > 0)
+  const showAllUnpriced =
+    !data.service_line_bid && (data.unpriced_offerings ?? []).length > 0
+
   return (
     <div className="space-y-6">
       {/* Source-of-truth indicator */}
@@ -296,6 +323,65 @@ export default function BidPricingChart({
         </p>
         <p className="mt-0.5 text-fg-muted">{sourceLine.sub}</p>
       </div>
+
+      {/* Reconciliation banner — fires when the service-line breakdown
+          excludes offerings the client is actually serving, so the
+          breakdown total looks much smaller than the headline bid. */}
+      {(showReconciliation || showAllUnpriced) && (
+        <div className="rounded-md border border-warning/40 bg-warning/5 px-4 py-3 text-sm">
+          <p className="font-semibold text-warning">
+            ⚠ Service line breakdown is incomplete
+          </p>
+          {showReconciliation && (
+            <p className="mt-1 text-fg-muted">
+              Headline bid is{' '}
+              <span className="font-mono font-semibold text-fg">
+                ${headlineBid.toLocaleString()}
+              </span>{' '}
+              but the service-line breakdown sums to{' '}
+              <span className="font-mono font-semibold text-fg">
+                ${serviceLineRevenue.toLocaleString()}
+              </span>{' '}
+              — a <span className="font-tabular">{Math.round(reconciliationGapPct * 100)}%</span> gap.
+            </p>
+          )}
+          {showAllUnpriced && (
+            <p className="mt-1 text-fg-muted">
+              No service-line pricing is configured. The headline bid is computed
+              from the cost-buildup math (labor + overhead + margin) only.
+            </p>
+          )}
+          {(data.unpriced_offerings ?? []).length > 0 && (
+            <div className="mt-2">
+              <p className="text-xs text-fg">
+                {data.unpriced_offerings!.length} offering
+                {data.unpriced_offerings!.length === 1 ? '' : 's'} {' '}
+                are not priced and contribute $0 to the breakdown:
+              </p>
+              <ul className="mt-1 ml-4 list-disc text-xs text-fg-muted space-y-0.5">
+                {data.unpriced_offerings!.slice(0, 8).map((u) => (
+                  <li key={u.offering_id}>
+                    <span className="text-fg">{u.offering_name}</span>{' '}
+                    — {u.sl_count} SL{u.sl_count === 1 ? '' : 's'},{' '}
+                    {u.total_sqft.toLocaleString()} sqft (
+                    {u.reason === 'no_config' ? 'no pricing config' : 'rate is $0'}
+                    )
+                  </li>
+                ))}
+                {data.unpriced_offerings!.length > 8 && (
+                  <li className="italic">
+                    +{data.unpriced_offerings!.length - 8} more
+                  </li>
+                )}
+              </ul>
+              <p className="mt-2 text-xs text-fg-muted">
+                Set rates in <span className="font-medium">Cost Assumptions → Service line pricing</span>{' '}
+                to bring these into the breakdown.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Headline bid number — quiet 1px-bordered card per design rules
           (the legacy version used a green→teal gradient + 2px border which
@@ -322,46 +408,96 @@ export default function BidPricingChart({
         </div>
 
         {/* Per-service-line $/sqft. Project lines = $/sqft/visit;
-            recurring janitorial = $/sqft/year (when scoped). */}
+            recurring janitorial = $/sqft/year (when scoped or
+            configured via Phase 4). */}
         {data.per_service_line && data.per_service_line.length > 0 && (
           <div className="mt-5 pt-4 border-t border-border space-y-2">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
               $/sqft by service line
             </p>
             <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {data.per_service_line.map((line) => (
-                <li
-                  key={line.service_line}
-                  className="rounded-md border border-border bg-surface-subtle/40 px-3 py-2"
-                >
-                  <div className="flex items-baseline justify-between gap-2 flex-wrap">
-                    <span className="text-xs font-medium text-fg">{line.label}</span>
-                    {line.rate_per_sqft != null ? (
-                      <span className="font-mono text-base font-semibold tabular-nums text-fg">
-                        ${line.rate_per_sqft.toFixed(2)}
-                        <span className="text-xs text-fg-muted ml-1">
-                          /sqft/{line.unit}
+              {data.per_service_line.map((line) => {
+                // When a Phase 4 config exists for this category,
+                // prefer its rate over the bid-allocation math. Maps
+                // category → average rate from service_line_bid lines
+                // whose offering name fits.
+                const sib = data.service_line_bid?.service_lines ?? []
+                const categoryMatch = sib.find((s) => {
+                  const n = s.offering_name.toLowerCase()
+                  if (line.service_line === 'project_clean')
+                    return /project clean/.test(n) && !/upholstery/.test(n)
+                  if (line.service_line === 'upholstery') return /upholstery/.test(n)
+                  if (line.service_line === 'recurring_janitorial')
+                    return /recurring janitorial|housekeeping|home cleaning/.test(n)
+                  return false
+                })
+                const phase4Rate = categoryMatch?.rate ?? null
+                const phase4Unit = categoryMatch
+                  ? categoryMatch.pricing_model === 'per_sqft_monthly'
+                    ? 'month'
+                    : 'visit'
+                  : null
+
+                const displayRate = phase4Rate != null && phase4Rate > 0
+                  ? phase4Rate
+                  : line.rate_per_sqft
+                const displayUnit = phase4Unit ?? line.unit
+                const isTrulyZero =
+                  displayRate == null || displayRate < 0.005
+
+                return (
+                  <li
+                    key={line.service_line}
+                    className="rounded-md border border-border bg-surface-subtle/40 px-3 py-2"
+                  >
+                    <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                      <span className="text-xs font-medium text-fg">{line.label}</span>
+                      {!isTrulyZero ? (
+                        <span className="font-mono text-base font-semibold tabular-nums text-fg">
+                          ${displayRate!.toFixed(2)}
+                          <span className="text-xs text-fg-muted ml-1">
+                            /sqft/{displayUnit}
+                          </span>
                         </span>
-                      </span>
-                    ) : (
-                      <span className="text-xs text-fg-subtle italic">not priced</span>
+                      ) : (
+                        <span
+                          className="text-xs text-fg-subtle italic"
+                          title={
+                            line.rate_per_sqft == null
+                              ? 'No rate is configured for this service line'
+                              : 'Rate rounds below $0.01/sqft — likely no contributing hours or sqft'
+                          }
+                        >
+                          —
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-0.5 text-[11px] text-fg-muted">
+                      <span className="font-tabular">{line.sl_count}</span> SLs ·{' '}
+                      <span className="font-tabular">{line.sqft.toLocaleString()}</span> sqft
+                      {line.avg_visits_per_year != null && displayUnit === 'visit' && (
+                        <>
+                          {' · '}
+                          <span className="font-tabular">{line.avg_visits_per_year}</span>×/yr avg
+                        </>
+                      )}
+                    </p>
+                    {phase4Rate != null && phase4Rate > 0 && (
+                      <p className="mt-0.5 text-[10px] text-accent">
+                        ✓ Rate from Service Line Pricing config
+                      </p>
                     )}
-                  </div>
-                  <p className="mt-0.5 text-[11px] text-fg-muted">
-                    <span className="font-tabular">{line.sl_count}</span> SLs ·{' '}
-                    <span className="font-tabular">{line.sqft.toLocaleString()}</span> sqft
-                    {line.avg_visits_per_year != null && line.unit === 'visit' && (
-                      <>
-                        {' · '}
-                        <span className="font-tabular">{line.avg_visits_per_year}</span>×/yr avg
-                      </>
+                    {phase4Rate == null && line.note && (
+                      <p className="mt-1 text-[11px] text-fg-subtle italic">{line.note}</p>
                     )}
-                  </p>
-                  {line.note && (
-                    <p className="mt-1 text-[11px] text-fg-subtle italic">{line.note}</p>
-                  )}
-                </li>
-              ))}
+                    {isTrulyZero && phase4Rate == null && line.rate_per_sqft != null && (
+                      <p className="mt-1 text-[11px] text-warning">
+                        Set a rate in Cost Assumptions → Service line pricing
+                      </p>
+                    )}
+                  </li>
+                )
+              })}
             </ul>
           </div>
         )}

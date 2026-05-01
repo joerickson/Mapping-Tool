@@ -344,6 +344,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ;(result.outputs as any).service_line_bid = serviceLineBid
     }
 
+    // Always emit the unpriced-offerings audit (even when service_line_bid
+    // is null because no offerings were configured at all) so the UI
+    // can surface a reconciliation banner whenever the headline bid
+    // omits offerings the client is actually serving.
+    try {
+      const audit = await computeUnpricedOfferings(db, accountId, clientId, properties, offerings)
+      ;(result.outputs as any).unpriced_offerings = audit
+    } catch (err: any) {
+      console.error('[bid-pricing] unpriced-offerings audit failed:', err?.message ?? err)
+    }
+
     await completeAnalysisRecord(db, analysisId, {
       outputs: result.outputs,
       summary_text: result.summary_text,
@@ -830,7 +841,7 @@ async function computeServiceLineBid(args: {
     .eq('account_id', accountId)
     .eq('client_id', clientId)
     .eq('is_active', true)
-  const configs = (configRows ?? []) as Array<{
+  const allConfigs = (configRows ?? []) as Array<{
     service_offering_id: string
     pricing_model: 'per_visit_blended_sqft' | 'per_sqft_monthly'
     rate_per_sqft_per_visit: number | null
@@ -838,6 +849,16 @@ async function computeServiceLineBid(args: {
     billable_sqft_pct: number
     target_gross_margin_pct_override: number | null
   }>
+
+  // An offering with a row but null/zero rate isn't really priced.
+  // Filter those out for the actual bid calc, but track them so the
+  // caller can surface "N offerings configured but missing rates".
+  const configs = allConfigs.filter((c) => {
+    if (c.pricing_model === 'per_visit_blended_sqft') {
+      return Number(c.rate_per_sqft_per_visit ?? 0) > 0
+    }
+    return Number(c.rate_per_sqft_per_month ?? 0) > 0
+  })
   if (configs.length === 0) return null
 
   const accountMargin =
@@ -949,4 +970,78 @@ async function computeServiceLineBid(args: {
           flat_amount: Number(result.outputs.cost_buildup.insurance?.total ?? 0),
         },
   })
+}
+
+// Audit which offerings the client is actually serving (≥1 SL) but
+// have no pricing config — or have a config row with a null/zero rate.
+// The UI uses this to render a reconciliation banner so the user
+// doesn't stare at a Service Line Breakdown total that's silently much
+// smaller than the headline bid because half their offerings aren't
+// in service_line_pricing_config.
+async function computeUnpricedOfferings(
+  db: any,
+  accountId: string,
+  clientId: string,
+  properties: Awaited<ReturnType<typeof loadAccountProperties>>,
+  offerings: Map<string, { id: string; name: string }>
+): Promise<Array<{
+  offering_id: string
+  offering_name: string
+  sl_count: number
+  total_sqft: number
+  reason: 'no_config' | 'zero_rate'
+}>> {
+  const { data: configRows } = await db
+    .from('service_line_pricing_config')
+    .select(
+      'service_offering_id, pricing_model, rate_per_sqft_per_visit, rate_per_sqft_per_month, is_active'
+    )
+    .eq('account_id', accountId)
+    .eq('client_id', clientId)
+    .eq('is_active', true)
+  const configByOffering = new Map<string, any>()
+  for (const c of configRows ?? []) {
+    configByOffering.set((c as any).service_offering_id, c)
+  }
+
+  type Acc = { offering_name: string; sl_count: number; total_sqft: number; reason: 'no_config' | 'zero_rate' }
+  const unpriced = new Map<string, Acc>()
+  for (const p of properties) {
+    for (const sl of p.service_locations) {
+      if (!sl.service_offering_id) continue
+      const cfg = configByOffering.get(sl.service_offering_id)
+      let reason: 'no_config' | 'zero_rate' | null = null
+      if (!cfg) {
+        reason = 'no_config'
+      } else {
+        const rate =
+          cfg.pricing_model === 'per_visit_blended_sqft'
+            ? Number(cfg.rate_per_sqft_per_visit ?? 0)
+            : Number(cfg.rate_per_sqft_per_month ?? 0)
+        if (rate <= 0) reason = 'zero_rate'
+      }
+      if (!reason) continue
+      const off = offerings.get(sl.service_offering_id)
+      const name = off?.name ?? '(unknown offering)'
+      const entry = unpriced.get(sl.service_offering_id) ?? {
+        offering_name: name,
+        sl_count: 0,
+        total_sqft: 0,
+        reason,
+      }
+      entry.sl_count += 1
+      entry.total_sqft += Number(sl.serviceable_sqft ?? 0)
+      unpriced.set(sl.service_offering_id, entry)
+    }
+  }
+
+  return Array.from(unpriced.entries())
+    .map(([offering_id, u]) => ({
+      offering_id,
+      offering_name: u.offering_name,
+      sl_count: u.sl_count,
+      total_sqft: Math.round(u.total_sqft),
+      reason: u.reason,
+    }))
+    .sort((a, b) => b.total_sqft - a.total_sqft)
 }
