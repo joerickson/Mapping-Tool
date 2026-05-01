@@ -11,6 +11,7 @@ import { Badge } from '../ui/Badge'
 import { Input } from '../ui/Input'
 import { cn } from '../../lib/cn'
 import OvernightLodgingSection from './OvernightLodgingSection'
+import SchedulingPreferencesSection from './SchedulingPreferencesSection'
 import StructuredCostsSection from './StructuredCostsSection'
 import ServiceLinePricingSection from './ServiceLinePricingSection'
 
@@ -48,6 +49,13 @@ export interface CostAssumptionsConstraints {
   insurance_annual: number
   corporate_overhead_pct: number
   target_gross_margin_pct: number
+  // Phase 4.3 — scheduling rules surfaced in SchedulingPreferencesSection.
+  scheduling_preferences?: {
+    cluster_radius_miles: number
+    pairing_max_drive_minutes: number
+    pairing_max_combined_sqft: number
+    pairing_max_buildings_per_day: number
+  }
 
   system_defaults?: Record<string, number>
 }
@@ -471,6 +479,24 @@ export default function CostAssumptionsPanel({
             clientId={clientId}
             config={data.hotel_cost_config ?? HOTEL_CONFIG_DEFAULTS}
             override={data.hotels_annual_override}
+            constraintsRow={data}
+            onSaved={() => {
+              refresh()
+              onSaved?.()
+            }}
+          />
+
+          <SchedulingPreferencesSection
+            accountId={accountId}
+            clientId={clientId}
+            config={
+              data.scheduling_preferences ?? {
+                cluster_radius_miles: 30,
+                pairing_max_drive_minutes: 30,
+                pairing_max_combined_sqft: 20000,
+                pairing_max_buildings_per_day: 2,
+              }
+            }
             constraintsRow={data}
             onSaved={() => {
               refresh()

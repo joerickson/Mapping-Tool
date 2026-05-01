@@ -202,6 +202,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       parent_offering_name: r.offering.name,
       parent_visit_interval_years: Number(r.offering.visit_interval_years ?? 0.5),
       base_hours_per_visit: baseHours,
+      serviceable_sqft: totalSqft,
       constraints: constraintsBySl.get(r.sl.id) ?? [],
       building_size_class_override:
         (r.sl as any).building_size_class_override ?? null,
@@ -211,6 +212,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const tplConfig = (tpl.config ?? {}) as Record<string, unknown>
+    const sched = constraints.scheduling_preferences
     const cfg = {
       crew_size: constraints.crew_size,
       hours_per_day: constraints.hours_per_day,
@@ -219,7 +221,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       buffer_minutes_per_stop: 15,
       drive_speed_mph: constraints.drive_speed_mph,
       overnight_trigger_one_way_hours: constraints.hotel_cost_config.overnight_trigger_one_way_hours,
-      cluster_radius_miles: 30,
+      cluster_radius_miles: sched.cluster_radius_miles,
+      in_day_pairing_max_drive_minutes: sched.pairing_max_drive_minutes,
+      in_day_pairing_max_combined_sqft: sched.pairing_max_combined_sqft,
+      in_day_pairing_max_buildings_per_day: sched.pairing_max_buildings_per_day,
       max_work_hours_per_crew_day: constraints.hotel_cost_config.max_work_hours_per_crew_day,
       fuel_cost_per_mile: constraints.fuel_cost_per_mile,
       hourly_loaded_labor_cost: constraints.hourly_loaded_labor_cost,

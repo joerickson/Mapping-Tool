@@ -30,6 +30,8 @@ export interface PropertyForBuild {
   parent_offering_name: string
   parent_visit_interval_years: number
   base_hours_per_visit: number
+  // Phase 4.3 — needed by the same-day pairing rule (combined-sqft cap).
+  serviceable_sqft: number
   constraints: StoredConstraint[]
   // Phase 3.8 — per-SL building-size override (forwarded to routeDay so
   // the in-day pairing rule respects manual reclassifications).
@@ -65,6 +67,10 @@ export interface BuildTemplateInput {
     hourly_loaded_labor_cost: number
     cost_per_night: number
     per_diem_per_night: number
+    // Phase 4.3 — passed through to routeDay for the same-day pairing rule.
+    in_day_pairing_max_drive_minutes?: number
+    in_day_pairing_max_combined_sqft?: number
+    in_day_pairing_max_buildings_per_day?: number
   }
   custom_cycle_length_days?: number
   preferences: {
@@ -95,6 +101,7 @@ interface VisitSpec {
   target_calendar_year: number
   lat: number
   lng: number
+  serviceable_sqft: number
   constraints: StoredConstraint[]
   address: string
   building_size_class_override?: 'small' | 'standard' | 'large' | 'multi_day' | null
@@ -228,6 +235,7 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
         target_calendar_year: targetCalendarYear,
         lat: p.lat,
         lng: p.lng,
+        serviceable_sqft: p.serviceable_sqft,
         constraints: p.constraints,
         address: p.address,
         building_size_class_override: p.building_size_class_override ?? null,
@@ -469,6 +477,7 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
             lng: v.lng,
             hours_per_visit: v.hours_per_visit,
             visits_per_year: 1,
+            serviceable_sqft: v.serviceable_sqft,
             constraints: v.constraints,
             building_size_class_override: v.building_size_class_override ?? null,
           }))
@@ -480,6 +489,9 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
             buffer_minutes_per_stop: input.config.buffer_minutes_per_stop,
             drive_speed_mph: input.config.drive_speed_mph,
             return_to_branch: isLikelyLastDay,
+            in_day_pairing_max_drive_minutes: input.config.in_day_pairing_max_drive_minutes,
+            in_day_pairing_max_combined_sqft: input.config.in_day_pairing_max_combined_sqft,
+            in_day_pairing_max_buildings_per_day: input.config.in_day_pairing_max_buildings_per_day,
           }
           const baseRoutingPrefs = {
             objective: 'minimize_drive' as const,
