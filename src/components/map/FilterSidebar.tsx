@@ -16,6 +16,10 @@ interface CustomFieldDef {
   field_label: string
   field_type: 'text' | 'number' | 'date' | 'select'
   select_options: string[] | null
+  // Populated when fetched with ?include_values=true. Distinct values
+  // observed on this client's SLs — used to build a dropdown for free-
+  // form fields so operators pick from real data instead of guessing.
+  distinct_values?: string[]
   client_id: string | null
   appears_in_filters: boolean
   sort_order: number
@@ -65,7 +69,7 @@ export default function FilterSidebar({ filter, onChange }: FilterSidebarProps) 
       for (const cid of filter.clients) {
         try {
           const res = await fetch(
-            `/api/v1/custom-field-definitions?client_id=${cid}`,
+            `/api/v1/custom-field-definitions?client_id=${cid}&include_values=true`,
             { headers }
           )
           if (!res.ok) continue
@@ -92,13 +96,6 @@ export default function FilterSidebar({ filter, onChange }: FilterSidebarProps) 
   }, [filter.clients, getToken])
 
   const customFilter = filter.custom ?? {}
-
-  const setCustomText = (key: string, value: string) => {
-    const next = { ...customFilter }
-    if (value.trim() === '') delete next[key]
-    else next[key] = value
-    onChange({ ...filter, custom: next })
-  }
 
   const toggleCustomSelect = (key: string, value: string) => {
     const next = { ...customFilter }
@@ -209,38 +206,40 @@ export default function FilterSidebar({ filter, onChange }: FilterSidebarProps) 
         {/* Custom fields — only when a client is selected (defs are per-client). */}
         {customDefs.map((def) => {
           const value = customFilter[def.field_key]
-          if (def.field_type === 'select') {
-            const options = def.select_options ?? []
-            const selected = Array.isArray(value) ? value : []
+          // Pick the option list. Select fields use their explicit
+          // options; everything else falls back to distinct values
+          // observed on the client's SLs (auto-discovered).
+          const options =
+            def.field_type === 'select'
+              ? (def.select_options ?? [])
+              : (def.distinct_values ?? [])
+          const selected = Array.isArray(value) ? value : []
+
+          // No options at all — for text/number/date this means no
+          // values exist on any SL yet. Skip the section rather than
+          // rendering an empty list.
+          if (options.length === 0) {
             return (
               <FilterGroup key={def.id} label={def.field_label}>
-                <ul className="max-h-36 space-y-1 overflow-y-auto pr-1">
-                  {options.length === 0 ? (
-                    <li className="text-xs text-fg-subtle italic">No options defined.</li>
-                  ) : (
-                    options.map((opt) => (
-                      <FilterOption
-                        key={opt}
-                        checked={selected.includes(opt)}
-                        onToggle={() => toggleCustomSelect(def.field_key, opt)}
-                        label={opt}
-                      />
-                    ))
-                  )}
-                </ul>
+                <p className="text-xs text-fg-subtle italic">
+                  No values to filter by yet.
+                </p>
               </FilterGroup>
             )
           }
-          // text / number / date — single text input with contains-match
-          // semantics. Number/date refinement (range) is a follow-up.
+
           return (
             <FilterGroup key={def.id} label={def.field_label}>
-              <Input
-                type={def.field_type === 'date' ? 'date' : 'text'}
-                placeholder={def.field_type === 'number' ? 'Match contains…' : 'Contains…'}
-                value={typeof value === 'string' ? value : ''}
-                onChange={(e) => setCustomText(def.field_key, e.target.value)}
-              />
+              <ul className="max-h-36 space-y-1 overflow-y-auto pr-1">
+                {options.map((opt) => (
+                  <FilterOption
+                    key={opt}
+                    checked={selected.includes(opt)}
+                    onToggle={() => toggleCustomSelect(def.field_key, opt)}
+                    label={opt}
+                  />
+                ))}
+              </ul>
             </FilterGroup>
           )
         })}
