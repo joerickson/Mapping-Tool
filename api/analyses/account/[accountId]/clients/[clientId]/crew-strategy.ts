@@ -548,6 +548,11 @@ export function computeCrewStrategy(
     available_hours: number
     utilization_pct: number
     property_count: number
+    // Phase 4 follow-up — surface building-day math directly so the
+    // per-branch util table can drop hours-based columns ("Work hrs" /
+    // "Available") in favor of "Buildings" / "Available work days."
+    building_days: number
+    available_work_days: number
     avg_drive_miles_one_way: number
     avg_drive_minutes_one_way: number
     override_property_count: number
@@ -598,6 +603,8 @@ export function computeCrewStrategy(
       available_hours: Math.round(available),
       utilization_pct: utilPct,
       property_count: branchPropCount[i],
+      building_days: Math.round(branchBuildingDays * 10) / 10,
+      available_work_days: branchAvailableDays,
       avg_drive_miles_one_way: Math.round(avgDriveMiles * 10) / 10,
       avg_drive_minutes_one_way: avgDriveMinutes,
       override_property_count: branchOverrideCount[i],

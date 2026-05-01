@@ -39,6 +39,8 @@ interface BranchUtilRow {
   available_hours: number
   utilization_pct: number
   property_count: number
+  building_days?: number
+  available_work_days?: number
   avg_drive_miles_one_way?: number
   avg_drive_minutes_one_way?: number
   override_property_count?: number
@@ -1065,8 +1067,9 @@ function UtilizationSection({
               <TableHead>Branch</TableHead>
               <TableHead className="text-right">Pop</TableHead>
               <TableHead className="text-right">Crews</TableHead>
-              <TableHead className="text-right">Work hrs</TableHead>
-              <TableHead className="text-right">Available</TableHead>
+              <TableHead className="text-right">Buildings</TableHead>
+              <TableHead className="text-right">Building-days</TableHead>
+              <TableHead className="text-right">Available work days</TableHead>
               <TableHead className="text-right">Util</TableHead>
               <TableHead>Status</TableHead>
             </TableRow>
@@ -1088,9 +1091,16 @@ function UtilizationSection({
                   {formatPop(b.population)}
                 </TableCell>
                 <TableCell numeric>{b.crew_count}</TableCell>
-                <TableCell numeric>{b.work_hours.toLocaleString()}</TableCell>
+                <TableCell numeric>{b.property_count.toLocaleString()}</TableCell>
                 <TableCell numeric className="text-fg-muted">
-                  {b.available_hours.toLocaleString()}
+                  {b.building_days != null
+                    ? b.building_days.toLocaleString()
+                    : '—'}
+                </TableCell>
+                <TableCell numeric className="text-fg-muted">
+                  {b.available_work_days != null
+                    ? b.available_work_days.toLocaleString()
+                    : '—'}
                 </TableCell>
                 <TableCell numeric className="font-semibold">
                   {b.utilization_pct}%
