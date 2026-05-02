@@ -136,28 +136,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     home_branch_index?: number
   }>
 
-  // crew_index → home branch (template snapshot). Falls back to
-  // start_location coords matched against branches.
+  // crew_index → home branch (template snapshot). Always rebuild the
+  // human label from the home branch — even legacy templates with
+  // unprefixed "Crew N" labels get clean "Lindon Crew 1" style names
+  // here without requiring a regenerate.
   const crewBranch = new Map<number, { idx: number; name: string; lat: number; lng: number; label: string }>()
-  for (const ca of crewAssignments) {
+  // First pass: bucket crews by home_branch_index so the per-branch
+  // counter is sequential (Lindon Crew 1, Lindon Crew 2, etc.).
+  const branchCounters = new Map<number, number>()
+  // Walk in crew-index order so numbering is stable.
+  const sortedAssignments = [...crewAssignments].sort((a, b) => {
+    const ai = typeof a.index === 'number' ? a.index : 0
+    const bi = typeof b.index === 'number' ? b.index : 0
+    return ai - bi
+  })
+  for (const ca of sortedAssignments) {
     const idx = typeof ca.index === 'number' ? ca.index : null
     const home = typeof ca.home_branch_index === 'number' ? ca.home_branch_index : null
     if (idx == null || home == null) continue
     const b = branches[home]
     if (!b) continue
+    const counter = (branchCounters.get(home) ?? 0) + 1
+    branchCounters.set(home, counter)
     crewBranch.set(idx, {
       idx: home,
       name: b.name,
       lat: b.lat,
       lng: b.lng,
-      label: ca.label ?? `Crew ${idx + 1}`,
+      label: `${b.name} Crew ${counter}`,
     })
   }
   // Fallback for any crew without a template assignment row.
+  // Resolve a home branch from start_location coords (or modulo as a
+  // last resort) and ALWAYS build a branch-prefixed label.
   for (let i = 0; i < crewCount; i++) {
     if (crewBranch.has(i)) continue
     const cd = crewDays.find((d: any) => d.crew_index === i)
     const sl = cd?.start_location
+    let resolvedIdx: number
+    let resolvedBranch: { name: string; lat: number; lng: number }
     if (sl && typeof sl.lat === 'number' && typeof sl.lng === 'number') {
       let bestIdx = 0
       let best = Number.POSITIVE_INFINITY
@@ -165,25 +182,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const d = haversineMiles({ lat: sl.lat, lng: sl.lng }, branches[j])
         if (d < best) { best = d; bestIdx = j }
       }
-      crewBranch.set(i, {
-        idx: bestIdx,
-        name: sl.name ?? branches[bestIdx]?.name ?? `Crew ${i + 1}`,
-        lat: sl.lat,
-        lng: sl.lng,
-        label: cd?.crew_label ?? `Crew ${i + 1}`,
-      })
+      resolvedIdx = bestIdx
+      resolvedBranch = branches[bestIdx] ?? { name: sl.name ?? `Branch ${bestIdx + 1}`, lat: sl.lat, lng: sl.lng }
     } else {
-      const b = branches[i % Math.max(1, branches.length)]
-      if (b) {
-        crewBranch.set(i, {
-          idx: i % branches.length,
-          name: b.name,
-          lat: b.lat,
-          lng: b.lng,
-          label: cd?.crew_label ?? `Crew ${i + 1}`,
-        })
-      }
+      const fallbackIdx = i % Math.max(1, branches.length)
+      const b = branches[fallbackIdx]
+      if (!b) continue
+      resolvedIdx = fallbackIdx
+      resolvedBranch = b
     }
+    const counter = (branchCounters.get(resolvedIdx) ?? 0) + 1
+    branchCounters.set(resolvedIdx, counter)
+    crewBranch.set(i, {
+      idx: resolvedIdx,
+      name: resolvedBranch.name,
+      lat: resolvedBranch.lat,
+      lng: resolvedBranch.lng,
+      label: `${resolvedBranch.name} Crew ${counter}`,
+    })
   }
 
   // Workday calendar + per-crew busy/idle counts.
