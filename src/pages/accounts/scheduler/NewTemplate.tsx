@@ -44,6 +44,7 @@ export default function NewTemplatePage() {
   const [filter, setFilter] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [crewCount, setCrewCount] = useState(2)
+  const [combinedInfo, setCombinedInfo] = useState<{ memberCount: number; displayName: string } | null>(null)
   const [crewCountUserEdited, setCrewCountUserEdited] = useState(false)
   const [recommendedCrew, setRecommendedCrew] = useState<{
     count: number // conservative — what to default to
@@ -61,7 +62,7 @@ export default function NewTemplatePage() {
     setLoading(true)
     try {
       const token = await getToken()
-      const [slRes, offRes, latestRes] = await Promise.all([
+      const [slRes, offRes, latestRes, cliRes] = await Promise.all([
         fetch(`/api/v1/service-locations?client_id=${clientId}`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
@@ -71,7 +72,19 @@ export default function NewTemplatePage() {
         fetch(`/api/analyses/account/${accountId}/clients/${clientId}/latest`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
+        fetch(`/api/v1/clients/${clientId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
       ])
+      if (cliRes.ok) {
+        const c = await cliRes.json()
+        if (c.is_combined) {
+          setCombinedInfo({
+            memberCount: c.member_client_ids?.length ?? 0,
+            displayName: c.display_name ?? c.name,
+          })
+        }
+      }
       if (slRes.ok) setSLs(await slRes.json())
       if (offRes.ok) {
         const o = await offRes.json()
@@ -227,6 +240,16 @@ export default function NewTemplatePage() {
         <header className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight text-fg">New routing template</h1>
         </header>
+
+        {combinedInfo && (
+          <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+            <strong>Combined client.</strong> Properties listed below are unioned from{' '}
+            {combinedInfo.memberCount} member clients. The template will be created with all
+            members linked, and the engine will route across the whole portfolio. Branches and
+            crew config come from this combined client's own settings — make sure you've
+            synced from members or run Branch Optimization on it first.
+          </div>
+        )}
 
         {error && <p className="text-sm text-danger">{error}</p>}
 
