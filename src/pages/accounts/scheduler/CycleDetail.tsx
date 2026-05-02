@@ -23,6 +23,7 @@ import CalendarView from '../../../components/scheduler/CalendarView'
 import CycleMapView from '../../../components/scheduler/CycleMapView'
 import HistoryDrawer from '../../../components/scheduler/HistoryDrawer'
 import CycleChatDrawer from '../../../components/scheduler/CycleChatDrawer'
+import RebalanceSuggestionsDialog from '../../../components/scheduler/RebalanceSuggestionsDialog'
 import StatusBar, { type SaveState } from '../../../components/scheduler/StatusBar'
 
 interface Cycle {
@@ -89,6 +90,11 @@ export default function CycleDetailPage() {
   const [templateOptimizedAt, setTemplateOptimizedAt] = useState<string | null>(null)
   const [regeneratingTemplate, setRegeneratingTemplate] = useState(false)
   const [regeneratingCycle, setRegeneratingCycle] = useState(false)
+  // Auto-open the rebalance suggestions dialog the first time a freshly
+  // loaded cycle reveals unplaced visits. Won't reopen if the operator
+  // dismisses it (rebalanceShown flag).
+  const [rebalanceOpen, setRebalanceOpen] = useState(false)
+  const [rebalanceShown, setRebalanceShown] = useState(false)
   const [templateUnplaced, setTemplateUnplaced] = useState<Array<{
     service_location_id?: string
     property_id?: string
@@ -156,6 +162,16 @@ export default function CycleDetailPage() {
   }, [cycleId, getToken])
 
   useEffect(() => { load() }, [load])
+
+  // Auto-open rebalance suggestions on first load when there's overflow.
+  useEffect(() => {
+    if (loading || rebalanceShown) return
+    const unplacedNow = visits.filter((v) => v.status === 'unplaced').length
+    if (unplacedNow > 0 && cycle?.template_id) {
+      setRebalanceOpen(true)
+      setRebalanceShown(true)
+    }
+  }, [loading, visits, cycle?.template_id, rebalanceShown])
 
   // Re-derive THIS cycle from the parent template. Use this after a
   // template regenerate to refresh the existing cycle's scheduled
@@ -502,6 +518,15 @@ export default function CycleDetailPage() {
               )}
             </div>
             <div className="flex items-center gap-2">
+              {unplacedVisits.length > 0 && cycle?.template_id && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setRebalanceOpen(true)}
+                >
+                  Suggest rebalance ({unplacedVisits.length})
+                </Button>
+              )}
               <CycleChatDrawer
                 cycleId={cycleId!}
                 cycleLabel={cycle.cycle_number ? `Cycle #${cycle.cycle_number}` : null}
@@ -1095,6 +1120,43 @@ export default function CycleDetailPage() {
       />
 
       <HistoryDrawer cycleId={cycleId!} onChange={load} />
+
+      {cycle?.template_id && (
+        <RebalanceSuggestionsDialog
+          cycleId={cycleId!}
+          templateId={cycle.template_id}
+          open={rebalanceOpen}
+          onClose={() => setRebalanceOpen(false)}
+          onRegenerate={async () => {
+            // Regenerate template (so override-based clusters reform),
+            // then regenerate THIS cycle in place. After both, reload
+            // cycle data on the page.
+            const token = await getToken()
+            await fetch(
+              `/api/scheduler/templates/${cycle.template_id}/regenerate`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({}),
+              }
+            )
+            await fetch(
+              `/api/scheduler/templates/${cycle.template_id}/generate-cycle`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({
+                  start_date: cycle.start_date,
+                  cycle_number: cycle.cycle_number,
+                  apply_template_changes: true,
+                }),
+              }
+            )
+            await load()
+            setRebalanceShown(false) // allow auto-reopen if more overflow remains
+          }}
+        />
+      )}
 
       <StatusBar
         cycleName={`Cycle ${cycle.cycle_number}`}
