@@ -231,24 +231,41 @@ export default function BranchAssignmentsMap({
         )
       })
 
-      // Property dots.
+      // Property dots. Bigger hit area + hover scale so the click
+      // affordance is obvious.
       validAssignments.forEach((a) => {
         const el = document.createElement('div')
-        el.className = 'rounded-full shadow'
-        el.style.width = '10px'
-        el.style.height = '10px'
+        el.className = 'rounded-full shadow transition-transform'
+        el.style.width = '14px'
+        el.style.height = '14px'
         el.style.backgroundColor = colorFor(a.assigned_branch_idx)
         el.style.border = a.overridden
-          ? '2px solid #facc15' // yellow ring for overridden
+          ? '2px solid #facc15'
           : a.transferred
             ? '2px solid #fff'
-            : '1px solid rgba(0,0,0,0.2)'
-        el.style.cursor = a.is_remote ? 'default' : 'pointer'
-        el.title = `${a.address}${a.is_remote ? ' (remote)' : ''}`
+            : '1.5px solid rgba(0,0,0,0.3)'
+        el.style.cursor = a.is_remote ? 'not-allowed' : 'pointer'
+        el.style.pointerEvents = 'auto'
+        el.title = `${a.address}${a.is_remote ? ' (remote — auto-routed)' : ' — click to reassign'}`
         if (!a.is_remote) {
+          el.addEventListener('mouseenter', () => {
+            el.style.transform = 'scale(1.6)'
+            el.style.zIndex = '10'
+          })
+          el.addEventListener('mouseleave', () => {
+            el.style.transform = 'scale(1)'
+            el.style.zIndex = ''
+          })
           el.addEventListener('click', (e) => {
             e.stopPropagation()
             setSelected(a)
+            // Fly to the clicked dot so the visual connection between
+            // dot and override panel is clear.
+            mapRef.current?.flyTo({
+              center: [a.lng, a.lat],
+              zoom: Math.max(mapRef.current.getZoom(), 9),
+              duration: 400,
+            })
           })
         }
         markersRef.current.push(
@@ -302,53 +319,100 @@ export default function BranchAssignmentsMap({
           </div>
         ))}
         <p className="text-[10px] text-fg-subtle pt-1 border-t border-border mt-2">
-          Click a property dot to reassign.<br />
+          <span className="font-semibold text-fg">Click any property dot</span> to
+          reassign it to a different branch.<br />
           <span className="inline-block h-2.5 w-2.5 rounded-full mr-1" style={{ border: '2px solid #facc15' }} />{' '}
           = overridden
         </p>
       </div>
 
-      {/* Override popup */}
+      {/* Override popup — top-right anchored, prominent so the operator
+          sees that their click registered. Quick-pick branch buttons
+          (one per branch) so reassignment is one click, not a dropdown
+          interaction. */}
       {selected && (
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 max-w-md rounded-md border border-border bg-surface shadow-lg p-3 space-y-2 z-10">
+        <div className="absolute top-3 right-3 w-80 rounded-md border-2 border-accent bg-surface shadow-2xl p-3 space-y-2 z-20">
           <div className="flex items-baseline justify-between gap-3">
-            <p className="text-sm font-semibold text-fg truncate">{selected.address}</p>
+            <div className="min-w-0">
+              <p className="text-[10px] uppercase tracking-wider text-fg-subtle font-semibold">
+                Reassign property
+              </p>
+              <p className="text-sm font-semibold text-fg truncate">{selected.address}</p>
+            </div>
             <button
               type="button"
               onClick={() => setSelected(null)}
-              className="text-fg-subtle hover:text-fg"
+              className="text-fg-subtle hover:text-fg flex-shrink-0"
             >
               ✕
             </button>
           </div>
           <p className="text-xs text-fg-muted">
-            Currently assigned: <strong>{branches[selected.assigned_branch_idx]?.name ?? '?'}</strong>
+            Currently:{' '}
+            <strong>{branches[selected.assigned_branch_idx]?.name ?? '?'}</strong>
             {selected.transferred && (
-              <span className="ml-1 text-warning">(moved from {branches[selected.nearest_branch_idx]?.name})</span>
+              <span className="ml-1 text-warning">
+                (moved from {branches[selected.nearest_branch_idx]?.name})
+              </span>
+            )}
+            {selected.overridden && (
+              <span className="ml-1 text-accent">(overridden)</span>
             )}
           </p>
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-fg-muted">Override:</label>
-            <select
-              value={overrides[selected.service_location_id] != null ? String(overrides[selected.service_location_id]) : 'auto'}
-              disabled={saving}
-              onChange={(e) => {
-                const v = e.target.value
-                setOverride(selected.service_location_id, v === 'auto' ? null : Number(v))
-              }}
-              className="h-7 rounded-md border border-border bg-surface px-2 text-xs text-fg flex-1"
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-fg-subtle">
+              Assign to:
+            </p>
+            <button
+              type="button"
+              disabled={saving || !selected.overridden}
+              onClick={() => setOverride(selected.service_location_id, null)}
+              className={
+                'w-full text-left rounded-md border px-2 py-1.5 text-xs transition ' +
+                (!selected.overridden
+                  ? 'border-accent bg-accent/10 text-fg cursor-default'
+                  : 'border-border hover:bg-surface-muted text-fg')
+              }
             >
-              <option value="auto">Auto (engine)</option>
-              {branches.map((b, i) => (
-                <option key={i} value={String(i)}>{b.name}</option>
-              ))}
-            </select>
+              <span className="font-semibold">Auto (engine)</span>
+              <span className="ml-1 text-fg-subtle">
+                — picks {branches[selected.nearest_branch_idx]?.name} (nearest)
+              </span>
+            </button>
+            {branches.map((b, i) => {
+              const overrideVal = overrides[selected.service_location_id]
+              const active = overrideVal === i
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  disabled={saving || active}
+                  onClick={() => setOverride(selected.service_location_id, i)}
+                  className={
+                    'w-full text-left rounded-md border px-2 py-1.5 text-xs transition flex items-center gap-2 ' +
+                    (active
+                      ? 'border-accent bg-accent/10 text-fg cursor-default'
+                      : 'border-border hover:bg-surface-muted text-fg')
+                  }
+                >
+                  <span
+                    className="inline-block h-2.5 w-2.5 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: colorFor(i) }}
+                  />
+                  <span className="font-medium truncate">{b.name}</span>
+                  {active && <span className="ml-auto text-accent text-[10px]">✓</span>}
+                </button>
+              )
+            })}
           </div>
+          {saving && (
+            <p className="text-[11px] text-fg-muted italic">Saving…</p>
+          )}
           {error && (
             <p className="text-[11px] text-danger">{error}</p>
           )}
-          <p className="text-[10px] text-fg-subtle">
-            Regenerate the template after changes for the override to affect the schedule.
+          <p className="text-[10px] text-fg-subtle pt-1 border-t border-border">
+            Regenerate the template for the override to affect the schedule.
           </p>
         </div>
       )}
