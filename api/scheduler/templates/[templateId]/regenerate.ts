@@ -65,6 +65,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const accountId = tpl.account_id as string
   const clientId = tpl.client_id as string
   const slIds = (tpl.routed_service_location_ids ?? []) as string[]
+  // Combined templates persist combined_client_ids so regenerate can
+  // re-fetch offerings across all source clients.
+  const combinedClientIds = Array.isArray(tpl.combined_client_ids)
+    ? (tpl.combined_client_ids as string[])
+    : null
+  const allClientIds = combinedClientIds && combinedClientIds.length > 1
+    ? combinedClientIds
+    : [clientId]
   const crewCount = body.crew_count ?? tpl.crew_count ?? 1
   const customCycleDays = body.custom_cycle_length_days !== undefined
     ? body.custom_cycle_length_days ?? undefined
@@ -105,8 +113,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
   const { data: offeringRows } = await db
     .from('service_offerings')
-    .select('id, name, is_routed, offering_role, visit_interval_years, attaches_to_offering_ids, uses_cohort_rotation')
-    .eq('client_id', clientId)
+    .select('id, name, is_routed, offering_role, visit_interval_years, attaches_to_offering_ids, uses_cohort_rotation, client_id')
+    .in('client_id', allClientIds)
   const offerings = new Map<string, any>()
   for (const o of offeringRows ?? []) offerings.set((o as any).id, o)
 
