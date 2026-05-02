@@ -25,34 +25,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'client_id is required for service-key auth' })
     }
 
-    let query = db
-      .from('service_locations')
-      .select('*, property:properties(state, city)')
-      .order('property(state)', { ascending: true })
-
-    if (client_id) {
-      // Combined clients own no SLs of their own — resolve to member ids
-      // so the listing returns the unioned SL set.
-      const requested = String(client_id).split(',').filter(Boolean)
-      const resolved = await resolveClientIdsList(db, requested)
-      query = query.in('client_id', resolved)
+    const buildQuery = () => {
+      let q = db
+        .from('service_locations')
+        .select('*, property:properties(state, city)')
+        .order('property(state)', { ascending: true })
+      if (clientFilterIds) q = q.in('client_id', clientFilterIds)
+      if (status) q = q.in('status', String(status).split(','))
+      if (property_id) q = q.eq('property_id', String(property_id))
+      if (portfolioPropIds) q = q.in('property_id', portfolioPropIds)
+      return q
     }
-    if (status) query = query.in('status', String(status).split(','))
-    if (property_id) query = query.eq('property_id', String(property_id))
 
+    // Resolve combined-client filters + portfolio scope first so each
+    // paged query has the same filter chain.
+    let clientFilterIds: string[] | null = null
+    if (client_id) {
+      const requested = String(client_id).split(',').filter(Boolean)
+      clientFilterIds = await resolveClientIdsList(db, requested)
+    }
+    let portfolioPropIds: string[] | null = null
     if (portfolio_id) {
-      // portfolio_locations can link via property_id or directly via service_location_id
       const { data: members } = await db
         .from('portfolio_locations')
         .select('property_id')
         .eq('portfolio_id', String(portfolio_id))
       const propIds = (members ?? []).map((m: any) => m.property_id).filter(Boolean)
       if (!propIds.length) return res.status(200).json([])
-      query = query.in('property_id', propIds)
+      portfolioPropIds = propIds
     }
 
-    const { data, error } = await query
-    if (error) return res.status(500).json({ error: error.message })
+    // Page through results — combined-client unions can exceed the
+    // silent 1000-row PostgREST cap (4 members × ~500 SLs each = 2000+).
+    const PAGE = 1000
+    const data: any[] = []
+    for (let p = 0; p < 50; p++) {
+      const { data: batch, error } = await buildQuery().range(p * PAGE, p * PAGE + PAGE - 1)
+      if (error) return res.status(500).json({ error: error.message })
+      const rows = batch ?? []
+      data.push(...rows)
+      if (rows.length < PAGE) break
+    }
 
     // Sort by state, city, display_name in JS since Supabase sort on joined table is limited
     const sorted = (data ?? []).sort((a: any, b: any) => {
