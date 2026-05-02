@@ -1,21 +1,24 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
+import { ArrowRight, MapPin, Pencil, Settings, Trash2 } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import AppShell from '../../components/layout/AppShell'
 import Button from '../../components/ui/Button'
+import { Badge } from '../../components/ui/Badge'
+import { Card, CardTitle } from '../../components/ui/Card'
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from '../../components/ui/Table'
+import {
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+} from '../../components/ui/Dialog'
+import { Input, Textarea, FormField } from '../../components/ui/Input'
 import { useClient } from '../../context/ClientContext'
 import type { Client } from '../../types'
-
-const STATUS_BADGE: Record<string, string> = {
-  active: 'bg-green-100 text-green-700',
-  prospect: 'bg-yellow-100 text-yellow-700',
-  churned: 'bg-gray-100 text-gray-500',
-}
 
 interface ClientDetail extends Client {
   account?: { id: string; name: string; display_name?: string | null; account_type: string } | null
   is_configured?: boolean
-  stats: { service_location_count: number; portfolio_count: number; total_serviceable_sqft: number }
   recent_uploads: { upload_batch_id: string; filename: string; created_at: string; status: string; row_count: number }[]
 }
 
@@ -26,43 +29,14 @@ export default function ClientDetailPage() {
   const { reloadClients } = useClient()
 
   const [client, setClient] = useState<ClientDetail | null>(null)
+  const [members, setMembers] = useState<Array<{ id: string; name: string; display_name: string | null; account_id: string }> | null>(null)
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [archiving, setArchiving] = useState(false)
-  const [confirmArchive, setConfirmArchive] = useState(false)
+  const [confirmArchiveOpen, setConfirmArchiveOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [syncing, setSyncing] = useState(false)
-  const [syncResult, setSyncResult] = useState<{
-    branches: number; crew_total: number; synced_at: string
-  } | null>(null)
 
-  async function handleSyncCombined() {
-    if (!client) return
-    setSyncing(true)
-    setError(null)
-    try {
-      const token = await getToken()
-      const res = await fetch(`/api/v1/clients/${client.id}/sync-combined`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      const body = await res.json()
-      if (!res.ok) throw new Error(body.error ?? `Sync failed (${res.status})`)
-      setSyncResult({
-        branches: body.branches,
-        crew_total: body.crew_total,
-        synced_at: body.synced_at,
-      })
-      await loadClient()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setSyncing(false)
-    }
-  }
-
-  // Edit form state
   const [editName, setEditName] = useState('')
   const [editDisplayName, setEditDisplayName] = useState('')
   const [editStatus, setEditStatus] = useState<'active' | 'prospect' | 'churned'>('active')
@@ -72,7 +46,7 @@ export default function ClientDetailPage() {
   const [editNotes, setEditNotes] = useState('')
   const [editBrandColor, setEditBrandColor] = useState('')
 
-  async function loadClient() {
+  const loadClient = useCallback(async () => {
     setLoading(true)
     try {
       const token = await getToken()
@@ -90,14 +64,27 @@ export default function ClientDetailPage() {
       setEditContactPhone(data.primary_contact_phone ?? '')
       setEditNotes(data.notes ?? '')
       setEditBrandColor(data.brand_color ?? '')
+
+      if (data.is_combined && Array.isArray(data.member_client_ids) && data.member_client_ids.length > 0) {
+        const memRes = await fetch(`/api/v1/clients`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (memRes.ok) {
+          const all = (await memRes.json()) as Array<{ id: string; name: string; display_name: string | null; account_id: string }>
+          const idSet = new Set(data.member_client_ids)
+          setMembers(all.filter((c) => idSet.has(c.id)))
+        }
+      } else {
+        setMembers(null)
+      }
     } catch {
       setError('Failed to load client')
     } finally {
       setLoading(false)
     }
-  }
+  }, [id, getToken])
 
-  useEffect(() => { if (id) loadClient() }, [id])
+  useEffect(() => { if (id) loadClient() }, [id, loadClient])
 
   async function handleSave() {
     setSaving(true)
@@ -143,7 +130,7 @@ export default function ClientDetailPage() {
       setError('Archive failed')
     } finally {
       setArchiving(false)
-      setConfirmArchive(false)
+      setConfirmArchiveOpen(false)
     }
   }
 
@@ -154,7 +141,6 @@ export default function ClientDetailPage() {
       </AppShell>
     )
   }
-
   if (!client) {
     return (
       <AppShell>
@@ -168,307 +154,347 @@ export default function ClientDetailPage() {
     )
   }
 
-  const clientColor = client.brand_color ?? hashColor(client.id)
+  const breadcrumb = client.account
+    ? [
+        { label: 'Accounts', to: '/accounts' },
+        { label: client.account.display_name ?? client.account.name, to: `/accounts/${client.account.id}` },
+        { label: client.display_name ?? client.name },
+      ]
+    : [
+        { label: 'Clients', to: '/clients' },
+        { label: client.display_name ?? client.name },
+      ]
+
+  const analysisHref = client.account
+    ? `/accounts/${client.account.id}/clients/${client.id}/analysis`
+    : null
 
   return (
-    <AppShell breadcrumb={[{ label: 'Clients', to: '/clients' }, { label: client.display_name ?? client.name }]}>
+    <AppShell breadcrumb={breadcrumb}>
       <div className="mx-auto max-w-4xl px-6 py-10 space-y-6">
-          {error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>
-          )}
+        {error && (
+          <p className="rounded-md border border-danger/30 bg-danger-subtle px-3 py-2 text-sm text-danger">
+            {error}
+          </p>
+        )}
 
-          {/* Breadcrumb + Header */}
-          <div>
-            {/* Account breadcrumb */}
-            {client.account && client.account.account_type === 'property_manager' && (
-              <div className="flex items-center gap-2 text-sm text-gray-400 mb-2">
-                <Link to="/accounts" className="hover:text-gray-600">Accounts</Link>
-                <span>›</span>
-                <Link to={`/accounts/${client.account.id}`} className="hover:text-gray-600">
-                  {client.account.display_name ?? client.account.name}
-                </Link>
-                <span>›</span>
-                <span className="text-gray-700 font-medium">{client.display_name ?? client.name}</span>
-              </div>
+        {/* Setup banner — only when not configured */}
+        {client.is_configured === false && (
+          <div className="flex items-center justify-between rounded-md border border-warning/30 bg-warning-subtle px-3 py-2">
+            <p className="text-sm text-warning-fg">This client hasn't been set up yet.</p>
+            <Link
+              to={`/clients/${client.id}/setup`}
+              className="text-sm font-medium text-warning-fg hover:underline"
+            >
+              Configure client →
+            </Link>
+          </div>
+        )}
+
+        {/* Header */}
+        <header className="flex items-start justify-between gap-4">
+          <div className="space-y-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-2xl font-semibold tracking-tight text-fg">
+                {client.display_name ?? client.name}
+              </h1>
+              <Badge variant={client.status === 'active' ? 'success' : client.status === 'prospect' ? 'warning' : 'outline'}>
+                {client.status}
+              </Badge>
+              {client.is_combined && (
+                <Badge variant="accent">
+                  Combined · {client.member_client_ids?.length ?? 0} members
+                </Badge>
+              )}
+            </div>
+            {client.display_name && client.display_name !== client.name && (
+              <p className="text-sm text-fg-subtle">{client.name}</p>
             )}
-
-            {/* Setup banner */}
-            {client.is_configured === false && (
-              <div className="mb-4 flex items-center justify-between p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                <p className="text-sm text-yellow-800">This client hasn't been set up yet.</p>
-                <Link
-                  to={`/clients/${client.id}/setup`}
-                  className="text-sm font-medium text-yellow-900 underline hover:no-underline"
-                >
-                  Configure Client →
-                </Link>
-              </div>
-            )}
-
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-3">
-                <div
-                  className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-lg"
-                  style={{ backgroundColor: clientColor }}
-                >
-                  {(client.display_name ?? client.name).charAt(0).toUpperCase()}
-                </div>
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h1 className="text-2xl font-bold text-gray-900">{client.display_name ?? client.name}</h1>
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_BADGE[client.status] ?? 'bg-gray-100 text-gray-500'}`}>
-                      {client.status}
-                    </span>
-                    {client.is_combined && (
-                      <span className="rounded-full border border-blue-300 bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
-                        Combined · {client.member_client_ids?.length ?? 0} members
-                      </span>
-                    )}
-                  </div>
-                  {client.display_name && <p className="text-sm text-gray-400">{client.name}</p>}
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <Link
-                  to={`/map?client_id=${client.id}`}
-                  className="px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
-                >
-                  View on map
-                </Link>
-                <Link
-                  to={`/clients/${client.id}/setup`}
-                  className="px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
-                >
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" asChild>
+              <Link to={`/map?client_id=${client.id}`}>
+                <MapPin className="h-3.5 w-3.5" />
+                Map
+              </Link>
+            </Button>
+            {!client.is_combined && (
+              <Button variant="ghost" asChild>
+                <Link to={`/clients/${client.id}/setup`}>
+                  <Settings className="h-3.5 w-3.5" />
                   Setup
                 </Link>
-                <Button size="sm" onClick={() => setEditing(true)}>Edit</Button>
-              </div>
-            </div>
-          </div>
-
-          {/* Combined-client sync banner */}
-          {client.is_combined && (
-            <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
-              <div className="flex items-start justify-between gap-4">
-                <div className="space-y-1">
-                  <h2 className="text-sm font-semibold text-blue-900">Combined client sync</h2>
-                  <p className="text-xs text-blue-800/80">
-                    Pulls each member's selected branches and crew counts into this combined
-                    client. Properties, service locations, and offerings stay virtual — they're
-                    resolved from members on every read, no copy needed.
-                  </p>
-                  {(() => {
-                    const last = (client.metadata as any)?.combined_last_synced_at as string | undefined
-                    if (last) {
-                      return (
-                        <p className="text-[11px] text-blue-700/70">
-                          Last synced: {new Date(last).toLocaleString()}
-                        </p>
-                      )
-                    }
-                    return (
-                      <p className="text-[11px] text-blue-700/70">
-                        Never synced — Smart Analysis still works (members are resolved at read
-                        time), but Branch Optimization needs a sync to see member branches.
-                      </p>
-                    )
-                  })()}
-                  {syncResult && (
-                    <p className="text-[11px] text-blue-900">
-                      Synced {syncResult.branches} branches, {syncResult.crew_total} crews total at{' '}
-                      {new Date(syncResult.synced_at).toLocaleTimeString()}.
-                    </p>
-                  )}
-                </div>
-                <Button size="sm" onClick={handleSyncCombined} loading={syncing}>
-                  Sync from members
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* Stats */}
-          <div className="grid grid-cols-3 gap-4">
-            <StatCard label="Service Locations" value={client.stats.service_location_count.toLocaleString()} />
-            <StatCard label="Portfolios" value={client.stats.portfolio_count.toLocaleString()} />
-            <StatCard
-              label="Total Sqft"
-              value={client.stats.total_serviceable_sqft > 0
-                ? client.stats.total_serviceable_sqft.toLocaleString()
-                : '—'}
-            />
-          </div>
-
-          {/* Contact info */}
-          {(client.primary_contact_name || client.primary_contact_email || client.notes) && (
-            <div className="bg-white rounded-xl shadow-sm border p-5">
-              <h2 className="font-semibold text-gray-800 mb-3">Contact</h2>
-              <dl className="space-y-2 text-sm">
-                {client.primary_contact_name && (
-                  <div className="flex gap-2">
-                    <dt className="text-gray-500 w-24 shrink-0">Name</dt>
-                    <dd>{client.primary_contact_name}</dd>
-                  </div>
-                )}
-                {client.primary_contact_email && (
-                  <div className="flex gap-2">
-                    <dt className="text-gray-500 w-24 shrink-0">Email</dt>
-                    <dd><a href={`mailto:${client.primary_contact_email}`} className="text-blue-600 hover:underline">{client.primary_contact_email}</a></dd>
-                  </div>
-                )}
-                {client.primary_contact_phone && (
-                  <div className="flex gap-2">
-                    <dt className="text-gray-500 w-24 shrink-0">Phone</dt>
-                    <dd>{client.primary_contact_phone}</dd>
-                  </div>
-                )}
-                {client.notes && (
-                  <div className="flex gap-2">
-                    <dt className="text-gray-500 w-24 shrink-0">Notes</dt>
-                    <dd className="whitespace-pre-line">{client.notes}</dd>
-                  </div>
-                )}
-              </dl>
-            </div>
-          )}
-
-          {/* Recent uploads */}
-          {client.recent_uploads.length > 0 && (
-            <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-              <div className="px-5 py-4 border-b">
-                <h2 className="font-semibold text-gray-800">Recent Uploads</h2>
-              </div>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-gray-50">
-                    <th className="text-left px-4 py-2 font-medium text-gray-600">File</th>
-                    <th className="text-left px-4 py-2 font-medium text-gray-600">Rows</th>
-                    <th className="text-left px-4 py-2 font-medium text-gray-600">Status</th>
-                    <th className="text-left px-4 py-2 font-medium text-gray-600">Date</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {client.recent_uploads.map((u) => (
-                    <tr key={u.upload_batch_id} className="hover:bg-gray-50">
-                      <td className="px-4 py-2 font-mono text-xs text-gray-700">{u.filename}</td>
-                      <td className="px-4 py-2">{u.row_count.toLocaleString()}</td>
-                      <td className="px-4 py-2">
-                        <span className={`text-xs font-medium ${u.status === 'completed' ? 'text-green-600' : u.status === 'failed' ? 'text-red-600' : 'text-yellow-600'}`}>
-                          {u.status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2 text-gray-500">
-                        {new Date(u.created_at).toLocaleDateString()}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {/* Danger zone */}
-          <div className="bg-white rounded-xl shadow-sm border border-red-200 p-5">
-            <h2 className="font-semibold text-red-700 mb-2">Danger Zone</h2>
-            <p className="text-sm text-gray-600 mb-4">
-              Archiving sets status to "churned" but does not delete any data.
-            </p>
-            {confirmArchive ? (
-              <div className="flex items-center gap-3">
-                <p className="text-sm text-gray-700">Are you sure? This will mark the client as churned.</p>
-                <Button variant="danger" size="sm" loading={archiving} onClick={handleArchive}>
-                  Confirm Archive
-                </Button>
-                <Button variant="secondary" size="sm" onClick={() => setConfirmArchive(false)}>
-                  Cancel
-                </Button>
-              </div>
-            ) : (
-              <Button variant="danger" size="sm" onClick={() => setConfirmArchive(true)}>
-                Archive Client
               </Button>
             )}
+            <Button onClick={() => setEditing(true)}>
+              <Pencil className="h-3.5 w-3.5" />
+              Edit
+            </Button>
           </div>
-        </div>
+        </header>
+
+        {/* Primary CTA — get the user to the Smart Analysis page where they actually do work */}
+        {analysisHref && (
+          <Card className="flex items-center justify-between gap-4">
+            <div className="space-y-0.5">
+              <CardTitle>Smart Analysis</CardTitle>
+              <p className="text-sm text-fg-muted">
+                {client.is_combined
+                  ? 'Run portfolio-wide analysis across this combined client. Branch Optimization, Crew Strategy, scheduler — all see the unioned property pool.'
+                  : 'Run analysis modules, view branch selection, and configure constraints.'}
+              </p>
+            </div>
+            <Button asChild>
+              <Link to={analysisHref}>
+                Open analysis
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </Button>
+          </Card>
+        )}
+
+        {/* Combined-client member list */}
+        {client.is_combined && members && members.length > 0 && (
+          <Card padding="none">
+            <div className="px-4 py-3 border-b border-border">
+              <CardTitle>Member clients ({members.length})</CardTitle>
+              <p className="text-xs text-fg-subtle mt-0.5">
+                These clients' service locations and offerings are unioned into this combined
+                view. Members remain fully usable on their own.
+              </p>
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {members.map((m) => (
+                  <TableRow key={m.id}>
+                    <TableCell>
+                      <Link to={`/clients/${m.id}`} className="text-accent hover:underline font-medium">
+                        {m.display_name ?? m.name}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Link
+                        to={`/accounts/${m.account_id}/clients/${m.id}/analysis`}
+                        className="text-xs text-fg-muted hover:text-accent"
+                      >
+                        Analysis →
+                      </Link>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+        )}
+
+        {/* Contact info */}
+        {(client.primary_contact_name || client.primary_contact_email || client.primary_contact_phone || client.notes) && (
+          <Card className="space-y-3">
+            <CardTitle>Contact</CardTitle>
+            <dl className="space-y-2 text-sm">
+              {client.primary_contact_name && (
+                <Row label="Name" value={client.primary_contact_name} />
+              )}
+              {client.primary_contact_email && (
+                <Row
+                  label="Email"
+                  value={
+                    <a href={`mailto:${client.primary_contact_email}`} className="text-accent hover:underline">
+                      {client.primary_contact_email}
+                    </a>
+                  }
+                />
+              )}
+              {client.primary_contact_phone && (
+                <Row label="Phone" value={client.primary_contact_phone} />
+              )}
+              {client.notes && (
+                <Row label="Notes" value={<span className="whitespace-pre-line">{client.notes}</span>} />
+              )}
+            </dl>
+          </Card>
+        )}
+
+        {/* Recent uploads */}
+        {client.recent_uploads.length > 0 && (
+          <Card padding="none">
+            <div className="px-4 py-3 border-b border-border">
+              <CardTitle>Recent uploads</CardTitle>
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>File</TableHead>
+                  <TableHead className="text-right">Rows</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Date</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {client.recent_uploads.map((u) => (
+                  <TableRow key={u.upload_batch_id}>
+                    <TableCell className="font-mono text-xs">{u.filename}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {u.row_count.toLocaleString()}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          u.status === 'completed' ? 'success'
+                            : u.status === 'failed' ? 'danger'
+                            : 'warning'
+                        }
+                      >
+                        {u.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-fg-muted text-xs">
+                      {new Date(u.created_at).toLocaleDateString()}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+        )}
+
+        {/* Danger zone */}
+        <Card className="border-danger/30 space-y-2">
+          <CardTitle className="text-danger">Danger zone</CardTitle>
+          <p className="text-sm text-fg-muted">
+            Archiving sets the client status to "churned". No data is deleted.
+          </p>
+          <div>
+            <Button variant="danger" size="sm" onClick={() => setConfirmArchiveOpen(true)}>
+              <Trash2 className="h-3.5 w-3.5" />
+              Archive client
+            </Button>
+          </div>
+        </Card>
+      </div>
 
       {/* Edit modal */}
-      {editing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <div className="px-6 py-4 border-b flex items-center justify-between">
-              <h2 className="font-semibold text-gray-900">Edit Client</h2>
-              <button onClick={() => setEditing(false)} className="text-gray-400 hover:text-gray-600">✕</button>
-            </div>
-            <div className="px-6 py-4 space-y-4">
-              {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
-                <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Display Name</label>
-                <input type="text" value={editDisplayName} onChange={(e) => setEditDisplayName(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-                  <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as 'active' | 'prospect' | 'churned')} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <option value="active">Active</option>
-                    <option value="prospect">Prospect</option>
-                    <option value="churned">Churned</option>
-                  </select>
+      <Dialog open={editing} onOpenChange={(o) => !o && setEditing(false)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit client</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            {error && (
+              <p className="rounded-md border border-danger/30 bg-danger-subtle px-3 py-2 text-sm text-danger">
+                {error}
+              </p>
+            )}
+            <FormField label="Name">
+              <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
+            </FormField>
+            <FormField label="Display name">
+              <Input value={editDisplayName} onChange={(e) => setEditDisplayName(e.target.value)} />
+            </FormField>
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Status">
+                <select
+                  value={editStatus}
+                  onChange={(e) => setEditStatus(e.target.value as 'active' | 'prospect' | 'churned')}
+                  className="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-fg focus:border-accent focus:outline-none"
+                >
+                  <option value="active">Active</option>
+                  <option value="prospect">Prospect</option>
+                  <option value="churned">Churned</option>
+                </select>
+              </FormField>
+              <FormField label="Brand color">
+                <div className="flex gap-2">
+                  <input
+                    type="color"
+                    value={editBrandColor || '#3b82f6'}
+                    onChange={(e) => setEditBrandColor(e.target.value)}
+                    className="h-9 w-9 rounded-md border border-border p-0.5"
+                  />
+                  <Input
+                    value={editBrandColor}
+                    onChange={(e) => setEditBrandColor(e.target.value)}
+                    placeholder="#3b82f6"
+                    className="font-mono"
+                  />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Brand Color</label>
-                  <div className="flex gap-2">
-                    <input type="color" value={editBrandColor || '#3b82f6'} onChange={(e) => setEditBrandColor(e.target.value)} className="w-9 h-9 rounded border border-gray-300 cursor-pointer p-0.5" />
-                    <input type="text" value={editBrandColor} onChange={(e) => setEditBrandColor(e.target.value)} placeholder="#3b82f6" className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                  </div>
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Contact Name</label>
-                <input type="text" value={editContactName} onChange={(e) => setEditContactName(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Contact Email</label>
-                <input type="email" value={editContactEmail} onChange={(e) => setEditContactEmail(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Contact Phone</label>
-                <input type="tel" value={editContactPhone} onChange={(e) => setEditContactPhone(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-                <textarea value={editNotes} onChange={(e) => setEditNotes(e.target.value)} rows={3} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
-              </div>
+              </FormField>
             </div>
-            <div className="px-6 py-4 border-t flex justify-end gap-3">
-              <Button variant="secondary" onClick={() => setEditing(false)}>Cancel</Button>
-              <Button loading={saving} onClick={handleSave}>Save Changes</Button>
-            </div>
+            <FormField label="Contact name">
+              <Input value={editContactName} onChange={(e) => setEditContactName(e.target.value)} />
+            </FormField>
+            <FormField label="Contact email">
+              <Input
+                type="email"
+                value={editContactEmail}
+                onChange={(e) => setEditContactEmail(e.target.value)}
+              />
+            </FormField>
+            <FormField label="Contact phone">
+              <Input
+                type="tel"
+                value={editContactPhone}
+                onChange={(e) => setEditContactPhone(e.target.value)}
+              />
+            </FormField>
+            <FormField label="Notes">
+              <Textarea
+                rows={3}
+                value={editNotes}
+                onChange={(e) => setEditNotes(e.target.value)}
+              />
+            </FormField>
           </div>
-        </div>
-      )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setEditing(false)} disabled={saving}>
+              Cancel
+            </Button>
+            <Button onClick={handleSave} loading={saving}>
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Archive confirmation */}
+      <Dialog open={confirmArchiveOpen} onOpenChange={(o) => !o && setConfirmArchiveOpen(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Archive client?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-fg-muted">
+            This sets the client status to "churned". No data is deleted; you can reactivate
+            from the Edit dialog later.
+          </p>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setConfirmArchiveOpen(false)}
+              disabled={archiving}
+            >
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={handleArchive} loading={archiving}>
+              Archive
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AppShell>
   )
 }
 
-function StatCard({ label, value }: { label: string; value: string }) {
+function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="bg-white rounded-xl shadow-sm border p-4">
-      <p className="text-2xl font-bold text-gray-900">{value}</p>
-      <p className="text-sm text-gray-500 mt-0.5">{label}</p>
+    <div className="flex gap-2">
+      <dt className="text-fg-muted w-24 shrink-0">{label}</dt>
+      <dd className="text-fg">{value}</dd>
     </div>
   )
-}
-
-function hashColor(str: string): string {
-  let hash = 0
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash)
-    hash |= 0
-  }
-  const h = Math.abs(hash) % 360
-  return `hsl(${h}, 65%, 50%)`
 }
