@@ -193,13 +193,23 @@ export async function loadEligibleProperties(
   parentOfferingIds: string[]
 ): Promise<EligibleProperty[]> {
   if (parentOfferingIds.length === 0) return []
-  const { data } = await db
-    .from('service_locations')
-    .select('id, account_id, client_id, property:properties(id, latitude, longitude, state)')
-    .in('service_offering_id', parentOfferingIds)
-    .eq('client_id', clientId)
+  // Page — clients with thousands of SLs would silently truncate at the
+  // PostgREST 1000-row cap.
+  const PAGE = 1000
+  const data: any[] = []
+  for (let p = 0; p < 50; p++) {
+    const { data: batch } = await db
+      .from('service_locations')
+      .select('id, account_id, client_id, property:properties(id, latitude, longitude, state)')
+      .in('service_offering_id', parentOfferingIds)
+      .eq('client_id', clientId)
+      .range(p * PAGE, p * PAGE + PAGE - 1)
+    const rows = batch ?? []
+    data.push(...rows)
+    if (rows.length < PAGE) break
+  }
   const out: EligibleProperty[] = []
-  for (const row of data ?? []) {
+  for (const row of data) {
     const sl = row as any
     const p = sl.property
     if (!p?.latitude || !p?.longitude) continue

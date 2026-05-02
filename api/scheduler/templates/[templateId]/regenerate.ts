@@ -136,12 +136,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   for (const addon of addonOfferings) {
     const a = addon as any
     const eligible = await loadEligibleProperties(db, accountId, clientId, (a.attaches_to_offering_ids ?? []) as string[])
-    const { data: existing } = await db
-      .from('addon_cohort_assignments')
-      .select('service_location_id')
-      .eq('service_offering_id', a.id)
-      .eq('client_id', clientId)
-    const assigned = new Set((existing ?? []).map((x: any) => x.service_location_id))
+    const existing: any[] = []
+    for (let p = 0; p < 50; p++) {
+      const { data: batch } = await db
+        .from('addon_cohort_assignments')
+        .select('service_location_id')
+        .eq('service_offering_id', a.id)
+        .eq('client_id', clientId)
+        .range(p * 1000, p * 1000 + 999)
+      const rows = batch ?? []
+      existing.push(...rows)
+      if (rows.length < 1000) break
+    }
+    const assigned = new Set(existing.map((x: any) => x.service_location_id))
     const unassigned = eligible.filter((e) => !assigned.has(e.service_location_id))
     if (unassigned.length > 0) {
       await applyCohortAssignments(db, {
@@ -156,14 +163,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       })
     }
   }
-  const { data: cohortRows } = await db
-    .from('addon_cohort_assignments')
-    .select('id, service_location_id, service_offering_id, cohort_index, next_due_year')
-    .in('service_location_id', routed.map((r) => r.sl.id))
-  const { data: constraintRows } = await db
-    .from('service_location_constraints')
-    .select('id, service_location_id, constraint_type, enforcement, config, notes')
-    .in('service_location_id', routed.map((r) => r.sl.id))
+  // Chunk + page — combined templates can have 5000+ routed SLs and an
+  // unchunked .in() either truncates at the 1000-row PostgREST cap or
+  // 414s on URL length.
+  const routedSlIds = routed.map((r) => r.sl.id)
+  const ID_CHUNK = 250
+  const RESULT_PAGE = 1000
+  const cohortRows: any[] = []
+  for (let i = 0; i < routedSlIds.length; i += ID_CHUNK) {
+    const idChunk = routedSlIds.slice(i, i + ID_CHUNK)
+    let pageOffset = 0
+    for (let p = 0; p < 50; p++) {
+      const { data } = await db
+        .from('addon_cohort_assignments')
+        .select('id, service_location_id, service_offering_id, cohort_index, next_due_year')
+        .in('service_location_id', idChunk)
+        .range(pageOffset, pageOffset + RESULT_PAGE - 1)
+      const batch = data ?? []
+      cohortRows.push(...batch)
+      if (batch.length < RESULT_PAGE) break
+      pageOffset += RESULT_PAGE
+    }
+  }
+  const constraintRows: any[] = []
+  for (let i = 0; i < routedSlIds.length; i += ID_CHUNK) {
+    const idChunk = routedSlIds.slice(i, i + ID_CHUNK)
+    let pageOffset = 0
+    for (let p = 0; p < 50; p++) {
+      const { data } = await db
+        .from('service_location_constraints')
+        .select('id, service_location_id, constraint_type, enforcement, config, notes')
+        .in('service_location_id', idChunk)
+        .range(pageOffset, pageOffset + RESULT_PAGE - 1)
+      const batch = data ?? []
+      constraintRows.push(...batch)
+      if (batch.length < RESULT_PAGE) break
+      pageOffset += RESULT_PAGE
+    }
+  }
   const constraintsBySl = new Map<string, StoredConstraint[]>()
   for (const c of constraintRows ?? []) {
     const arr = constraintsBySl.get((c as any).service_location_id) ?? []

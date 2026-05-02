@@ -271,11 +271,18 @@ async function checkPropertiesRemovedSinceTemplate(
   ctx: CycleContext
 ): Promise<PreflightIssue[]> {
   if (!ctx.template.routed_service_location_ids?.length) return []
-  const { data: sls } = await db
-    .from('service_locations')
-    .select('id')
-    .in('id', ctx.template.routed_service_location_ids)
-  const stillExisting = new Set((sls ?? []).map((r: any) => r.id as string))
+  // Chunk for URL-length safety — combined templates can have 5000+ ids.
+  const allIds = ctx.template.routed_service_location_ids
+  const sls: any[] = []
+  for (let i = 0; i < allIds.length; i += 250) {
+    const chunk = allIds.slice(i, i + 250)
+    const { data } = await db
+      .from('service_locations')
+      .select('id')
+      .in('id', chunk)
+    sls.push(...(data ?? []))
+  }
+  const stillExisting = new Set(sls.map((r: any) => r.id as string))
   const removed = ctx.template.routed_service_location_ids.filter(
     (id) => !stillExisting.has(id)
   )
