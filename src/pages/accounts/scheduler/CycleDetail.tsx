@@ -534,7 +534,12 @@ export default function CycleDetailPage() {
           // template+cycle). De-dupe by service_location_id since the
           // same property may appear in BOTH sources after cycle gen
           // inserts unplaced rows from template.unplaced_visits.
-          type DroppedRow = { property_id?: string; address: string; reason: string }
+          type DroppedRow = {
+            property_id?: string
+            address: string
+            reason: string
+            sl_id?: string
+          }
           const cycleUnplacedRows: DroppedRow[] = unplacedVisits.map((v) => ({
             property_id: (v as any).property_id ?? undefined,
             address:
@@ -543,6 +548,7 @@ export default function CycleDetailPage() {
               v.service_location_id ??
               '—',
             reason: v.unplaced_reason ?? 'unknown',
+            sl_id: v.service_location_id,
           }))
           // template.unplaced_visits was computed at TEMPLATE build time.
           // Cycle gen's gap-fill may have placed those visits onto idle
@@ -562,12 +568,13 @@ export default function CycleDetailPage() {
               address: u.address ?? u.service_location_id ?? '—',
               reason: u.detail ?? u.reason ?? 'unknown',
               sl_id: u.service_location_id,
-            } as any))
-          // De-dupe by service_location_id between the two lists.
+            }))
+          // De-dupe by service_location_id (preferred) → property_id →
+          // address. Both lists now set sl_id so this works consistently.
           const seenIds = new Set<string>()
           const allDropped: DroppedRow[] = []
           for (const r of [...cycleUnplacedRows, ...templateUnplacedRows]) {
-            const k = (r as any).sl_id ?? r.property_id ?? r.address
+            const k = r.sl_id ?? r.property_id ?? r.address
             if (seenIds.has(k)) continue
             seenIds.add(k)
             allDropped.push(r)
