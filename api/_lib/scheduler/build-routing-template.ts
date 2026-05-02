@@ -84,6 +84,13 @@ export interface BuildTemplateInput {
   // specified branch (no auto-rebalance for it). All other properties
   // run through the normal capacity-circle algorithm.
   branch_assignment_overrides?: Record<string, number>
+  // Phase 4.7 — explicit per-crew home branch staging from operator
+  // constraints (crew_count_per_branch_override translated to an array
+  // of length=crew_count, each entry an index into branches[]). When
+  // present, supersedes the heuristic in the engine. If absent, the
+  // engine falls back to "first N crews → branch i in order, extras to
+  // busiest branch by cluster work hours."
+  home_branch_indices?: number[]
 }
 
 interface VisitSpec {
@@ -757,22 +764,17 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
     }
   }
 
-  // ── 4. Crew assignment (Phase 4.5 — capacity-aware geographic) ────
-  // Step 1: Pre-seed each crew with a home_branch_index so distance
-  // calculations are well-defined from the FIRST cluster onward. The
-  // earlier version returned distance 0 for empty crews, which made
-  // them silently win every tie even when they shouldn't.
+  // ── 4. Crew assignment (Phase 4.7 — every crew is roving) ─────────
+  // Every crew has a home_branch_index for travel-time math (drive from
+  // home → first job → ... → last job → home). Crews are NEVER capped
+  // to clusters near their home; the engine assigns each cluster to the
+  // best crew globally, weighing drive distance and load balance.
   //
-  // First N crews (where N = min(crew_count, branch_count)) get one
-  // unique branch each. Extra crews (when crew_count > branch_count)
-  // go to the branch with the most cluster work hours.
-  //
-  // Step 2: Each cluster goes first to a same-home-branch crew with
-  // capacity (cluster fits within the crew's remaining workday budget).
-  // If none, spills to the geographically closest crew with capacity.
-  // If everywhere is full, falls back to the closest crew anyway and
-  // emits a crew_load_imbalance warning so the operator knows the
-  // overflow is unavoidable with current crew_count + cycle_length.
+  // Home-branch source priority:
+  //   1. input.home_branch_indices[i] — explicit operator staging from
+  //      crew_count_per_branch_override. This is the first-class path.
+  //   2. Fallback heuristic: crew i → branch i (in input order); extras
+  //      cycle through the branches with the most cluster work hours.
   const workByBranchIdx = new Map<number, number>()
   for (const c of clusters) {
     workByBranchIdx.set(
@@ -784,14 +786,20 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
     .sort((a, b) => b[1] - a[1])
     .map(([idx]) => idx)
 
+  const explicitHomes = Array.isArray(input.home_branch_indices)
+    && input.home_branch_indices.length === input.crew_count
+    ? input.home_branch_indices
+    : null
+
   const crews = Array.from({ length: input.crew_count }, (_, i) => {
     let homeBranchIdx: number
-    if (i < input.branches.length) {
-      // Direct assignment: crew i → branch i, in branch input order.
+    if (explicitHomes && Number.isInteger(explicitHomes[i])
+        && explicitHomes[i] >= 0
+        && explicitHomes[i] < input.branches.length) {
+      homeBranchIdx = explicitHomes[i]
+    } else if (i < input.branches.length) {
       homeBranchIdx = i
     } else if (branchesByLoadDesc.length > 0) {
-      // Extra crews go to the busiest branches in load order, cycling
-      // if there are still more crews than busy branches.
       homeBranchIdx = branchesByLoadDesc[(i - input.branches.length) % branchesByLoadDesc.length]
     } else {
       homeBranchIdx = 0
@@ -807,12 +815,11 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
     }
   })
 
-  // Sort clusters biggest-first: heavy clusters drive the placement
+  // Sort clusters biggest-first: heavy clusters drive placement
   // decisions, smaller ones fill in gaps.
   const sortedClusters = [...clusters].sort((a, b) => b.total_work_hours - a.total_work_hours)
 
   let rebalanceWarning: string | null = null
-  let rebalanceSpillCount = 0
   for (const cluster of sortedClusters) {
     const clusterWorkdays = cluster.days_on_site_per_trip * cluster.trips_per_cycle
 
@@ -825,44 +832,29 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
       )
     }
 
-    // Try same-home-branch crews with capacity first.
-    const naturalFit = crews
-      .filter(
-        (c) =>
-          c.home_branch_index === cluster.base_branch_index &&
-          c.workdays_assigned + clusterWorkdays <= cycleDays
-      )
-      .sort((a, b) => a.workdays_assigned - b.workdays_assigned)
-
+    // Single-tier global assignment: pick the crew with capacity that
+    // minimizes drive distance from home → cluster, breaking ties by
+    // current workload so balance stays sane. No same-branch preference;
+    // a Lindon-home crew can take an Arizona cluster if it's the best
+    // global use of resources. Drive math still uses the crew's home,
+    // so travel time is correctly attributed.
+    const sortedAll = [...crews].sort((a, b) => {
+      const da = distFor(a.home_branch_index)
+      const db = distFor(b.home_branch_index)
+      if (da !== db) return da - db
+      return a.workdays_assigned - b.workdays_assigned
+    })
+    const fittingCrews = sortedAll.filter(
+      (c) => c.workdays_assigned + clusterWorkdays <= cycleDays
+    )
     let target: typeof crews[number]
-    if (naturalFit.length > 0) {
-      target = naturalFit[0]
+    if (fittingCrews.length > 0) {
+      target = fittingCrews[0]
     } else {
-      // Spill to the geographically closest crew with capacity.
-      const fittingCrews = crews
-        .filter((c) => c.workdays_assigned + clusterWorkdays <= cycleDays)
-        .sort((a, b) => {
-          const da = distFor(a.home_branch_index)
-          const db = distFor(b.home_branch_index)
-          if (da !== db) return da - db
-          return a.workdays_assigned - b.workdays_assigned
-        })
-      if (fittingCrews.length > 0) {
-        target = fittingCrews[0]
-        rebalanceSpillCount++
-      } else {
-        // No crew has capacity anywhere — nearest crew anyway, warn.
-        const sortedAll = [...crews].sort((a, b) => {
-          const da = distFor(a.home_branch_index)
-          const db = distFor(b.home_branch_index)
-          if (da !== db) return da - db
-          return a.workdays_assigned - b.workdays_assigned
-        })
-        target = sortedAll[0]
-        if (rebalanceWarning == null) {
-          rebalanceWarning =
-            'All crews exceed cycle capacity — overflow will surface as unplaced. Add a crew or extend cycle_length_days.'
-        }
+      target = sortedAll[0]
+      if (rebalanceWarning == null) {
+        rebalanceWarning =
+          'All crews exceed cycle capacity — overflow will surface as unplaced. Add a crew or extend cycle_length_days.'
       }
     }
 
@@ -1358,11 +1350,6 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
   if (propertiesTransferred > 0) {
     notes.push(
       `Pre-cluster rebalance reassigned ${propertiesTransferred} property(s) to a non-nearest branch (closer-by-cost branch was full; this branch was the next-best fit with capacity).`
-    )
-  }
-  if (rebalanceSpillCount > 0) {
-    notes.push(
-      `Capacity-aware rebalance spilled ${rebalanceSpillCount} cluster(s) from their natural home-branch crew to a next-closest crew with room.`
     )
   }
   if (rebalanceWarning) {
