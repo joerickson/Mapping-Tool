@@ -80,6 +80,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     home_branch_index?: number
   }>
 
+  // Unplaced visits — we use the count to compute "what you'd actually
+  // need to cover everything" (the recommended crew count in the
+  // calibration block below). One unplaced visit ≈ one crew-day of
+  // missing capacity (conservative; some unplaced are partial-day).
+  const { count: unplacedCountRaw } = await db
+    .from('scheduled_visits')
+    .select('id', { count: 'exact', head: true })
+    .eq('cycle_instance_id', cycleId)
+    .eq('status', 'unplaced')
+  const unplacedCount = unplacedCountRaw ?? 0
+
   // crew_index → home_branch_index (template snapshot, taken at build time).
   const homeByCrewIdx = new Map<number, number>()
   for (const ca of crewAssignments) {
@@ -213,23 +224,64 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     crew_count: crewSummaries.length,
     workdays_total: crewSummaries.reduce((s, c) => s + c.workdays_total, 0),
     idle_days_total: crewSummaries.reduce((s, c) => s + c.idle_days, 0),
+    busy_days_total: 0,
+    unplaced_count: unplacedCount,
     utilization_pct: 0,
     longest_streak: crewSummaries.reduce((m, c) => Math.max(m, c.longest_streak), 0),
   }
+  portfolio.busy_days_total = portfolio.workdays_total - portfolio.idle_days_total
   portfolio.utilization_pct =
     portfolio.workdays_total > 0
+      ? Math.round((portfolio.busy_days_total / portfolio.workdays_total) * 100)
+      : 0
+
+  // Calibration: compare the predicted crew count (what Crew Strategy
+  // recommended and what the template was built with) against what was
+  // actually consumed. Two flavors of recommendation:
+  //   effective_crews — minimum crews needed to cover what got placed
+  //                     (busy_days / workdays_per_crew). If the predicted
+  //                     count is higher, you have wasted capacity.
+  //   recommended_crews — minimum crews needed to cover busy + unplaced.
+  //                     If the predicted count is lower (or equal), you
+  //                     dropped work that more crews could have absorbed.
+  const workdaysPerCrew =
+    crewSummaries.length > 0
       ? Math.round(
-          ((portfolio.workdays_total - portfolio.idle_days_total) /
-            portfolio.workdays_total) *
-            100
+          crewSummaries.reduce((s, c) => s + c.workdays_total, 0) / crewSummaries.length
         )
       : 0
+  const effectiveCrews =
+    workdaysPerCrew > 0
+      ? Math.max(0, Math.ceil(portfolio.busy_days_total / workdaysPerCrew))
+      : 0
+  const recommendedCrews =
+    workdaysPerCrew > 0
+      ? Math.max(
+          0,
+          Math.ceil((portfolio.busy_days_total + unplacedCount) / workdaysPerCrew)
+        )
+      : 0
+  let calibrationVerdict: 'overstaffed' | 'understaffed' | 'balanced'
+  if (recommendedCrews > crewCount) calibrationVerdict = 'understaffed'
+  else if (effectiveCrews < crewCount) calibrationVerdict = 'overstaffed'
+  else calibrationVerdict = 'balanced'
+  const calibration = {
+    predicted_crews: crewCount,
+    effective_crews: effectiveCrews,
+    recommended_crews: recommendedCrews,
+    workdays_per_crew: workdaysPerCrew,
+    busy_days_total: portfolio.busy_days_total,
+    unplaced_count: unplacedCount,
+    delta_vs_recommended: crewCount - recommendedCrews,
+    verdict: calibrationVerdict,
+  }
 
   return res.status(200).json({
     cycle_id: cycleId,
     cycle_start: (cycle as any).start_date,
     cycle_end: (cycle as any).end_date,
     portfolio,
+    calibration,
     by_branch: branchSummaries,
     by_crew: crewSummaries,
   })

@@ -872,7 +872,11 @@ export default function CycleDetailPage() {
         )}
 
         {view === 'utilization' && cycleId && (
-          <UtilizationPanel cycleId={cycleId} />
+          <UtilizationPanel
+            cycleId={cycleId}
+            accountId={accountId ?? null}
+            clientId={clientId ?? null}
+          />
         )}
 
         {/* List view: existing crew_days + visits tables */}
