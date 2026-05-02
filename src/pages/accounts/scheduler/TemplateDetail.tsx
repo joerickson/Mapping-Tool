@@ -47,6 +47,16 @@ interface Template {
   branches?: Array<{ name: string; lat: number; lng: number }>
   branch_assignments?: any[]
   branch_assignment_overrides?: Record<string, number>
+  combined_client_ids?: string[] | null
+  config?: {
+    combined_branch_sources?: Array<{
+      name: string
+      lat: number
+      lng: number
+      client_ids: string[]
+    }>
+    [key: string]: unknown
+  }
 }
 
 interface Cycle {
@@ -251,6 +261,19 @@ export default function TemplateDetailPage() {
               {template.total_visits_per_cycle ?? 0} visits/cycle ·{' '}
               ${(template.total_estimated_cost_per_year ?? 0).toLocaleString()} estimated annual cost
             </p>
+            {Array.isArray(template.combined_client_ids) && template.combined_client_ids.length > 1 && (
+              <p className="text-xs text-fg-subtle">
+                Combined schedule across {template.combined_client_ids.length} clients ·{' '}
+                {(template.branches?.length ?? 0)} branches unioned
+                {template.config?.combined_branch_sources && (
+                  <>
+                    {' '}({template.config.combined_branch_sources
+                      .map((b) => b.name)
+                      .join(', ')})
+                  </>
+                )}
+              </p>
+            )}
             {template.description && <p className="text-sm text-fg-subtle">{template.description}</p>}
           </div>
           <div className="flex items-center gap-2">
