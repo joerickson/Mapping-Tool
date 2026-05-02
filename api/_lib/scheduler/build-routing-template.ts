@@ -621,11 +621,12 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
     }
   }
 
-  // Include REMOTE properties in branch_assignments too so the UI count
-  // matches the total property count. Remotes always go to their
-  // nearest branch (no rebalance — the geography forces it). The UI
-  // disables override on these.
+  // Include REMOTE properties in branch_assignments. Each remote's
+  // assigned_branch_idx = override (if set) else its nearest branch.
+  // is_remote=true so the UI surfaces them differently, but overrides
+  // on remotes ARE honored by the engine (Phase 4.5h).
   if (remote.length > 0 && input.branches.length > 0) {
+    const overrides = input.branch_assignment_overrides ?? {}
     for (const v of remote) {
       let nearest = 0
       let bestDist = Number.POSITIVE_INFINITY
@@ -636,6 +637,12 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
           nearest = i
         }
       }
+      const overrideVal = overrides[v.service_location_id]
+      const hasOverride =
+        typeof overrideVal === 'number' &&
+        overrideVal >= 0 &&
+        overrideVal < input.branches.length
+      const assigned = hasOverride ? overrideVal : nearest
       branchAssignmentsOutput.push({
         service_location_id: v.service_location_id,
         property_id: v.property_id,
@@ -643,9 +650,9 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
         lat: v.lat,
         lng: v.lng,
         nearest_branch_idx: nearest,
-        assigned_branch_idx: nearest,
-        transferred: false,
-        overridden: false,
+        assigned_branch_idx: assigned,
+        transferred: assigned !== nearest,
+        overridden: hasOverride,
         is_remote: true,
       })
     }
@@ -678,22 +685,75 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
   }
 
   // Remote clusters: density cluster at radius. Each goes to its own
-  // nearest branch.
+  // nearest branch UNLESS the operator has set per-property overrides
+  // — properties with overrides are pulled out and grouped per-target-
+  // branch, density-clustered within each group, and the resulting
+  // clusters are forced to the override branch regardless of geography.
   if (remote.length > 0) {
-    const grouped = densityCluster(remote, input.config.cluster_radius_miles)
-    for (let gi = 0; gi < grouped.length; gi++) {
-      const group = grouped[gi]
-      const c = centroid(group.map((v) => ({ lat: v.lat, lng: v.lng })))
-      let bestBranchIdx = 0
-      let bestDist = Infinity
-      for (let i = 0; i < input.branches.length; i++) {
-        const d = haversineMiles(c, input.branches[i])
-        if (d < bestDist) {
-          bestDist = d
-          bestBranchIdx = i
+    const remoteOverrides = input.branch_assignment_overrides ?? {}
+    const overriddenRemote: VisitSpec[] = []
+    const naturalRemote: VisitSpec[] = []
+    for (const v of remote) {
+      const tgt = remoteOverrides[v.service_location_id]
+      if (
+        typeof tgt === 'number' &&
+        tgt >= 0 &&
+        tgt < input.branches.length
+      ) {
+        overriddenRemote.push(v)
+      } else {
+        naturalRemote.push(v)
+      }
+    }
+
+    // Natural path: density-cluster, assign each cluster to its centroid's nearest branch.
+    if (naturalRemote.length > 0) {
+      const grouped = densityCluster(naturalRemote, input.config.cluster_radius_miles)
+      for (let gi = 0; gi < grouped.length; gi++) {
+        const group = grouped[gi]
+        const c = centroid(group.map((v) => ({ lat: v.lat, lng: v.lng })))
+        let bestBranchIdx = 0
+        let bestDist = Infinity
+        for (let i = 0; i < input.branches.length; i++) {
+          const d = haversineMiles(c, input.branches[i])
+          if (d < bestDist) {
+            bestDist = d
+            bestBranchIdx = i
+          }
+        }
+        clusters.push(makeCluster(`remote-${gi}`, 'remote', bestBranchIdx, c, group, input))
+      }
+    }
+
+    // Override path: group properties by their override branch, then
+    // density-cluster within each group so geographically-close
+    // overrides on the same branch share a trip. The cluster's branch
+    // is the override branch (forced).
+    if (overriddenRemote.length > 0) {
+      const byBranch = new Map<number, VisitSpec[]>()
+      for (const v of overriddenRemote) {
+        const tgt = remoteOverrides[v.service_location_id] as number
+        const arr = byBranch.get(tgt) ?? []
+        arr.push(v)
+        byBranch.set(tgt, arr)
+      }
+      let overrideClusterIdx = 0
+      for (const [branchIdx, group] of byBranch) {
+        const subGroups = densityCluster(group, input.config.cluster_radius_miles)
+        for (const subGroup of subGroups) {
+          const c = centroid(subGroup.map((v) => ({ lat: v.lat, lng: v.lng })))
+          clusters.push(
+            makeCluster(
+              `remote-override-${branchIdx}-${overrideClusterIdx++}`,
+              'remote',
+              branchIdx,
+              c,
+              subGroup,
+              input
+            )
+          )
         }
       }
-      clusters.push(makeCluster(`remote-${gi}`, 'remote', bestBranchIdx, c, group, input))
     }
   }
 
