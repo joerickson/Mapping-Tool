@@ -88,12 +88,19 @@ export async function generateCycleInstance(
   }
   const completedCohorts = new Set<string>()
   if (cohortAssignmentIds.size > 0) {
-    const { data: cohortRows } = await db
-      .from('addon_cohort_assignments')
-      .select('id, last_completed_date, next_due_year')
-      .in('id', Array.from(cohortAssignmentIds))
+    // Chunk for URL-length safety on combined templates.
+    const idArr = Array.from(cohortAssignmentIds)
+    const cohortRows: any[] = []
+    for (let i = 0; i < idArr.length; i += 250) {
+      const chunk = idArr.slice(i, i + 250)
+      const { data } = await db
+        .from('addon_cohort_assignments')
+        .select('id, last_completed_date, next_due_year')
+        .in('id', chunk)
+      cohortRows.push(...(data ?? []))
+    }
     const cycleYear = Number(startDate.slice(0, 4))
-    for (const row of cohortRows ?? []) {
+    for (const row of cohortRows) {
       const r = row as { id: string; last_completed_date: string | null; next_due_year: number }
       if (r.next_due_year > cycleYear) completedCohorts.add(r.id)
     }
@@ -266,12 +273,17 @@ export async function generateCycleInstance(
     .map((u) => u.service_location_id as string)
   let propIdBySlId = new Map<string, string>()
   if (slIdsNeedingPropId.length > 0) {
-    const { data: slRows } = await db
-      .from('service_locations')
-      .select('id, property_id')
-      .in('id', slIdsNeedingPropId)
+    const slRows: any[] = []
+    for (let i = 0; i < slIdsNeedingPropId.length; i += 250) {
+      const chunk = slIdsNeedingPropId.slice(i, i + 250)
+      const { data } = await db
+        .from('service_locations')
+        .select('id, property_id')
+        .in('id', chunk)
+      slRows.push(...(data ?? []))
+    }
     propIdBySlId = new Map(
-      (slRows ?? []).map((r) => [(r as any).id as string, (r as any).property_id as string])
+      slRows.map((r) => [(r as any).id as string, (r as any).property_id as string])
     )
   }
   for (const u of unplacedRaw) {
