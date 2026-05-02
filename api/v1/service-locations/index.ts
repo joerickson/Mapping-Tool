@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createAdminClient } from '../../_lib/supabase.js'
 import { authenticateRequest } from '../../_lib/auth.js'
 import { fireWebhook } from '../../_lib/webhooks.js'
+import { resolveClientIdsList } from '../../_lib/clients/resolve-client-ids.js'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end()
@@ -29,7 +30,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .select('*, property:properties(state, city)')
       .order('property(state)', { ascending: true })
 
-    if (client_id) query = query.in('client_id', String(client_id).split(','))
+    if (client_id) {
+      // Combined clients own no SLs of their own — resolve to member ids
+      // so the listing returns the unioned SL set.
+      const requested = String(client_id).split(',').filter(Boolean)
+      const resolved = await resolveClientIdsList(db, requested)
+      query = query.in('client_id', resolved)
+    }
     if (status) query = query.in('status', String(status).split(','))
     if (property_id) query = query.eq('property_id', String(property_id))
 

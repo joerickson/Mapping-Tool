@@ -32,6 +32,35 @@ export default function ClientDetailPage() {
   const [archiving, setArchiving] = useState(false)
   const [confirmArchive, setConfirmArchive] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState<{
+    branches: number; crew_total: number; synced_at: string
+  } | null>(null)
+
+  async function handleSyncCombined() {
+    if (!client) return
+    setSyncing(true)
+    setError(null)
+    try {
+      const token = await getToken()
+      const res = await fetch(`/api/v1/clients/${client.id}/sync-combined`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error ?? `Sync failed (${res.status})`)
+      setSyncResult({
+        branches: body.branches,
+        crew_total: body.crew_total,
+        synced_at: body.synced_at,
+      })
+      await loadClient()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   // Edit form state
   const [editName, setEditName] = useState('')
@@ -216,6 +245,47 @@ export default function ClientDetailPage() {
               </div>
             </div>
           </div>
+
+          {/* Combined-client sync banner */}
+          {client.is_combined && (
+            <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <h2 className="text-sm font-semibold text-blue-900">Combined client sync</h2>
+                  <p className="text-xs text-blue-800/80">
+                    Pulls each member's selected branches and crew counts into this combined
+                    client. Properties, service locations, and offerings stay virtual — they're
+                    resolved from members on every read, no copy needed.
+                  </p>
+                  {(() => {
+                    const last = (client.metadata as any)?.combined_last_synced_at as string | undefined
+                    if (last) {
+                      return (
+                        <p className="text-[11px] text-blue-700/70">
+                          Last synced: {new Date(last).toLocaleString()}
+                        </p>
+                      )
+                    }
+                    return (
+                      <p className="text-[11px] text-blue-700/70">
+                        Never synced — Smart Analysis still works (members are resolved at read
+                        time), but Branch Optimization needs a sync to see member branches.
+                      </p>
+                    )
+                  })()}
+                  {syncResult && (
+                    <p className="text-[11px] text-blue-900">
+                      Synced {syncResult.branches} branches, {syncResult.crew_total} crews total at{' '}
+                      {new Date(syncResult.synced_at).toLocaleTimeString()}.
+                    </p>
+                  )}
+                </div>
+                <Button size="sm" onClick={handleSyncCombined} loading={syncing}>
+                  Sync from members
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* Stats */}
           <div className="grid grid-cols-3 gap-4">
