@@ -104,6 +104,55 @@ export interface CrewStrategyInputs {
 const DEFAULT_WORKING_DAYS_PER_YEAR = 250
 const ROVING_ESTIMATED_ANNUAL_MILES_PER_CREW = 30000
 
+// Distribute totalCrews across branches proportional to each branch's
+// building-day workload, using the largest-remainder method so the sum
+// matches exactly. Branches with non-zero workload are guaranteed at
+// least 1 crew (pulled from the largest holder if needed). Used by
+// Crew Strategy to recommend optimal staging — one home branch per
+// crew, every crew accounted for, no implicit "roving" residual.
+function computeOptimalStaging(
+  buildingDaysPerBranch: number[],
+  totalCrews: number,
+  branchNames: string[]
+): Array<{ branch_name: string; crew_count: number }> {
+  const out = (counts: number[]) =>
+    branchNames.map((n, i) => ({ branch_name: n, crew_count: counts[i] ?? 0 }))
+  if (totalCrews <= 0 || branchNames.length === 0) return out([])
+  const totalDays = buildingDaysPerBranch.reduce((a, b) => a + b, 0)
+  if (totalDays <= 0) {
+    // No workload signal — even split, ones first.
+    const counts = new Array(branchNames.length).fill(0)
+    for (let i = 0; i < totalCrews; i++) counts[i % branchNames.length]++
+    return out(counts)
+  }
+  const real = buildingDaysPerBranch.map((bd) => (bd / totalDays) * totalCrews)
+  const counts = real.map((r) => Math.floor(r))
+  const remainders = real.map((r, i) => ({ idx: i, frac: r - counts[i] }))
+  let allocated = counts.reduce((a, b) => a + b, 0)
+  remainders.sort((a, b) => b.frac - a.frac)
+  let i = 0
+  while (allocated < totalCrews && i < remainders.length) {
+    counts[remainders[i].idx]++
+    allocated++
+    i++
+  }
+  // Floor: any branch with workload > 0 gets at least 1 crew, pulled
+  // from the largest contributor if the proportional split rounded to 0.
+  for (let b = 0; b < counts.length; b++) {
+    if (counts[b] === 0 && buildingDaysPerBranch[b] > 0) {
+      let largest = 0
+      for (let j = 1; j < counts.length; j++) {
+        if (counts[j] > counts[largest]) largest = j
+      }
+      if (counts[largest] > 1 && largest !== b) {
+        counts[largest]--
+        counts[b]++
+      }
+    }
+  }
+  return out(counts)
+}
+
 function computeFteHoursPerYear(inputs: { hours_per_day: number }, workingDaysPerYear?: number | null): number {
   const days = Number.isFinite(workingDaysPerYear) && (workingDaysPerYear ?? 0) > 0
     ? Number(workingDaysPerYear)
@@ -983,6 +1032,17 @@ export function computeCrewStrategy(
       })),
       roving_crews: rovingCrews,
       dedicated_total: crewsPerBranch.reduce((a, b) => a + b, 0),
+      // Phase 4.7 — every crew has a home branch (engine treats them
+      // all as roving for cluster assignment). Distribute the total
+      // recommended crew count proportional to each branch's natural
+      // workload (building-days), using the largest-remainder method
+      // so sums match exactly. UI shows this as "Optimal staging" with
+      // an "Apply" button that writes to crew_count_per_branch_override.
+      optimal_staging: computeOptimalStaging(
+        branchBuildingDaysList,
+        optionB_crews,
+        branches.map((b) => b.name)
+      ),
       utilization_pct: optionB_util_pct,
       annual_labor_cost: Math.round(optionB_labor),
       annual_vehicle_cost: Math.round(optionB_vehicle),
