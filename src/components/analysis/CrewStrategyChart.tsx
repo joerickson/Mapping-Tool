@@ -217,6 +217,39 @@ export default function CrewStrategyChart({
   const [overrideEnabled, setOverrideEnabled] = useState(false)
   const [savingOverride, setSavingOverride] = useState(false)
 
+  // Multi-cycle calibration signal — averages "what the schedule
+  // actually does" across recent cycles for this client.
+  const [calibration, setCalibration] = useState<{
+    cycles_analyzed: number
+    actual_buildings_per_crew_day: number
+    actual_pair_rate: number
+    actual_drive_overhead_pct: number
+    actual_unplaced_pct: number
+    calibration_factor: number
+    verdict: 'accurate' | 'under-predicting' | 'over-predicting'
+  } | null>(null)
+  useEffect(() => {
+    if (!accountId || !clientId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const token = await getToken()
+        const res = await fetch(
+          `/api/analyses/account/${accountId}/clients/${clientId}/cycle-calibration`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        )
+        if (!res.ok) return
+        const j = await res.json()
+        if (!cancelled && j?.calibration && j.cycles_analyzed > 0) {
+          setCalibration({ cycles_analyzed: j.cycles_analyzed, ...j.calibration })
+        }
+      } catch {
+        // non-fatal — calibration is enrichment, not core functionality
+      }
+    })()
+    return () => { cancelled = true }
+  }, [accountId, clientId, getToken])
+
   useEffect(() => {
     if (!accountId || !clientId) return
     let cancelled = false
@@ -384,6 +417,98 @@ export default function CrewStrategyChart({
             : data.recommended_rationale}
         </p>
       </div>
+
+      {/* Phase 4.7 — Multi-cycle calibration. Crew Strategy is a
+          PREDICTION; cycle generation is the MEASUREMENT. This card
+          surfaces what the schedule actually does across recent cycles
+          and proposes a calibrated count if the prediction is off. */}
+      {calibration && calibration.cycles_analyzed > 0 && (
+        <Card
+          padding="md"
+          className={
+            calibration.verdict === 'under-predicting'
+              ? 'border-warning/40 bg-warning-subtle/30'
+              : calibration.verdict === 'over-predicting'
+                ? 'border-accent/40 bg-accent-subtle/30'
+                : 'border-success/40 bg-success-subtle/30'
+          }
+        >
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="space-y-1.5 min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+                Calibrated from {calibration.cycles_analyzed} recent cycle
+                {calibration.cycles_analyzed === 1 ? '' : 's'}
+              </p>
+              <p className="text-sm text-fg max-w-2xl">
+                {calibration.verdict === 'under-predicting' ? (
+                  <>
+                    Crew Strategy's math assumes 1 building per crew-day, but
+                    your cycles are averaging{' '}
+                    <span className="font-tabular font-semibold">
+                      {calibration.actual_buildings_per_crew_day}
+                    </span>{' '}
+                    with{' '}
+                    <span className="font-tabular font-semibold">
+                      {Math.round(calibration.actual_unplaced_pct * 100)}%
+                    </span>{' '}
+                    visits dropped. Multiply the recommended count by{' '}
+                    <span className="font-tabular font-semibold">
+                      {calibration.calibration_factor}×
+                    </span>{' '}
+                    to absorb the gap.
+                  </>
+                ) : calibration.verdict === 'over-predicting' ? (
+                  <>
+                    Cycles are running cleaner than predicted —{' '}
+                    <span className="font-tabular font-semibold">
+                      {calibration.actual_buildings_per_crew_day}
+                    </span>{' '}
+                    buildings/crew-day with{' '}
+                    <span className="font-tabular font-semibold">
+                      {Math.round(calibration.actual_unplaced_pct * 100)}%
+                    </span>{' '}
+                    dropped. The Utilization tab's per-cycle calibration card
+                    is the right tool for trimming.
+                  </>
+                ) : (
+                  <>
+                    The prediction matches reality across recent cycles —
+                    averaging{' '}
+                    <span className="font-tabular font-semibold">
+                      {calibration.actual_buildings_per_crew_day}
+                    </span>{' '}
+                    buildings/crew-day,{' '}
+                    <span className="font-tabular font-semibold">
+                      {Math.round(calibration.actual_unplaced_pct * 100)}%
+                    </span>{' '}
+                    dropped.
+                  </>
+                )}
+              </p>
+              <div className="flex flex-wrap gap-3 text-[11px] text-fg-muted pt-1">
+                <span>
+                  Pair rate:{' '}
+                  <span className="font-tabular text-fg">
+                    {Math.round(calibration.actual_pair_rate * 100)}%
+                  </span>
+                </span>
+                <span>
+                  Drive overhead:{' '}
+                  <span className="font-tabular text-fg">
+                    {Math.round(calibration.actual_drive_overhead_pct * 100)}%
+                  </span>
+                </span>
+                <span>
+                  Calibration factor:{' '}
+                  <span className="font-tabular text-fg">
+                    {calibration.calibration_factor}×
+                  </span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* Phase 3.8 — Building-count math summary */}
       {data.crew_count_analysis && (
