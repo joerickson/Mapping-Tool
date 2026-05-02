@@ -10,6 +10,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 import { Card, CardTitle } from '../ui/Card'
 import { Badge } from '../ui/Badge'
+import Button from '../ui/Button'
 import { cn } from '../../lib/cn'
 
 interface IdleStreak {
@@ -54,8 +55,20 @@ interface IdleAnalysis {
     crew_count: number
     workdays_total: number
     idle_days_total: number
+    busy_days_total?: number
+    unplaced_count?: number
     utilization_pct: number
     longest_streak: number
+  }
+  calibration?: {
+    predicted_crews: number
+    effective_crews: number
+    recommended_crews: number
+    workdays_per_crew: number
+    busy_days_total: number
+    unplaced_count: number
+    delta_vs_recommended: number
+    verdict: 'overstaffed' | 'understaffed' | 'balanced'
   }
   by_branch: BranchSummary[]
   by_crew: CrewSummary[]
@@ -75,12 +88,126 @@ const PATTERN_BADGE: Record<BranchSummary['pattern'], 'success' | 'warning' | 'a
   none: 'success',
 }
 
-export default function UtilizationPanel({ cycleId }: { cycleId: string }) {
+export default function UtilizationPanel({
+  cycleId,
+  accountId,
+  clientId,
+}: {
+  cycleId: string
+  accountId?: string | null
+  clientId?: string | null
+}) {
   const { getToken } = useAuth()
   const [data, setData] = useState<IdleAnalysis | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedBranchKey, setSelectedBranchKey] = useState<string | null>(null)
+  const [applyingCalibration, setApplyingCalibration] = useState(false)
+  const [calibrationApplied, setCalibrationApplied] = useState<{
+    new_total: number
+    new_per_branch: Record<string, number>
+  } | null>(null)
+  const [calibrationError, setCalibrationError] = useState<string | null>(null)
+
+  async function applyCalibration() {
+    if (!data?.calibration || !accountId || !clientId) return
+    setApplyingCalibration(true)
+    setCalibrationError(null)
+    try {
+      const token = await getToken()
+      // Read the current per-branch override so we can scale it down
+      // (or up) to match the recommended total. Falls back to even
+      // distribution across branches with crews if no override exists.
+      const conRes = await fetch(
+        `/api/accounts/${accountId}/clients/${clientId}/operational-constraints`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
+      if (!conRes.ok) throw new Error(`Constraints load failed (${conRes.status})`)
+      const con = await conRes.json()
+      const current = (con?.crew_count_per_branch_override ?? {}) as Record<string, number>
+      // Drop the legacy '__roving' key — calibration assumes every crew
+      // has a home (the new model).
+      const cleaned: Record<string, number> = {}
+      let curTotal = 0
+      for (const [k, v] of Object.entries(current)) {
+        if (k === '__roving') continue
+        const n = Math.floor(Number(v) || 0)
+        if (n > 0) {
+          cleaned[k] = n
+          curTotal += n
+        }
+      }
+      // If nothing's set, fall back to seeding from by_branch (one crew
+      // per branch with crews). Better than blanking the override.
+      if (Object.keys(cleaned).length === 0) {
+        for (const b of data.by_branch) {
+          if (b.crew_count > 0 && b.branch_name) {
+            cleaned[b.branch_name] = b.crew_count
+            curTotal += b.crew_count
+          }
+        }
+      }
+      const target = data.calibration.recommended_crews
+      let next: Record<string, number> = {}
+      if (curTotal === target || curTotal === 0) {
+        next = cleaned
+      } else {
+        // Largest-remainder scaling so sum = target exactly.
+        const scale = target / curTotal
+        const real: Record<string, number> = {}
+        const floors: Array<{ key: string; floor: number; rem: number }> = []
+        let alloc = 0
+        for (const [k, v] of Object.entries(cleaned)) {
+          real[k] = v * scale
+          const f = Math.floor(real[k])
+          floors.push({ key: k, floor: f, rem: real[k] - f })
+          alloc += f
+        }
+        floors.sort((a, b) => b.rem - a.rem)
+        let i = 0
+        while (alloc < target && i < floors.length) {
+          floors[i].floor++
+          alloc++
+          i++
+        }
+        // If we OVERSHOT (target is small), trim from smallest floors.
+        if (alloc > target) {
+          floors.sort((a, b) => a.floor - b.floor)
+          let j = 0
+          while (alloc > target && j < floors.length) {
+            if (floors[j].floor > 0) {
+              floors[j].floor--
+              alloc--
+            }
+            j++
+          }
+        }
+        for (const f of floors) {
+          if (f.floor > 0) next[f.key] = f.floor
+        }
+      }
+      const writeRes = await fetch(
+        `/api/accounts/${accountId}/clients/${clientId}/operational-constraints`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ crew_count_per_branch_override: next }),
+        }
+      )
+      if (!writeRes.ok) {
+        const body = await writeRes.json().catch(() => ({}))
+        throw new Error(body?.error ?? `Save failed (${writeRes.status})`)
+      }
+      setCalibrationApplied({ new_total: target, new_per_branch: next })
+    } catch (err) {
+      setCalibrationError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setApplyingCalibration(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -136,6 +263,15 @@ export default function UtilizationPanel({ cycleId }: { cycleId: string }) {
   if (error) return <p className="text-sm text-danger">{error}</p>
   if (!data) return null
 
+  const cal = data.calibration
+  const calBorder =
+    cal?.verdict === 'overstaffed'
+      ? 'border-warning/40 bg-warning-subtle/40'
+      : cal?.verdict === 'understaffed'
+        ? 'border-danger/40 bg-danger-subtle/40'
+        : cal?.verdict === 'balanced'
+          ? 'border-success/40 bg-success-subtle/40'
+          : ''
   return (
     <div className="space-y-4">
       <Card>
@@ -154,6 +290,102 @@ export default function UtilizationPanel({ cycleId }: { cycleId: string }) {
           </div>
         </div>
       </Card>
+
+      {/* Calibration card — Crew Strategy is a *prediction* off
+          aggregate building-days; this cycle is the *measurement*. The
+          card surfaces the gap and offers to scale the per-branch
+          staging to the recommended count for the next regen. */}
+      {cal && (
+        <Card className={cn('border', calBorder)}>
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="space-y-2 min-w-0 max-w-2xl">
+              <div className="flex items-center gap-2 flex-wrap">
+                <CardTitle>Crew count calibration</CardTitle>
+                <Badge
+                  variant={
+                    cal.verdict === 'overstaffed'
+                      ? 'warning'
+                      : cal.verdict === 'understaffed'
+                        ? 'danger'
+                        : 'success'
+                  }
+                  className="text-[10px] uppercase"
+                >
+                  {cal.verdict}
+                </Badge>
+              </div>
+              <p className="text-sm text-fg">
+                Crew Strategy predicted{' '}
+                <span className="font-tabular font-semibold">{cal.predicted_crews}</span>{' '}
+                crews. This cycle actually consumed{' '}
+                <span className="font-tabular font-semibold">{cal.busy_days_total}</span>{' '}
+                busy crew-days
+                {cal.unplaced_count > 0 && (
+                  <>
+                    {' '}and dropped{' '}
+                    <span className="font-tabular font-semibold">{cal.unplaced_count}</span>{' '}
+                    visit{cal.unplaced_count === 1 ? '' : 's'}
+                  </>
+                )}
+                . If you scale to what the schedule actually needs, you'd run with{' '}
+                <span className="font-tabular font-semibold">{cal.recommended_crews}</span>{' '}
+                crew{cal.recommended_crews === 1 ? '' : 's'}
+                {cal.delta_vs_recommended > 0
+                  ? ` — ${cal.delta_vs_recommended} fewer than the prediction.`
+                  : cal.delta_vs_recommended < 0
+                    ? ` — ${Math.abs(cal.delta_vs_recommended)} more than the prediction.`
+                    : '.'}
+              </p>
+              <div className="grid grid-cols-3 gap-3 max-w-lg">
+                <CalStat label="Predicted" value={cal.predicted_crews} />
+                <CalStat
+                  label="Effective"
+                  value={cal.effective_crews}
+                  tooltip="Minimum crews needed to cover what got placed (busy days only)."
+                />
+                <CalStat
+                  label="Recommended"
+                  value={cal.recommended_crews}
+                  tooltip="Minimum crews needed to cover busy + dropped — what next regen should target."
+                  emphasized
+                />
+              </div>
+              {calibrationApplied && (
+                <p className="text-xs text-success">
+                  Saved. Per-branch staging scaled to {calibrationApplied.new_total} total —
+                  re-generate the template to apply.
+                </p>
+              )}
+              {calibrationError && (
+                <p className="text-xs text-danger">{calibrationError}</p>
+              )}
+            </div>
+            <div className="flex flex-col items-stretch gap-2 shrink-0">
+              <Button
+                size="sm"
+                onClick={applyCalibration}
+                loading={applyingCalibration}
+                disabled={
+                  cal.recommended_crews === cal.predicted_crews ||
+                  !accountId ||
+                  !clientId ||
+                  cal.recommended_crews === 0
+                }
+                title={
+                  cal.recommended_crews === cal.predicted_crews
+                    ? 'Predicted matches the schedule — nothing to recalibrate.'
+                    : `Scale per-branch staging to sum=${cal.recommended_crews}.`
+                }
+              >
+                Apply: {cal.recommended_crews} crews
+              </Button>
+              <p className="text-[10px] text-fg-subtle text-right max-w-[12rem]">
+                Updates per-branch staging proportionally. You then re-generate the template.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         {/* Per-branch rollup */}
@@ -331,6 +563,40 @@ function Stat({ label, value }: { label: string; value: string }) {
       <span className="text-[10px] uppercase tracking-wide text-fg-subtle">
         {label}
       </span>
+    </div>
+  )
+}
+
+function CalStat({
+  label,
+  value,
+  tooltip,
+  emphasized,
+}: {
+  label: string
+  value: number
+  tooltip?: string
+  emphasized?: boolean
+}) {
+  return (
+    <div
+      className={cn(
+        'rounded-md border px-3 py-2 leading-tight',
+        emphasized
+          ? 'border-accent bg-accent-subtle/40'
+          : 'border-border bg-surface-subtle/40'
+      )}
+      title={tooltip}
+    >
+      <p
+        className={cn(
+          'font-mono font-semibold tabular-nums',
+          emphasized ? 'text-2xl text-fg' : 'text-xl text-fg'
+        )}
+      >
+        {value}
+      </p>
+      <p className="text-[10px] uppercase tracking-wide text-fg-subtle">{label}</p>
     </div>
   )
 }
