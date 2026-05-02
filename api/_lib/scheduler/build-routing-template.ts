@@ -937,6 +937,38 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
   const trips: any[] = []
   const unplaced: any[] = []
 
+  // Phase 4.5i — pre-compute targetStart per (cluster, visit_idx) so
+  // remote trips on a crew spread evenly across cycleWorkdays instead
+  // of every cluster's visit-0 colliding at workday 33 and bunching
+  // sequentially. Round-robin across remote clusters per crew, then
+  // assign evenly-spaced targets across the cycle.
+  type RemoteJobKey = string // `${cluster_id}:${visit_idx}`
+  const remoteTargetByJob = new Map<RemoteJobKey, number>()
+  for (const crew of crews) {
+    const remoteClusters = crew.cluster_ids
+      .map((id) => clusters.find((c) => c.cluster_id === id))
+      .filter((c): c is ClusterSpec => !!c && c.cluster_type === 'remote')
+    if (remoteClusters.length === 0) continue
+    const maxVisits = Math.max(...remoteClusters.map((c) => c.trips_per_cycle))
+    const jobs: Array<{ cluster_id: string; visit_idx: number }> = []
+    // Round-robin: visit-0 across all clusters, then visit-1, etc.
+    // Preserves each cluster's even cadence (visits remain spaced) AND
+    // prevents two jobs from sharing a target workday.
+    for (let v = 0; v < maxVisits; v++) {
+      for (const cl of remoteClusters) {
+        if (v < cl.trips_per_cycle) {
+          jobs.push({ cluster_id: cl.cluster_id, visit_idx: v })
+        }
+      }
+    }
+    const totalJobs = jobs.length
+    if (totalJobs === 0) continue
+    jobs.forEach((j, i) => {
+      const target = Math.floor((cycleWorkdays * (i + 0.5)) / totalJobs)
+      remoteTargetByJob.set(`${j.cluster_id}:${j.visit_idx}`, target)
+    })
+  }
+
   for (const crew of crews) {
     let nextAvailableDay = 0
     for (const clusterId of crew.cluster_ids) {
@@ -948,17 +980,14 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
         // into the 10-hour window) so we'd otherwise leave properties
         // unplaced just because the estimate was conservative.
         const tripDurationEstimate = cluster.days_on_site_per_trip
-        // Remote trips spread across the cycle (target the midpoint of
-        // each visit segment); local trips pack sequentially from day 0
-        // since they're continuous work, not discrete visits.
+        // Remote trips spread across the cycle via the per-crew round-
+        // robin target map; local trips pack sequentially.
         let tripStart: number
         if (cluster.cluster_type === 'remote') {
-          // Target the midpoint of each visit's segment of the cycle.
-          // Use cycleWorkdays here — tripStart is a workday count.
-          const targetStart = Math.floor(
-            (cycleWorkdays * (visitIdx + 0.5)) / cluster.trips_per_cycle
-          )
-          tripStart = Math.max(targetStart, nextAvailableDay)
+          const target =
+            remoteTargetByJob.get(`${cluster.cluster_id}:${visitIdx}`) ??
+            Math.floor((cycleWorkdays * (visitIdx + 0.5)) / cluster.trips_per_cycle)
+          tripStart = Math.max(target, nextAvailableDay)
         } else {
           tripStart = nextAvailableDay
         }
