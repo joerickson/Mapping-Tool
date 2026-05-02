@@ -64,22 +64,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const clientId = body.client_id as string
     let slIds = (body.service_location_ids as string[]) ?? []
     const crewCount = Number(body.crew_count ?? 1)
+    if (!accountId || !clientId) {
+      return res.status(400).json({ error: 'account_id and client_id required' })
+    }
     // Phase 4.6 — combined templates: when combined_client_ids is set,
     // the SL pool spans all listed clients. client_id stays set to the
     // "base" client (constraints + offerings come from there). The
     // template row persists combined_client_ids so downstream paths
     // (regenerate, cycle gen) can re-fetch the same multi-client pool.
-    const combinedClientIds = Array.isArray(body.combined_client_ids)
+    let combinedClientIds: string[] | null = Array.isArray(body.combined_client_ids)
       ? (body.combined_client_ids as string[]).filter((id) => typeof id === 'string')
       : null
+    // Combined-client first-class entity (PR3): if the URL clientId points
+    // at a clients row with is_combined=true, auto-fill combined_client_ids
+    // from member_client_ids so the user doesn't have to retype them in
+    // the template form. This lets the standard NewTemplate page work
+    // unchanged for combined clients.
+    if (!combinedClientIds || combinedClientIds.length < 2) {
+      const { data: cliRow } = await db
+        .from('clients')
+        .select('id, is_combined, member_client_ids')
+        .eq('id', clientId)
+        .maybeSingle()
+      const c = cliRow as { id: string; is_combined: boolean | null; member_client_ids: string[] | null } | null
+      if (c?.is_combined && Array.isArray(c.member_client_ids) && c.member_client_ids.length >= 2) {
+        combinedClientIds = c.member_client_ids
+      }
+    }
     const isCombined = combinedClientIds != null && combinedClientIds.length > 1
     // Combined-template clients other than the base — used for
     // service_location and service_offering scope below.
     const allClientIds: string[] = isCombined ? combinedClientIds! : [clientId]
-
-    if (!accountId || !clientId) {
-      return res.status(400).json({ error: 'account_id and client_id required' })
-    }
     // Auto-fill SL ids for combined templates when caller didn't supply
     // any: pull every SL across the listed clients.
     if (isCombined && slIds.length === 0) {
@@ -109,45 +124,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let combinedBranchSources: Array<{ name: string; lat: number; lng: number; client_ids: string[] }> | null = null
 
     if (isCombined) {
-      // Base client supplies crew_size / hours_per_day / drive_speed_mph,
-      // but BRANCHES + CREWS span every participating client. Load each
-      // combined client's constraints and union their selected branches,
-      // deduping co-located ones (rounded lat/lng).
-      const { data: clientRows } = await db
-        .from('clients')
-        .select('id, account_id')
-        .in('id', allClientIds)
-      const accountByClientId = new Map<string, string>(
-        (clientRows ?? []).map((r: any) => [r.id as string, r.account_id as string])
-      )
-      const byKey = new Map<string, { name: string; lat: number; lng: number; client_ids: string[] }>()
-      const ordered: Array<{ name: string; lat: number; lng: number; client_ids: string[] }> = []
-      for (const cid of allClientIds) {
-        const aid = accountByClientId.get(cid)
-        if (!aid) continue
-        const c = await loadConstraints(db, aid, cid)
-        const s = requireSelectedBranches(c)
-        if (!s.ok) continue
-        for (const b of s.branches) {
-          const k = `${b.lat.toFixed(3)},${b.lng.toFixed(3)}`
-          const existing = byKey.get(k)
-          if (existing) {
-            if (!existing.client_ids.includes(cid)) existing.client_ids.push(cid)
-          } else {
-            const entry = { name: b.name, lat: b.lat, lng: b.lng, client_ids: [cid] }
-            byKey.set(k, entry)
-            ordered.push(entry)
+      // Branch resolution priority for combined templates:
+      //   1. Combined client's OWN selected_branches if present (from
+      //      Sync action or Branch Optimization run on the combined
+      //      client itself). This is the first-class path.
+      //   2. Fallback: union the member clients' selected_branches with
+      //      dedupe by rounded lat/lng. This is the legacy ad-hoc path
+      //      and preserves behavior for templates created via the
+      //      CombinedSchedules dialog.
+      const ownSel = requireSelectedBranches(constraints)
+      if (ownSel.ok) {
+        branches = ownSel.branches.map((b) => ({ name: b.name, lat: b.lat, lng: b.lng }))
+      } else {
+        const { data: clientRows } = await db
+          .from('clients')
+          .select('id, account_id')
+          .in('id', allClientIds)
+        const accountByClientId = new Map<string, string>(
+          (clientRows ?? []).map((r: any) => [r.id as string, r.account_id as string])
+        )
+        const byKey = new Map<string, { name: string; lat: number; lng: number; client_ids: string[] }>()
+        const ordered: Array<{ name: string; lat: number; lng: number; client_ids: string[] }> = []
+        for (const cid of allClientIds) {
+          const aid = accountByClientId.get(cid)
+          if (!aid) continue
+          const c = await loadConstraints(db, aid, cid)
+          const s = requireSelectedBranches(c)
+          if (!s.ok) continue
+          for (const b of s.branches) {
+            const k = `${b.lat.toFixed(3)},${b.lng.toFixed(3)}`
+            const existing = byKey.get(k)
+            if (existing) {
+              if (!existing.client_ids.includes(cid)) existing.client_ids.push(cid)
+            } else {
+              const entry = { name: b.name, lat: b.lat, lng: b.lng, client_ids: [cid] }
+              byKey.set(k, entry)
+              ordered.push(entry)
+            }
           }
         }
+        if (ordered.length === 0) {
+          return res.status(400).json({
+            error: 'No branches selected. Run Branch Optimization on the combined client (or sync from members), or run it on at least one member client.',
+            code: 'BRANCHES_NOT_SELECTED',
+          })
+        }
+        branches = ordered.map((m) => ({ name: m.name, lat: m.lat, lng: m.lng }))
+        combinedBranchSources = ordered
       }
-      if (ordered.length === 0) {
-        return res.status(400).json({
-          error: 'No branches selected across the combined clients. Run Branch Optimization for at least one client first.',
-          code: 'BRANCHES_NOT_SELECTED',
-        })
-      }
-      branches = ordered.map((m) => ({ name: m.name, lat: m.lat, lng: m.lng }))
-      combinedBranchSources = ordered
     } else {
       const sel = requireSelectedBranches(constraints)
       if (!sel.ok) {
