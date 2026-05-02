@@ -5,6 +5,7 @@ import {
   CalendarDays,
   FileText,
   History,
+  Info,
   LayoutDashboard,
   ListChecks,
   Map as MapIcon,
@@ -1366,6 +1367,12 @@ function AnalysisSidebar({
       </SidebarSection>
 
       <SidebarSection title="Settings">
+        <SidebarItem
+          icon={Info}
+          to={`/clients/${clientId}`}
+        >
+          Client details
+        </SidebarItem>
         <SidebarItem
           icon={Building2}
           to={`/accounts/${accountId}/clients/${clientId}/admin/properties`}
