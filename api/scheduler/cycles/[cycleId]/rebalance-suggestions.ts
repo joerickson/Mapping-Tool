@@ -410,6 +410,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return s.service_location_ids.some((sl) => overrides[sl] !== s.to_branch_idx)
     })
   }
+
+  // Cross-check crew_relocate / crew_reduce against the LIVE constraints.
+  // Earlier Applies in this session patch crew_count_per_branch_override
+  // before the user regenerates — the cycle still shows the old staging,
+  // so without this check we'd offer stale suggestions like "relocate a
+  // crew from Lindon" after Lindon's count was already zeroed.
+  const { data: conRow } = await db
+    .from('account_operational_constraints')
+    .select('crew_count_per_branch_override')
+    .eq('account_id', (template as any).account_id)
+    .eq('client_id', (template as any).client_id)
+    .maybeSingle()
+  const liveStaging: Record<string, number> = {}
+  const overrideSrc = ((conRow as any)?.crew_count_per_branch_override ?? null) as
+    | Record<string, number>
+    | null
+  if (overrideSrc) {
+    for (const [k, v] of Object.entries(overrideSrc)) {
+      if (k === '__roving') continue
+      const n = Math.floor(Number(v) || 0)
+      if (n > 0) liveStaging[k] = n
+    }
+  }
+  // Lookup is case-insensitive on branch names.
+  const liveLookup = (name: string): number => {
+    if (Object.keys(liveStaging).length === 0) return Number.POSITIVE_INFINITY
+    if (liveStaging[name] != null) return liveStaging[name]
+    const ci = Object.entries(liveStaging).find(
+      ([k]) => k.toLowerCase() === name.toLowerCase()
+    )
+    return ci ? ci[1] : 0
+  }
+  const beforeFilter = filtered.length
+  filtered = filtered.filter((s) => {
+    if (s.type === 'crew_relocate') return liveLookup(s.from_branch_name) >= 1
+    if (s.type === 'crew_reduce') return liveLookup(s.branch_name) >= 2
+    return true
+  })
+  const stalenessSkipped = beforeFilter - filtered.length
+
   filtered.sort((a, b) => b.priority - a.priority)
 
   // ── 4. Optional Claude advisor on top ─────────────────────────────
@@ -499,5 +539,10 @@ Be terse. The operator scans, doesn't read.`
     }
   }
 
-  return res.status(200).json({ suggestions: filtered, advisor })
+  return res.status(200).json({
+    suggestions: filtered,
+    advisor,
+    stale_skipped: stalenessSkipped,
+    needs_regenerate: stalenessSkipped > 0,
+  })
 }
