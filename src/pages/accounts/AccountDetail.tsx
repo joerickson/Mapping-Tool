@@ -285,11 +285,16 @@ export default function AccountDetailPage() {
             <h2 className="text-xl font-semibold tracking-tight text-fg">
               Clients
             </h2>
-            {isPM && (
-              <Button size="sm" variant="secondary" asChild>
-                <Link to={`/accounts/${id}/clients/new`}>+ Add client</Link>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="ghost" asChild>
+                <Link to={`/accounts/${id}/combined-schedules`}>Combined schedules</Link>
               </Button>
-            )}
+              {isPM && (
+                <Button size="sm" variant="secondary" asChild>
+                  <Link to={`/accounts/${id}/clients/new`}>+ Add client</Link>
+                </Button>
+              )}
+            </div>
           </div>
 
           {clientsForDisplay(overview, clients).length === 0 ? (

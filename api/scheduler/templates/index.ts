@@ -32,15 +32,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'GET') {
     const accountId = req.query.account_id as string | undefined
     const clientId = req.query.client_id as string | undefined
-    if (!accountId || !clientId) {
-      return res.status(400).json({ error: 'account_id and client_id required' })
+    // ?combined=true → list COMBINED templates for the account
+    // (combined_client_ids is set). client_id is then optional.
+    const wantCombined = String(req.query.combined ?? '').toLowerCase() === 'true'
+    if (!accountId) {
+      return res.status(400).json({ error: 'account_id required' })
+    }
+    if (!wantCombined && !clientId) {
+      return res.status(400).json({ error: 'client_id required (or pass combined=true for account-level combined templates)' })
     }
     let q = db
       .from('routing_templates')
-      .select('id, name, description, status, crew_count, cycle_length_days, cycle_length_label, total_visits_per_cycle, total_estimated_cost_per_year, optimization_score, hard_constraint_violations, soft_constraint_violations, created_at, optimized_at')
+      .select('id, name, description, status, client_id, crew_count, cycle_length_days, cycle_length_label, total_visits_per_cycle, total_estimated_cost_per_year, optimization_score, hard_constraint_violations, soft_constraint_violations, combined_client_ids, created_at, optimized_at')
       .eq('account_id', accountId)
-      .eq('client_id', clientId)
       .order('created_at', { ascending: false })
+    if (wantCombined) {
+      q = q.not('combined_client_ids', 'is', null)
+    } else {
+      q = q.eq('client_id', clientId!).is('combined_client_ids', null)
+    }
     const status = req.query.status as string | undefined
     if (status) q = q.in('status', String(status).split(','))
     const { data, error } = await q.limit(100)
@@ -52,11 +62,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const body = (req.body ?? {}) as Record<string, unknown>
     const accountId = body.account_id as string
     const clientId = body.client_id as string
-    const slIds = (body.service_location_ids as string[]) ?? []
+    let slIds = (body.service_location_ids as string[]) ?? []
     const crewCount = Number(body.crew_count ?? 1)
+    // Phase 4.6 — combined templates: when combined_client_ids is set,
+    // the SL pool spans all listed clients. client_id stays set to the
+    // "base" client (constraints + offerings come from there). The
+    // template row persists combined_client_ids so downstream paths
+    // (regenerate, cycle gen) can re-fetch the same multi-client pool.
+    const combinedClientIds = Array.isArray(body.combined_client_ids)
+      ? (body.combined_client_ids as string[]).filter((id) => typeof id === 'string')
+      : null
+    const isCombined = combinedClientIds != null && combinedClientIds.length > 1
+    // Combined-template clients other than the base — used for
+    // service_location and service_offering scope below.
+    const allClientIds: string[] = isCombined ? combinedClientIds! : [clientId]
 
     if (!accountId || !clientId) {
       return res.status(400).json({ error: 'account_id and client_id required' })
+    }
+    // Auto-fill SL ids for combined templates when caller didn't supply
+    // any: pull every SL across the listed clients.
+    if (isCombined && slIds.length === 0) {
+      const fetched: string[] = []
+      for (const cid of allClientIds) {
+        let pageOffset = 0
+        for (let p = 0; p < 50; p++) {
+          const { data } = await db
+            .from('service_locations')
+            .select('id')
+            .eq('client_id', cid)
+            .range(pageOffset, pageOffset + 999)
+          const batch = data ?? []
+          for (const r of batch) fetched.push((r as any).id)
+          if (batch.length < 1000) break
+          pageOffset += 1000
+        }
+      }
+      slIds = fetched
     }
     if (slIds.length === 0) {
       return res.status(400).json({ error: 'service_location_ids must be non-empty' })
@@ -96,8 +138,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     const { data: offeringRows } = await db
       .from('service_offerings')
-      .select('id, name, is_routed, offering_role, visit_interval_years, attaches_to_offering_ids, uses_cohort_rotation')
-      .eq('client_id', clientId)
+      .select('id, name, is_routed, offering_role, visit_interval_years, attaches_to_offering_ids, uses_cohort_rotation, client_id')
+      .in('client_id', allClientIds)
     const offerings = new Map<string, any>()
     for (const o of offeringRows ?? []) offerings.set((o as any).id, o)
 
@@ -289,6 +331,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         routed_service_location_ids: propertiesForBuild.map((p) => p.service_location_id),
         crew_count: crewCount,
         branches,
+        combined_client_ids: isCombined ? combinedClientIds : null,
         config: {
           crew_size: constraints.crew_size,
           hours_per_day: constraints.hours_per_day,
