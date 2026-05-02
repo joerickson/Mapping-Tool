@@ -1019,7 +1019,7 @@ export function computeCrewStrategy(
         'Mature operations with strong dispatch + consistent year-round volume.',
     },
     B: {
-      label: 'Dedicated + Roving',
+      label: 'Roving with home staging',
       crew_count: optionB_crews,
       crew_count_ceiling: optionB_crews_ceiling,
       crew_count_optimistic: optionB_crews,
@@ -1055,17 +1055,16 @@ export function computeCrewStrategy(
       },
       overnight_summary: overnightSummary,
       pros: [
-        'Each branch has dedicated crews fully utilized year-round',
-        'Roving pool absorbs leftover work — no per-branch idle time',
-        'Defensible to clients — named teams per branch',
+        'Every crew has a home branch for travel-time math, but works wherever the schedule sends them',
+        'Optimal staging spreads crews proportional to each branch\'s natural workload — no idle branches',
+        'Captures the efficiency wins from cross-branch routing (especially when combining client portfolios)',
       ],
       cons: [
-        'Roving crew needs a dispatcher who can cross-branch route',
-        'Higher coordination overhead than pure dedicated',
-        'Roving crew\'s fuel + drive time higher than dedicated',
+        'Requires dispatch comfortable with cross-branch routing',
+        'Drive time per crew higher than pure dedicated — but offset by better utilization',
       ],
       recommended_use_case:
-        'Year 1+ of a portfolio with uneven branch workloads. Most common operating pattern.',
+        'Most operating patterns — single client or combined portfolios where work crosses branches.',
     },
     C: {
       label: 'Surge Model',
