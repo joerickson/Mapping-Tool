@@ -50,7 +50,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (wantCombined) {
       q = q.not('combined_client_ids', 'is', null)
     } else {
-      q = q.eq('client_id', clientId!).is('combined_client_ids', null)
+      // Per-client list: filter by client_id. The legacy ad-hoc combined-
+      // templates flow (CombinedSchedules dialog) sets client_id = the
+      // base MEMBER client, so those rows would otherwise leak into a
+      // member's per-client list. Exclude them — UNLESS the requested
+      // client_id is itself a combined client, in which case its own
+      // templates legitimately have combined_client_ids set (PR #215
+      // auto-fills them on create) and must NOT be filtered out.
+      const { data: cliRow } = await db
+        .from('clients')
+        .select('id, is_combined')
+        .eq('id', clientId!)
+        .maybeSingle()
+      const isCombinedClient = (cliRow as any)?.is_combined === true
+      q = q.eq('client_id', clientId!)
+      if (!isCombinedClient) {
+        q = q.is('combined_client_ids', null)
+      }
     }
     const status = req.query.status as string | undefined
     if (status) q = q.in('status', String(status).split(','))
