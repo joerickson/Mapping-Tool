@@ -105,14 +105,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const constraints = await loadConstraints(db, accountId, clientId)
-    const sel = requireSelectedBranches(constraints)
-    if (!sel.ok) {
-      return res.status(400).json({
-        error: 'No branches selected. Run Branch Optimization first.',
-        code: 'BRANCHES_NOT_SELECTED',
-      })
+    let branches: Array<{ name: string; lat: number; lng: number }>
+    let combinedBranchSources: Array<{ name: string; lat: number; lng: number; client_ids: string[] }> | null = null
+
+    if (isCombined) {
+      // Base client supplies crew_size / hours_per_day / drive_speed_mph,
+      // but BRANCHES + CREWS span every participating client. Load each
+      // combined client's constraints and union their selected branches,
+      // deduping co-located ones (rounded lat/lng).
+      const { data: clientRows } = await db
+        .from('clients')
+        .select('id, account_id')
+        .in('id', allClientIds)
+      const accountByClientId = new Map<string, string>(
+        (clientRows ?? []).map((r: any) => [r.id as string, r.account_id as string])
+      )
+      const byKey = new Map<string, { name: string; lat: number; lng: number; client_ids: string[] }>()
+      const ordered: Array<{ name: string; lat: number; lng: number; client_ids: string[] }> = []
+      for (const cid of allClientIds) {
+        const aid = accountByClientId.get(cid)
+        if (!aid) continue
+        const c = await loadConstraints(db, aid, cid)
+        const s = requireSelectedBranches(c)
+        if (!s.ok) continue
+        for (const b of s.branches) {
+          const k = `${b.lat.toFixed(3)},${b.lng.toFixed(3)}`
+          const existing = byKey.get(k)
+          if (existing) {
+            if (!existing.client_ids.includes(cid)) existing.client_ids.push(cid)
+          } else {
+            const entry = { name: b.name, lat: b.lat, lng: b.lng, client_ids: [cid] }
+            byKey.set(k, entry)
+            ordered.push(entry)
+          }
+        }
+      }
+      if (ordered.length === 0) {
+        return res.status(400).json({
+          error: 'No branches selected across the combined clients. Run Branch Optimization for at least one client first.',
+          code: 'BRANCHES_NOT_SELECTED',
+        })
+      }
+      branches = ordered.map((m) => ({ name: m.name, lat: m.lat, lng: m.lng }))
+      combinedBranchSources = ordered
+    } else {
+      const sel = requireSelectedBranches(constraints)
+      if (!sel.ok) {
+        return res.status(400).json({
+          error: 'No branches selected. Run Branch Optimization first.',
+          code: 'BRANCHES_NOT_SELECTED',
+        })
+      }
+      branches = sel.branches.map((b) => ({ name: b.name, lat: b.lat, lng: b.lng }))
     }
-    const branches = sel.branches.map((b) => ({ name: b.name, lat: b.lat, lng: b.lng }))
 
     // Fetch SLs + properties + offerings. Chunk by 250 ids (URL length
     // safety) AND page each chunk because PostgREST silently caps page
@@ -372,6 +417,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           crew_size: constraints.crew_size,
           hours_per_day: constraints.hours_per_day,
           drive_speed_mph: constraints.drive_speed_mph,
+          // For combined templates, record which clients contributed each
+          // branch so the UI can show provenance (e.g. "Phoenix branch ←
+          // IFS Arizona"). Only set on combined templates.
+          ...(combinedBranchSources ? { combined_branch_sources: combinedBranchSources } : {}),
           ...((body.config as any) ?? {}),
         },
         planning_mode: planningMode,

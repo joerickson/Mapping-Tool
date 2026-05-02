@@ -344,9 +344,11 @@ function CreateCombinedDialog({
         <DialogHeader>
           <DialogTitle>New combined schedule</DialogTitle>
           <DialogDescription>
-            Pick the clients to synthesize into one schedule. The engine will route across
-            all of them and place visits on a single set of crews. Select a base client —
-            its operational constraints (crew size, hours/day, drive speed) drive the engine.
+            Pick the clients to synthesize into one schedule. The engine unions every
+            selected client's branches and routes properties to whichever branch is
+            closest, so crews from each branch share the load. Set crew count to the
+            total crews across all branches combined (the engine spreads them by
+            capacity). Base client supplies crew size, hours/day, and drive speed.
           </DialogDescription>
         </DialogHeader>
 
