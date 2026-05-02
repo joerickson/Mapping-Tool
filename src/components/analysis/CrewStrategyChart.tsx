@@ -315,44 +315,41 @@ export default function CrewStrategyChart({
     ?? data.options.B.branch_breakdown
     ?? []
 
-  // Build the per-branch override map "as the user sees it" — for each
-  // branch, take the user's typed value if present, otherwise fall
-  // back to that branch's recommended count from Option B's breakdown.
-  // The total is then a sum of EVERY branch's visible value, not just
-  // the ones the user explicitly typed into. This matches the inputs
-  // they see on screen.
-  // Pull recommended dedicated counts out of Option B's hybrid output
-  // when present; that's the new building-day-aware recommendation.
+  // Per-branch staging defaults to the optimal_staging recommendation
+  // (PR #220 — every crew gets a home, no roving residual). Falls back
+  // to legacy dedicated_per_branch / branchBreakdown for older outputs.
   const recommendedDedicatedByBranch: Record<string, number> = {}
   for (const dp of data.options.B.dedicated_per_branch ?? []) {
     recommendedDedicatedByBranch[dp.branch_name] = dp.crew_count
   }
-  const recommendedRoving = data.options.B.roving_crews ?? 0
+  const optimalStagingByBranch: Record<string, number> = {}
+  for (const s of data.options.B.optimal_staging ?? []) {
+    optimalStagingByBranch[s.branch_name] = s.crew_count
+  }
 
   const visibleOverride: Record<string, number> = {}
   for (const b of data.branches ?? []) {
     if (crewOverride[b.name] != null) {
       visibleOverride[b.name] = crewOverride[b.name]
     } else {
-      // Fall back to the recommended dedicated count for this branch
-      // (could be 0 — branch has no work justifying a dedicated crew).
-      // If recommendation isn't available (older outputs), use the
-      // legacy crew_count from branchBreakdown.
       const rec =
+        optimalStagingByBranch[b.name] ??
         recommendedDedicatedByBranch[b.name] ??
         branchBreakdown.find((bb) => bb.branch_name === b.name)?.crew_count ??
         0
       visibleOverride[b.name] = rec
     }
   }
-  // Roving — special key '__roving' on the override jsonb.
-  const visibleRoving =
-    crewOverride['__roving'] != null ? crewOverride['__roving'] : recommendedRoving
+  // Legacy '__roving' key — older saved overrides may still have it.
+  // Honor it for the total so users don't see a sudden "you have N
+  // crews" drop. New UI doesn't expose it; once a user touches the
+  // staging grid the fullMap on save no longer carries __roving.
+  const legacyRoving = Number(crewOverride['__roving'] ?? 0)
   const overrideTotal =
     Object.values(visibleOverride).reduce(
       (s, v) => s + (Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0),
       0
-    ) + Math.max(0, Math.floor(Number.isFinite(visibleRoving) ? visibleRoving : 0))
+    ) + Math.max(0, Math.floor(Number.isFinite(legacyRoving) ? legacyRoving : 0))
   const allowAllocations =
     accountId != null && clientId != null && (data.branches?.length ?? 0) > 0
   const opts = [
@@ -722,14 +719,17 @@ export default function CrewStrategyChart({
             <dl className="my-3 grid grid-cols-2 gap-3 border-y border-border py-3 text-sm">
               <Stat label="Crews">
                 <span className="font-tabular">{o.crew_count}</span>
-                {o.dedicated_total != null && o.roving_crews != null && o.roving_crews > 0 && (
-                  <span className="text-fg-muted text-xs">
-                    {' '}
-                    <span className="text-fg-subtle">
-                      ({o.dedicated_total} dedicated + {o.roving_crews} roving)
+                {Array.isArray(o.optimal_staging) &&
+                  o.optimal_staging.filter((s) => s.crew_count > 0).length > 0 && (
+                    <span className="text-fg-muted text-xs">
+                      {' '}
+                      <span className="text-fg-subtle">
+                        (staged across{' '}
+                        {o.optimal_staging.filter((s) => s.crew_count > 0).length}{' '}
+                        branches)
+                      </span>
                     </span>
-                  </span>
-                )}
+                  )}
                 {o.crew_count_ceiling != null &&
                   o.crew_count_ceiling !== o.crew_count && (
                     <span
@@ -780,29 +780,30 @@ export default function CrewStrategyChart({
         })}
       </div>
 
-      {/* Phase 4.2 — Manual per-branch crew override. Inputs are
-          always visible so the user can directly type. Override is
-          ACTIVE whenever the sum of inputs > 0; clearing all inputs
-          (or pressing "Use Option {activeOption}") falls back to the
-          A/B/C selection. */}
+      {/* Phase 4.7 — Per-branch crew staging. Every crew has a home
+          branch (for travel-time math); the engine routes each crew
+          globally to minimize total drive. One number per branch, no
+          separate roving pool — total is the sum. */}
       {(data.branches?.length ?? 0) > 0 && (
         <Card
           padding="md"
           className={overrideEnabled && overrideTotal > 0 ? 'border-accent ring-1 ring-accent' : undefined}
         >
           <div className="flex items-start justify-between gap-3 flex-wrap">
-            <div>
+            <div className="min-w-0">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
-                Manual crew override
+                Per-branch crew staging
               </p>
-              <p className="mt-1 text-sm text-fg">
-                Type the number of crews you want at each branch. Any
-                non-zero entry switches Bid Pricing, Workforce Sizing,
-                and Seasonality off Option {activeOption} and onto your
-                numbers.
+              <p className="mt-1 text-sm text-fg max-w-2xl">
+                Every crew has a home branch for travel-time math but routes
+                wherever the schedule sends them. Set the number of crews
+                home-based at each branch — total is the sum. Click{' '}
+                <strong>Apply optimal staging</strong> to populate with the
+                recommended distribution (proportional to each branch's natural
+                workload).
               </p>
             </div>
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap shrink-0">
               {Array.isArray(data.options.B.optimal_staging) &&
                 data.options.B.optimal_staging.some((s) => s.crew_count > 0) && (
                   <Button
@@ -817,7 +818,7 @@ export default function CrewStrategyChart({
                       setOverrideEnabled(true)
                       void saveOverride(next, true)
                     }}
-                    title="Distribute the recommended total crews across branches proportional to each branch's natural workload (every crew gets a home)."
+                    title="Distribute the recommended total crews proportional to each branch's natural workload."
                   >
                     Apply optimal staging
                   </Button>
@@ -832,66 +833,33 @@ export default function CrewStrategyChart({
                     void saveOverride({}, false)
                   }}
                 >
-                  Use Option {activeOption} instead
+                  Reset to Option {activeOption}
                 </Button>
               )}
             </div>
           </div>
 
-          {Array.isArray(data.options.B.optimal_staging) &&
-            data.options.B.optimal_staging.some((s) => s.crew_count > 0) && (
-              <div className="mt-3 rounded-md border border-accent/30 bg-accent-subtle/40 px-3 py-2">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
-                  Optimal staging recommendation
-                </p>
-                <p className="mt-1 text-sm text-fg">
-                  Distribute{' '}
-                  <span className="font-tabular font-semibold">
-                    {data.options.B.optimal_staging.reduce(
-                      (s, x) => s + x.crew_count,
-                      0
-                    )}{' '}
-                    crews
-                  </span>{' '}
-                  proportional to each branch's natural workload — every crew
-                  gets a home, none float without a base. The engine will route
-                  each crew wherever the schedule says.
-                </p>
-                <ul className="mt-2 flex flex-wrap gap-2 text-xs text-fg-muted">
-                  {data.options.B.optimal_staging
-                    .filter((s) => s.crew_count > 0)
-                    .map((s) => (
-                      <li
-                        key={s.branch_name}
-                        className="rounded border border-border bg-surface px-2 py-0.5"
-                      >
-                        <span className="font-tabular font-semibold text-fg">
-                          {s.crew_count}
-                        </span>{' '}
-                        × {s.branch_name}
-                      </li>
-                    ))}
-                </ul>
-              </div>
-            )}
-
           <div className="mt-4 space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
               {(data.branches ?? []).map((b) => {
-                // Default the input to whatever the active option
-                // assigns to this branch — that way the field shows
-                // a real starting number and any edit is a clear
-                // override.
+                // Default each input to the optimal-staging recommendation
+                // (which already distributes every crew, including formerly
+                // "roving" ones, to a home branch). Falls back to the legacy
+                // breakdown for older outputs.
                 const breakdown = branchBreakdown.find(
                   (bb) => bb.branch_name === b.name
                 )
-                const recommended = breakdown?.crew_count ?? 0
+                const stagingRec = (data.options.B.optimal_staging ?? []).find(
+                  (s) => s.branch_name === b.name
+                )
+                const recommended =
+                  stagingRec?.crew_count ??
+                  recommendedDedicatedByBranch[b.name] ??
+                  breakdown?.crew_count ??
+                  0
                 const userValue = crewOverride[b.name]
                 const value = userValue ?? recommended
                 const isDirty = userValue != null && userValue !== recommended
-                // Compute and persist the FULL override map (every
-                // branch + roving). Used by both per-branch and
-                // roving onBlur paths so they save consistent state.
                 const persistFull = () => {
                   const fullMap: Record<string, number> = {}
                   for (const branch of data.branches ?? []) {
@@ -899,18 +867,17 @@ export default function CrewStrategyChart({
                     if (u != null) {
                       fullMap[branch.name] = u
                     } else {
+                      const rec = (data.options.B.optimal_staging ?? []).find(
+                        (s) => s.branch_name === branch.name
+                      )?.crew_count
                       fullMap[branch.name] =
+                        rec ??
                         recommendedDedicatedByBranch[branch.name] ??
                         branchBreakdown.find((bb) => bb.branch_name === branch.name)
                           ?.crew_count ??
                         0
                     }
                   }
-                  const rovingVal =
-                    crewOverride['__roving'] != null
-                      ? crewOverride['__roving']
-                      : recommendedRoving
-                  if (rovingVal > 0) fullMap['__roving'] = rovingVal
                   const total =
                     Object.values(fullMap).reduce(
                       (s, v) =>
@@ -932,15 +899,15 @@ export default function CrewStrategyChart({
                     </p>
                     {breakdown && (
                       <p className="text-[10px] text-fg-subtle mt-0.5">
-                        {breakdown.property_count} properties · rec:{' '}
+                        {breakdown.property_count} properties nearest · rec:{' '}
                         <span className="font-tabular">
-                          {recommendedDedicatedByBranch[b.name] ?? recommended}
+                          {stagingRec?.crew_count ?? recommended}
                         </span>{' '}
-                        dedicated
+                        crews
                       </p>
                     )}
                     <div className="mt-2 flex items-center gap-2">
-                      <label className="text-xs text-fg-muted">Crews:</label>
+                      <label className="text-xs text-fg-muted">Crews home-based:</label>
                       <input
                         type="number"
                         min={0}
@@ -962,77 +929,6 @@ export default function CrewStrategyChart({
                   </div>
                 )
               })}
-              {/* Roving crew input — not tied to a specific branch.
-                  Counts toward total but isn't a per-branch denominator. */}
-              {(() => {
-                const userRoving = crewOverride['__roving']
-                const rovingValue = userRoving ?? recommendedRoving
-                const isRovingDirty =
-                  userRoving != null && userRoving !== recommendedRoving
-                return (
-                  <div
-                    className={cn(
-                      'rounded-md border bg-surface-subtle/40 p-3',
-                      isRovingDirty ? 'border-accent' : 'border-border'
-                    )}
-                  >
-                    <p className="text-sm font-semibold text-fg truncate">
-                      Roving (any branch)
-                    </p>
-                    <p className="text-[10px] text-fg-subtle mt-0.5">
-                      Floats between branches to absorb overflow · rec:{' '}
-                      <span className="font-tabular">{recommendedRoving}</span>{' '}
-                      crews
-                    </p>
-                    <div className="mt-2 flex items-center gap-2">
-                      <label className="text-xs text-fg-muted">Crews:</label>
-                      <input
-                        type="number"
-                        min={0}
-                        step={1}
-                        value={rovingValue}
-                        onChange={(e) => {
-                          const raw = e.target.value
-                          const n = raw === '' ? 0 : Math.max(0, Math.floor(Number(raw)))
-                          setCrewOverride((prev) => ({ ...prev, ['__roving']: n }))
-                          if (!overrideEnabled) setOverrideEnabled(true)
-                        }}
-                        onBlur={() => {
-                          const fullMap: Record<string, number> = {}
-                          for (const branch of data.branches ?? []) {
-                            const u = crewOverride[branch.name]
-                            if (u != null) {
-                              fullMap[branch.name] = u
-                            } else {
-                              fullMap[branch.name] =
-                                recommendedDedicatedByBranch[branch.name] ??
-                                branchBreakdown.find(
-                                  (bb) => bb.branch_name === branch.name
-                                )?.crew_count ??
-                                0
-                            }
-                          }
-                          const r =
-                            crewOverride['__roving'] != null
-                              ? crewOverride['__roving']
-                              : recommendedRoving
-                          if (r > 0) fullMap['__roving'] = r
-                          const total = Object.values(fullMap).reduce(
-                            (s, v) =>
-                              s + (Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0),
-                            0
-                          )
-                          void saveOverride(fullMap, total > 0)
-                        }}
-                        className="w-20 h-8 rounded-md border border-border bg-surface px-2 text-sm font-mono text-fg focus-visible:outline-none focus-visible:border-border-focus focus-visible:ring-2 focus-visible:ring-accent"
-                      />
-                      {isRovingDirty && (
-                        <span className="text-[10px] text-accent">overridden</span>
-                      )}
-                    </div>
-                  </div>
-                )
-              })()}
             </div>
             <div className="flex items-center justify-between pt-2 border-t border-border flex-wrap gap-2">
               <p className="text-sm text-fg">
@@ -1044,7 +940,7 @@ export default function CrewStrategyChart({
                 </span>
                 {overrideEnabled && overrideTotal > 0 && (
                   <span className="text-xs text-fg-muted ml-2">
-                    override (vs Option {activeOption}:{' '}
+                    custom (Option {activeOption} suggests:{' '}
                     <span className="font-tabular">
                       {data.options[activeOption].crew_count}
                     </span>
@@ -1056,8 +952,8 @@ export default function CrewStrategyChart({
                 {savingOverride
                   ? 'Saving…'
                   : overrideEnabled && overrideTotal > 0
-                    ? 'Override active. Re-run Bid Pricing / Workforce / Seasonality to apply.'
-                    : 'No override active. Type any crew count to start.'}
+                    ? 'Saved. Re-run Bid Pricing / Workforce / Seasonality to apply downstream.'
+                    : 'Type any crew count to override the active option.'}
               </p>
             </div>
           </div>
@@ -1241,18 +1137,24 @@ function UtilizationSection({
   return (
     <section className="space-y-2">
       <h4 className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
-        Per-branch utilization (Option B)
+        Per-branch staging utilization
       </h4>
+      <p className="text-xs text-fg-subtle max-w-3xl">
+        Each row shows crews home-based at this branch and the workload of
+        properties nearest to it. Because every crew is roving, the actual
+        work each crew performs may cross branches — utilization here is a
+        sanity check on staging balance, not a fixed work-attribution.
+      </p>
       <div className="rounded-md border border-border bg-surface overflow-hidden">
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Branch</TableHead>
               <TableHead className="text-right">Pop</TableHead>
-              <TableHead className="text-right">Crews</TableHead>
-              <TableHead className="text-right">Buildings</TableHead>
+              <TableHead className="text-right">Crews home</TableHead>
+              <TableHead className="text-right">Buildings nearest</TableHead>
               <TableHead className="text-right">Building-days</TableHead>
-              <TableHead className="text-right">Available work days</TableHead>
+              <TableHead className="text-right">Available days</TableHead>
               <TableHead className="text-right">Util</TableHead>
               <TableHead>Status</TableHead>
             </TableRow>
