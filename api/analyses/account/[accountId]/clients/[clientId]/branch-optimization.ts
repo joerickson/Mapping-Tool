@@ -79,11 +79,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       (body as any).population_constraint ?? constraints.population_constraint,
   }
 
-  // Validate: k_range[0] cannot be smaller than the locked branch count.
-  if (inputs.existing_branches.length > 0 && inputs.k_range[0] < inputs.existing_branches.length) {
-    return res.status(400).json({
-      error: `k cannot be less than existing branch count (${inputs.existing_branches.length})`,
-    })
+  // Soft-adjust: k_range can't drop below the existing branch count
+  // (the optimizer can't suggest removing branches the operator has
+  // committed to). If the request asks for a k_min below existing,
+  // silently bump both bounds up so the optimizer still runs and
+  // surface a note in the summary text. Was previously a hard 400 —
+  // failing the analysis blocked the user from seeing the rest of
+  // the recommendation.
+  const existingN = inputs.existing_branches.length
+  let adjustmentNote: string | null = null
+  if (existingN > 0) {
+    const [origMin, origMax] = inputs.k_range
+    if (origMin < existingN) {
+      const newMax = Math.max(existingN, origMax)
+      inputs.k_range = [existingN, newMax]
+      adjustmentNote =
+        `Bumped k floor from ${origMin} to ${existingN} to honor your ${existingN} existing branch(es). ` +
+        `The optimizer can suggest adding branches but cannot drop any that are already committed.` +
+        (newMax !== origMax
+          ? ` Bumped ceiling from ${origMax} to ${newMax} to keep at least one scenario in scope.`
+          : '')
+    }
   }
 
   // Cache: if a completed run exists with the same inputs hash for this
@@ -133,9 +149,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const allProperties = await loadAccountProperties(db, accountId, clientId)
     const properties = applyExclusions(allProperties, constraints.excluded_property_ids)
     const result = await computeBranchOptimization(properties, inputs)
+    const summaryWithNote = adjustmentNote
+      ? `${adjustmentNote} ${result.summary_text}`
+      : result.summary_text
     await completeAnalysisRecord(db, analysisId, {
-      outputs: result.outputs,
-      summary_text: result.summary_text,
+      outputs: { ...result.outputs, k_floor_adjusted: adjustmentNote },
+      summary_text: summaryWithNote,
       property_count: properties.length,
     })
     return res.status(200).json({ analysis_id: analysisId, status: 'completed' })
