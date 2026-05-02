@@ -94,6 +94,8 @@ export default function RebalanceSuggestionsDialog({
   const [applied, setApplied] = useState<Set<string>>(new Set())
   const [applying, setApplying] = useState<string | null>(null)
   const [regenerating, setRegenerating] = useState(false)
+  const [staleSkipped, setStaleSkipped] = useState(0)
+  const [needsRegenerate, setNeedsRegenerate] = useState(false)
 
   const loadSuggestions = async (withAdvisor: boolean) => {
     setLoading(!withAdvisor)
@@ -113,6 +115,8 @@ export default function RebalanceSuggestionsDialog({
       const json = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error((json as any).error ?? `HTTP ${res.status}`)
       setSuggestions((json as any).suggestions ?? [])
+      setStaleSkipped(Number((json as any).stale_skipped ?? 0))
+      setNeedsRegenerate(Boolean((json as any).needs_regenerate))
       if (withAdvisor) setAdvisor((json as any).advisor ?? null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -126,6 +130,8 @@ export default function RebalanceSuggestionsDialog({
     if (!open) return
     setApplied(new Set())
     setAdvisor(null)
+    setStaleSkipped(0)
+    setNeedsRegenerate(false)
     void loadSuggestions(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, cycleId])
@@ -188,6 +194,14 @@ export default function RebalanceSuggestionsDialog({
         }
       }
       setApplied((prev) => new Set([...prev, s.id]))
+      // After a crew_relocate / crew_reduce, the constraints just
+      // changed but the cycle hasn't been regenerated. Reload suggestions
+      // so any newly-stale ones (e.g. another move out of the same
+      // branch we just emptied) get filtered out and the user sees a
+      // "regenerate to refresh" hint.
+      if (s.type === 'crew_relocate' || s.type === 'crew_reduce') {
+        await loadSuggestions(false)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -230,6 +244,33 @@ export default function RebalanceSuggestionsDialog({
             then regenerate the template.
           </DialogDescription>
         </DialogHeader>
+
+        {/* Staleness banner — fires when current constraints differ
+            from the cycle's snapshot (e.g. user already applied a
+            relocate/reduce and hasn't regenerated yet). Without this,
+            the suggestion list reads against the cycle and proposes
+            moves that no longer apply. */}
+        {needsRegenerate && (
+          <div className="rounded-md border border-warning/40 bg-warning-subtle/40 px-3 py-2 text-sm text-fg flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <strong>Regenerate to refresh.</strong>{' '}
+              <span className="text-fg-muted">
+                {staleSkipped > 0
+                  ? `${staleSkipped} suggestion${staleSkipped === 1 ? '' : 's'} hidden because constraints have already been updated since this cycle ran.`
+                  : 'Constraints have changed since this cycle was generated.'}
+                {' '}Re-run the template to get a fresh analysis.
+              </span>
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={regenerateAndClose}
+              loading={regenerating}
+            >
+              Regenerate now
+            </Button>
+          </div>
+        )}
 
         {/* Advisor card */}
         <div className="rounded-md border border-accent/20 bg-accent-subtle/30 p-3 space-y-2">
