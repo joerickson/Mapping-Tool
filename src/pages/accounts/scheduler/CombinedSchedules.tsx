@@ -1,7 +1,7 @@
 // Phase 4.6 — Combined Schedules: account-level page that lists all
 // combined routing templates and lets the operator create new ones
 // by picking N clients to synthesize into a single schedule.
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { Plus, Layers } from 'lucide-react'
 import { useAuth } from '../../../hooks/useAuth'
@@ -38,6 +38,14 @@ interface ClientRow {
   name: string
   display_name: string | null
   status: string
+  account_id: string
+  account_name?: string
+}
+
+interface AccountRow {
+  id: string
+  name: string
+  display_name: string | null
 }
 
 export default function CombinedSchedulesPage() {
@@ -57,10 +65,11 @@ export default function CombinedSchedulesPage() {
     try {
       const token = await getToken()
       const headers = { Authorization: `Bearer ${token}` }
-      const [tplRes, accRes, cliRes] = await Promise.all([
+      const [tplRes, accRes, cliRes, allAccRes] = await Promise.all([
         fetch(`/api/scheduler/templates?account_id=${accountId}&combined=true`, { headers }),
         fetch(`/api/accounts/${accountId}`, { headers }),
-        fetch(`/api/v1/clients?account_id=${accountId}`, { headers }),
+        fetch(`/api/v1/clients`, { headers }),
+        fetch(`/api/v1/accounts`, { headers }),
       ])
       if (!tplRes.ok) throw new Error(`Load failed (${tplRes.status})`)
       const data = await tplRes.json()
@@ -69,10 +78,15 @@ export default function CombinedSchedulesPage() {
         const j = await accRes.json()
         setAccount(j.account ?? j)
       }
+      const accList: AccountRow[] = allAccRes.ok ? await allAccRes.json() : []
+      const accNameById = new Map(accList.map((a) => [a.id, a.display_name ?? a.name]))
       if (cliRes.ok) {
         const cli = await cliRes.json()
         const list = (cli.clients ?? cli) as ClientRow[]
-        setClients(list.filter((c) => c.status !== 'churned'))
+        const enriched = list
+          .filter((c) => c.status !== 'churned')
+          .map((c) => ({ ...c, account_name: accNameById.get(c.account_id) ?? '—' }))
+        setClients(enriched)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -99,12 +113,15 @@ export default function CombinedSchedulesPage() {
               Combined schedules
             </h1>
             <p className="text-sm text-fg-muted max-w-2xl">
-              Synthesize a single schedule across multiple clients in this account. Useful when
-              clients share crews and you want to optimize routing across the whole portfolio
-              instead of one client at a time.
+              Synthesize a single schedule across multiple clients — including clients in
+              other accounts. Pick a base client in this account (its branches and constraints
+              drive the engine), then add any clients to combine with it.
             </p>
           </div>
-          <Button onClick={() => setCreateOpen(true)} disabled={clients.length < 2}>
+          <Button
+            onClick={() => setCreateOpen(true)}
+            disabled={clients.filter((c) => c.account_id === accountId).length < 1 || clients.length < 2}
+          >
             <Plus className="h-4 w-4" />
             New combined schedule
           </Button>
@@ -118,9 +135,11 @@ export default function CombinedSchedulesPage() {
           <EmptyState
             title="No combined schedules yet"
             description={
-              clients.length < 2
-                ? 'You need at least 2 active clients to combine. Add clients first.'
-                : 'Click "New combined schedule" to synthesize a route across multiple clients.'
+              clients.filter((c) => c.account_id === accountId).length === 0
+                ? 'This account has no clients yet. Add at least one before combining.'
+                : clients.length < 2
+                  ? 'You need at least 2 active clients across the system to combine. Add clients first.'
+                  : 'Click "New combined schedule" to synthesize a route across multiple clients.'
             }
           />
         ) : (
@@ -153,9 +172,19 @@ export default function CombinedSchedulesPage() {
                       <div className="flex flex-wrap gap-1">
                         {(t.combined_client_ids ?? []).slice(0, 4).map((cid) => {
                           const c = clients.find((x) => x.id === cid)
+                          const label = c?.display_name ?? c?.name ?? cid.slice(0, 8)
+                          const isExternal = c && c.account_id !== accountId
                           return (
-                            <Badge key={cid} variant="outline" className="text-[10px]">
-                              {c?.display_name ?? c?.name ?? cid.slice(0, 8)}
+                            <Badge
+                              key={cid}
+                              variant="outline"
+                              className="text-[10px]"
+                              title={isExternal ? `External account: ${c?.account_name}` : undefined}
+                            >
+                              {label}
+                              {isExternal && (
+                                <span className="ml-1 text-fg-subtle">· {c?.account_name}</span>
+                              )}
                             </Badge>
                           )
                         })}
@@ -220,15 +249,42 @@ function CreateCombinedDialog({
   const [crewCount, setCrewCount] = useState('4')
   const [creating, setCreating] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [filter, setFilter] = useState('')
+
+  // Group clients by account name for the picker. Clients in the URL's
+  // account come first (those are eligible to be the base), then others.
+  const grouped = useMemo(() => {
+    const q = filter.trim().toLowerCase()
+    const matches = (c: ClientRow) => {
+      if (!q) return true
+      const hay = `${c.display_name ?? c.name} ${c.account_name ?? ''}`.toLowerCase()
+      return hay.includes(q)
+    }
+    const inAccount = clients.filter((c) => c.account_id === accountId && matches(c))
+    const others = clients.filter((c) => c.account_id !== accountId && matches(c))
+    const byAccount = new Map<string, ClientRow[]>()
+    for (const c of others) {
+      const arr = byAccount.get(c.account_name ?? '—') ?? []
+      arr.push(c)
+      byAccount.set(c.account_name ?? '—', arr)
+    }
+    return {
+      base: inAccount,
+      others: Array.from(byAccount.entries()).sort((a, b) => a[0].localeCompare(b[0])),
+    }
+  }, [clients, accountId, filter])
 
   const toggle = (id: string) => {
     setSelected((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
-      // Auto-set base to first selection if not set yet.
+      // Auto-set base to first eligible (in-account) selection if unset.
       if (!baseClientId && next.size > 0) {
-        setBaseClientId(Array.from(next)[0])
+        const firstInAccount = clients.find((c) =>
+          next.has(c.id) && c.account_id === accountId
+        )
+        if (firstInAccount) setBaseClientId(firstInAccount.id)
       }
       return next
     })
@@ -242,6 +298,11 @@ function CreateCombinedDialog({
     }
     if (!baseClientId || !selected.has(baseClientId)) {
       setErr('Pick a base client (constraints come from this client)')
+      return
+    }
+    const base = clients.find((c) => c.id === baseClientId)
+    if (base && base.account_id !== accountId) {
+      setErr('Base client must be in this account. Pick a base from the top group.')
       return
     }
     if (!name.trim()) {
@@ -300,38 +361,41 @@ function CreateCombinedDialog({
           </FormField>
 
           <FormField label={`Clients to combine (${selected.size} selected)`}>
-            <ul className="max-h-56 overflow-y-auto rounded-md border border-border divide-y divide-border">
-              {clients.map((c) => {
-                const isBase = c.id === baseClientId
-                return (
-                  <li key={c.id} className="flex items-center gap-2 px-2 py-1.5">
-                    <input
-                      type="checkbox"
-                      checked={selected.has(c.id)}
-                      onChange={() => toggle(c.id)}
-                      className="rounded border-border accent-accent"
-                    />
-                    <span className="flex-1 text-sm text-fg">
-                      {c.display_name ?? c.name}
-                    </span>
-                    {selected.has(c.id) && (
-                      <button
-                        type="button"
-                        onClick={() => setBaseClientId(c.id)}
-                        className={
-                          'rounded border px-2 py-0.5 text-[10px] ' +
-                          (isBase
-                            ? 'border-accent bg-accent/10 text-accent'
-                            : 'border-border text-fg-muted hover:bg-surface-muted')
-                        }
-                      >
-                        {isBase ? 'Base ✓' : 'Set as base'}
-                      </button>
-                    )}
-                  </li>
-                )
-              })}
-            </ul>
+            <div className="space-y-2">
+              <Input
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Filter clients or accounts…"
+              />
+              <div className="max-h-72 overflow-y-auto rounded-md border border-border">
+                {grouped.base.length > 0 && (
+                  <ClientGroup
+                    label="This account (eligible as base)"
+                    clients={grouped.base}
+                    selected={selected}
+                    baseClientId={baseClientId}
+                    canSetBase
+                    onToggle={toggle}
+                    onSetBase={setBaseClientId}
+                  />
+                )}
+                {grouped.others.map(([accName, list]) => (
+                  <ClientGroup
+                    key={accName}
+                    label={accName}
+                    clients={list}
+                    selected={selected}
+                    baseClientId={baseClientId}
+                    canSetBase={false}
+                    onToggle={toggle}
+                    onSetBase={setBaseClientId}
+                  />
+                ))}
+                {grouped.base.length === 0 && grouped.others.length === 0 && (
+                  <p className="px-3 py-4 text-xs text-fg-subtle">No clients match that filter.</p>
+                )}
+              </div>
+            </div>
           </FormField>
 
           <FormField label="Crew count">
@@ -356,5 +420,65 @@ function CreateCombinedDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function ClientGroup({
+  label,
+  clients,
+  selected,
+  baseClientId,
+  canSetBase,
+  onToggle,
+  onSetBase,
+}: {
+  label: string
+  clients: ClientRow[]
+  selected: Set<string>
+  baseClientId: string
+  canSetBase: boolean
+  onToggle: (id: string) => void
+  onSetBase: (id: string) => void
+}) {
+  if (clients.length === 0) return null
+  return (
+    <div className="border-b border-border last:border-b-0">
+      <div className="bg-surface-muted px-3 py-1 text-[10px] uppercase tracking-wide text-fg-subtle">
+        {label}
+      </div>
+      <ul className="divide-y divide-border">
+        {clients.map((c) => {
+          const isBase = c.id === baseClientId
+          const checked = selected.has(c.id)
+          return (
+            <li key={c.id} className="flex items-center gap-2 px-3 py-1.5">
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => onToggle(c.id)}
+                className="rounded border-border accent-accent"
+              />
+              <span className="flex-1 text-sm text-fg">
+                {c.display_name ?? c.name}
+              </span>
+              {checked && canSetBase && (
+                <button
+                  type="button"
+                  onClick={() => onSetBase(c.id)}
+                  className={
+                    'rounded border px-2 py-0.5 text-[10px] ' +
+                    (isBase
+                      ? 'border-accent bg-accent/10 text-accent'
+                      : 'border-border text-fg-muted hover:bg-surface-muted')
+                  }
+                >
+                  {isBase ? 'Base ✓' : 'Set as base'}
+                </button>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+    </div>
   )
 }
