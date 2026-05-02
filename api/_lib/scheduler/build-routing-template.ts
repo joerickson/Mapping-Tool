@@ -864,35 +864,24 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
     target.workdays_assigned += clusterWorkdays
   }
 
-  // Branch-prefixed crew labels: pick each crew's dominant branch
-  // (most work hours among assigned clusters) and number per-branch so
-  // labels read "Frisco TX Crew 1", "Frisco TX Crew 2", "Sugarland Crew 1".
+  // Branch-prefixed crew labels: every crew is labeled by its HOME
+  // branch — the place its drive math starts each day — never just
+  // "Crew 5". A crew that ended up idle (no clusters assigned) still
+  // belongs to a home; an idle "Crew 6" with no label provenance is a
+  // worse experience than "Lindon Crew 4" that happens to be idle.
+  //
+  // Number sequentially within each home branch (Lindon Crew 1,
+  // Lindon Crew 2, Phoenix Crew 1, ...) in crew-index order so the
+  // numbering is stable across regenerates.
   if (input.branches.length > 0) {
     const branchCounters = new Map<number, number>()
     for (const crew of crews) {
-      const workByBranch = new Map<number, number>()
-      for (const clusterId of crew.cluster_ids) {
-        const cluster = clusters.find((c) => c.cluster_id === clusterId)
-        if (!cluster) continue
-        workByBranch.set(
-          cluster.base_branch_index,
-          (workByBranch.get(cluster.base_branch_index) ?? 0) + cluster.total_work_hours
-        )
-      }
-      let dominantBranchIdx = -1
-      let dominantHours = -1
-      for (const [idx, hours] of workByBranch) {
-        if (hours > dominantHours) {
-          dominantHours = hours
-          dominantBranchIdx = idx
-        }
-      }
-      if (dominantBranchIdx >= 0) {
-        const branchName = input.branches[dominantBranchIdx]?.name ?? `Branch ${dominantBranchIdx + 1}`
-        const counter = (branchCounters.get(dominantBranchIdx) ?? 0) + 1
-        branchCounters.set(dominantBranchIdx, counter)
-        crew.label = `${branchName} Crew ${counter}`
-      }
+      const homeIdx = crew.home_branch_index
+      const branchName =
+        input.branches[homeIdx]?.name ?? `Branch ${homeIdx + 1}`
+      const counter = (branchCounters.get(homeIdx) ?? 0) + 1
+      branchCounters.set(homeIdx, counter)
+      crew.label = `${branchName} Crew ${counter}`
     }
   }
 

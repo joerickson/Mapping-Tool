@@ -100,6 +100,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 
+  // Per-branch counter so labels are sequential (Lindon Crew 1, 2, …).
+  // Walk crewAssignments in index order so numbering is stable.
+  const crewLabelByIdx = new Map<number, string>()
+  {
+    const counter = new Map<number, number>()
+    const sorted = [...crewAssignments].sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+    for (const ca of sorted) {
+      const idx = ca.index
+      const home = ca.home_branch_index
+      if (typeof idx !== 'number' || typeof home !== 'number') continue
+      const branchName = branches[home]?.name ?? `Branch ${home + 1}`
+      const n = (counter.get(home) ?? 0) + 1
+      counter.set(home, n)
+      crewLabelByIdx.set(idx, `${branchName} Crew ${n}`)
+    }
+  }
+
   // Per-day utilization (reuses scheduler's authoritative classifier).
   const days = await computeCrewUtilization(db, cycleId, { include_weekends: false })
   // We only care about workdays here (between_trips, travel, rest, idle,
@@ -161,9 +178,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       else pattern = 'mixed'
     }
 
+    const homeLabel =
+      crewLabelByIdx.get(crewIdx) ??
+      (homeName ? `${homeName} Crew ${crewIdx + 1}` : `Crew ${crewIdx + 1}`)
     crewSummaries.push({
       crew_index: crewIdx,
-      crew_label: arr[0]?.crew_label ?? `Crew ${crewIdx + 1}`,
+      crew_label: homeLabel,
       home_branch_index: homeIdx,
       home_branch_name: homeName,
       workdays_total: total,
