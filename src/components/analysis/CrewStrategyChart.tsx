@@ -64,6 +64,13 @@ interface CrewOption {
   }>
   roving_crews?: number
   dedicated_total?: number
+  // Phase 4.7 — every crew has a home branch (engine treats them all
+  // as roving). Optimal staging distributes the total recommended
+  // crews proportionally to each branch's natural workload.
+  optimal_staging?: Array<{
+    branch_name: string
+    crew_count: number
+  }>
   surge_weeks?: number
   utilization_pct: number
   annual_labor_cost: number
@@ -795,20 +802,78 @@ export default function CrewStrategyChart({
                 numbers.
               </p>
             </div>
-            {overrideEnabled && overrideTotal > 0 && (
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => {
-                  setCrewOverride({})
-                  setOverrideEnabled(false)
-                  void saveOverride({}, false)
-                }}
-              >
-                Use Option {activeOption} instead
-              </Button>
-            )}
+            <div className="flex items-center gap-2 flex-wrap">
+              {Array.isArray(data.options.B.optimal_staging) &&
+                data.options.B.optimal_staging.some((s) => s.crew_count > 0) && (
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      const staging = data.options.B.optimal_staging ?? []
+                      const next: Record<string, number> = {}
+                      for (const s of staging) {
+                        if (s.crew_count > 0) next[s.branch_name] = s.crew_count
+                      }
+                      setCrewOverride(next)
+                      setOverrideEnabled(true)
+                      void saveOverride(next, true)
+                    }}
+                    title="Distribute the recommended total crews across branches proportional to each branch's natural workload (every crew gets a home)."
+                  >
+                    Apply optimal staging
+                  </Button>
+                )}
+              {overrideEnabled && overrideTotal > 0 && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    setCrewOverride({})
+                    setOverrideEnabled(false)
+                    void saveOverride({}, false)
+                  }}
+                >
+                  Use Option {activeOption} instead
+                </Button>
+              )}
+            </div>
           </div>
+
+          {Array.isArray(data.options.B.optimal_staging) &&
+            data.options.B.optimal_staging.some((s) => s.crew_count > 0) && (
+              <div className="mt-3 rounded-md border border-accent/30 bg-accent-subtle/40 px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-subtle">
+                  Optimal staging recommendation
+                </p>
+                <p className="mt-1 text-sm text-fg">
+                  Distribute{' '}
+                  <span className="font-tabular font-semibold">
+                    {data.options.B.optimal_staging.reduce(
+                      (s, x) => s + x.crew_count,
+                      0
+                    )}{' '}
+                    crews
+                  </span>{' '}
+                  proportional to each branch's natural workload — every crew
+                  gets a home, none float without a base. The engine will route
+                  each crew wherever the schedule says.
+                </p>
+                <ul className="mt-2 flex flex-wrap gap-2 text-xs text-fg-muted">
+                  {data.options.B.optimal_staging
+                    .filter((s) => s.crew_count > 0)
+                    .map((s) => (
+                      <li
+                        key={s.branch_name}
+                        className="rounded border border-border bg-surface px-2 py-0.5"
+                      >
+                        <span className="font-tabular font-semibold text-fg">
+                          {s.crew_count}
+                        </span>{' '}
+                        × {s.branch_name}
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            )}
 
           <div className="mt-4 space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
