@@ -35,10 +35,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (accErr) return res.status(500).json({ error: accErr.message })
   if (!account) return res.status(404).json({ error: 'Account not found' })
 
-  // Clients on this account
+  // Clients on this account (includes combined clients hosted here).
   const { data: clientRows } = await db
     .from('clients')
-    .select('id, name, display_name, status')
+    .select('id, name, display_name, status, is_combined, member_client_ids')
     .eq('account_id', accountId)
     .order('name', { ascending: true })
   const clients = (clientRows ?? []) as Array<{
@@ -46,22 +46,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     name: string
     display_name: string | null
     status: string
+    is_combined: boolean | null
+    member_client_ids: string[] | null
   }>
   const clientIds = clients.map((c) => c.id)
+  // Combined clients own no SLs of their own — their property/SL counts
+  // come from member clients (which can live in other accounts). Pull
+  // SLs for every referenced member id too so the rollup is complete.
+  const memberIds = new Set<string>()
+  for (const c of clients) {
+    if (c.is_combined && Array.isArray(c.member_client_ids)) {
+      for (const m of c.member_client_ids) memberIds.add(m)
+    }
+  }
+  const allClientIdsForSlPull = Array.from(new Set([...clientIds, ...memberIds]))
 
-  // Service locations grouped by client (counts + property_id list per client)
+  // Service locations grouped by client (counts + property_id list per client).
+  // Pull for every referenced client id including cross-account members so
+  // combined-client rollups are complete.
   const slByClient = new Map<string, { propIds: Set<string>; slCount: number }>()
-  if (clientIds.length) {
-    const { data: slRows } = await db
-      .from('service_locations')
-      .select('id, property_id, client_id')
-      .in('client_id', clientIds)
-      .not('property_id', 'is', null)
-    for (const r of (slRows ?? []) as any[]) {
-      const cur = slByClient.get(r.client_id) ?? { propIds: new Set<string>(), slCount: 0 }
-      cur.slCount += 1
-      cur.propIds.add(r.property_id)
-      slByClient.set(r.client_id, cur)
+  if (allClientIdsForSlPull.length) {
+    const PAGE = 1000
+    for (let p = 0; p < 50; p++) {
+      const { data: slRows } = await db
+        .from('service_locations')
+        .select('id, property_id, client_id')
+        .in('client_id', allClientIdsForSlPull)
+        .not('property_id', 'is', null)
+        .range(p * PAGE, p * PAGE + PAGE - 1)
+      const batch = (slRows ?? []) as any[]
+      for (const r of batch) {
+        const cur = slByClient.get(r.client_id) ?? { propIds: new Set<string>(), slCount: 0 }
+        cur.slCount += 1
+        cur.propIds.add(r.property_id)
+        slByClient.set(r.client_id, cur)
+      }
+      if (batch.length < PAGE) break
     }
   }
 
@@ -129,10 +149,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 
-  // Build per-client payload
+  // Build per-client payload. For combined clients, fan out to members
+  // and sum their counts.
   const clientsOut = clients.map((c) => {
-    const sl = slByClient.get(c.id)
-    const props = sl?.propIds ?? new Set<string>()
+    const isCombined = c.is_combined === true && Array.isArray(c.member_client_ids)
+    const sourceIds = isCombined ? (c.member_client_ids as string[]) : [c.id]
+    const props = new Set<string>()
+    let slCount = 0
+    for (const sid of sourceIds) {
+      const sl = slByClient.get(sid)
+      if (!sl) continue
+      slCount += sl.slCount
+      for (const pid of sl.propIds) props.add(pid)
+    }
     const states = new Set<string>()
     for (const pid of props) {
       const s = stateById.get(pid)
@@ -149,8 +178,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       name: c.name,
       display_name: c.display_name,
       status: c.status,
+      is_combined: isCombined,
+      member_count: isCombined ? sourceIds.length : null,
       property_count: props.size,
-      service_location_count: sl?.slCount ?? 0,
+      service_location_count: slCount,
       states_count: states.size,
       last_analysis_at: ana.last_analysis_at,
       last_synthesis_at: ana.last_synthesis_at,
@@ -159,9 +190,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   })
 
-  // Account-level rollups
-  const totalProperties = clientsOut.reduce((sum, c) => sum + c.property_count, 0)
-  const totalServiceLocations = clientsOut.reduce((sum, c) => sum + c.service_location_count, 0)
+  // Account-level rollups — exclude combined clients to avoid
+  // double-counting members that also live in this account.
+  const totalProperties = clientsOut
+    .filter((c) => !c.is_combined)
+    .reduce((sum, c) => sum + c.property_count, 0)
+  const totalServiceLocations = clientsOut
+    .filter((c) => !c.is_combined)
+    .reduce((sum, c) => sum + c.service_location_count, 0)
   const allStates = new Set<string>()
   for (const c of clientsOut) {
     // Recompute per client from stateById (cheap)

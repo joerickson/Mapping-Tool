@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createAdminClient } from '../../_lib/supabase.js'
 import { authenticateRequest } from '../../_lib/auth.js'
+import { resolveClientIds } from '../../_lib/clients/resolve-client-ids.js'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end()
@@ -24,11 +25,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (error || !client) return res.status(404).json({ error: 'Client not found' })
 
+    // For combined clients, stats come from the unioned member SLs.
+    const idsForStats = await resolveClientIds(db, id)
+
     // Stats: service location count, portfolio count, total sqft; also template config status
     const [slRes, portRes, sqftRes, uploadRes, templateRes, accountRes] = await Promise.all([
-      db.from('service_locations').select('id', { count: 'exact', head: true }).eq('client_id', id),
-      db.from('portfolios').select('portfolio_id', { count: 'exact', head: true }).eq('client_id', id),
-      db.from('service_locations').select('serviceable_sqft').eq('client_id', id).not('serviceable_sqft', 'is', null),
+      db.from('service_locations').select('id', { count: 'exact', head: true }).in('client_id', idsForStats),
+      db.from('portfolios').select('portfolio_id', { count: 'exact', head: true }).in('client_id', idsForStats),
+      db.from('service_locations').select('serviceable_sqft').in('client_id', idsForStats).not('serviceable_sqft', 'is', null),
       db.from('upload_batches').select('upload_batch_id, filename, created_at, status, row_count').eq('client_id', id).order('created_at', { ascending: false }).limit(20),
       db.from('client_templates').select('is_configured').eq('client_id', id).maybeSingle(),
       (client as any).account_id

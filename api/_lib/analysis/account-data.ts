@@ -2,6 +2,7 @@
 // locations and persist analysis records to portfolio_analyses.
 import type { SupabaseClient } from '@supabase/supabase-js'
 import crypto from 'crypto'
+import { resolveClientIds } from '../clients/resolve-client-ids.js'
 
 export interface AccountProperty {
   id: string
@@ -43,32 +44,56 @@ export async function loadAccountProperties(
   // Step 1: confirm the client belongs to this account
   const { data: clientRow, error: clientErr } = await db
     .from('clients')
-    .select('id')
+    .select('id, is_combined, member_client_ids')
     .eq('id', clientId)
     .eq('account_id', accountId)
     .maybeSingle()
   if (clientErr) throw new Error(`clients lookup failed: ${clientErr.message}`)
   if (!clientRow) return []
-  const clientIds = [clientId]
+  // Combined clients own no SLs of their own — resolve to member ids so
+  // every analysis module gets the unioned property set automatically.
+  const clientIds: string[] = await resolveClientIds(db, clientId)
 
-  // Step 2: distinct property ids via service_locations
-  const { data: slRows, error: slErr } = await db
-    .from('service_locations')
-    .select('property_id')
-    .in('client_id', clientIds)
-    .not('property_id', 'is', null)
-  if (slErr) throw new Error(`service_locations lookup failed: ${slErr.message}`)
-  const propIds = [...new Set((slRows ?? []).map((r: any) => r.property_id).filter(Boolean))]
+  // Step 2: distinct property ids via service_locations. Page — combined
+  // clients union member SLs and could exceed the 1000-row PostgREST cap.
+  const PAGE = 1000
+  const slRows: any[] = []
+  for (let p = 0; p < 50; p++) {
+    const { data, error: slErr } = await db
+      .from('service_locations')
+      .select('property_id')
+      .in('client_id', clientIds)
+      .not('property_id', 'is', null)
+      .range(p * PAGE, p * PAGE + PAGE - 1)
+    if (slErr) throw new Error(`service_locations lookup failed: ${slErr.message}`)
+    const batch = data ?? []
+    slRows.push(...batch)
+    if (batch.length < PAGE) break
+  }
+  const propIds = [...new Set(slRows.map((r: any) => r.property_id).filter(Boolean))]
   if (!propIds.length) return []
 
-  // Step 3: properties + their service_locations (filtered to this account's clients)
-  const { data: props, error: propErr } = await db
-    .from('properties')
-    .select(
-      'id, address_line1, address_line2, city, state, postal_code, latitude, longitude, geocode_confidence, address_validation_verdict, branch_override, service_locations(id, property_id, client_id, display_name, serviceable_sqft, visits_per_year_override, service_offering_id, status, building_size_class_override, building_size_override_reason)'
-    )
-    .in('id', propIds)
-  if (propErr) throw new Error(`properties lookup failed: ${propErr.message}`)
+  // Step 3: properties + their service_locations (chunk + page; combined
+  // clients can pull thousands of properties).
+  const props: any[] = []
+  for (let i = 0; i < propIds.length; i += 250) {
+    const chunk = propIds.slice(i, i + 250)
+    let pageOffset = 0
+    for (let p = 0; p < 50; p++) {
+      const { data, error: propErr } = await db
+        .from('properties')
+        .select(
+          'id, address_line1, address_line2, city, state, postal_code, latitude, longitude, geocode_confidence, address_validation_verdict, branch_override, service_locations(id, property_id, client_id, display_name, serviceable_sqft, visits_per_year_override, service_offering_id, status, building_size_class_override, building_size_override_reason)'
+        )
+        .in('id', chunk)
+        .range(pageOffset, pageOffset + PAGE - 1)
+      if (propErr) throw new Error(`properties lookup failed: ${propErr.message}`)
+      const batch = data ?? []
+      props.push(...batch)
+      if (batch.length < PAGE) break
+      pageOffset += PAGE
+    }
+  }
 
   return (props ?? []).map((p: any) => ({
     id: p.id,

@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createAdminClient } from '../../_lib/supabase.js'
 import { authenticateRequest } from '../../_lib/auth.js'
+import { resolveClientIds } from '../../_lib/clients/resolve-client-ids.js'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end()
@@ -17,16 +18,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'GET') {
     const { account_id, client_id, include_archived, include_related } = req.query
 
-    // include_related=true: return global + account-level + client-level in one query
+    // include_related=true: return global + account-level + client-level in one query.
+    // For combined clients, expand client-level filter to every member id.
     if (include_related === 'true' && account_id) {
       const aid = String(account_id)
       const cid = client_id ? String(client_id) : null
+      const resolvedCids = cid ? await resolveClientIds(db, cid) : []
       let query = db
         .from('service_offerings')
         .select('*')
         .or(
-          cid
-            ? `and(account_id.is.null,client_id.is.null),and(account_id.eq.${aid},client_id.is.null),and(account_id.eq.${aid},client_id.eq.${cid})`
+          resolvedCids.length > 0
+            ? `and(account_id.is.null,client_id.is.null),and(account_id.eq.${aid},client_id.is.null),client_id.in.(${resolvedCids.join(',')})`
             : `and(account_id.is.null,client_id.is.null),and(account_id.eq.${aid},client_id.is.null)`
         )
         .order('name', { ascending: true })
@@ -38,7 +41,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let query = db.from('service_offerings').select('*').order('name', { ascending: true })
     if (account_id) query = query.eq('account_id', String(account_id))
-    if (client_id) query = query.eq('client_id', String(client_id))
+    if (client_id) {
+      // Combined clients own no offerings of their own — resolve to member
+      // ids so the listing returns the unioned offering set.
+      const resolved = await resolveClientIds(db, String(client_id))
+      query = query.in('client_id', resolved)
+    }
     if (include_archived !== 'true') query = query.eq('is_archived', false)
     const { data, error } = await query
     if (error) return res.status(500).json({ error: error.message })
