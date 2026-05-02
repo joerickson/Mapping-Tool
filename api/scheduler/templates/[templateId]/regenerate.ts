@@ -25,6 +25,7 @@ import {
   buildRoutingTemplate,
   type PropertyForBuild,
 } from '../../../_lib/scheduler/build-routing-template.js'
+import { deriveHomeBranchIndices } from '../../../_lib/scheduler/derive-home-branches.js'
 import {
   applyCohortAssignments,
   loadEligibleProperties,
@@ -333,6 +334,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       cycle_start_year: new Date().getUTCFullYear(),
       branch_assignment_overrides:
         (tpl.branch_assignment_overrides as Record<string, number> | null) ?? undefined,
+      home_branch_indices: deriveHomeBranchIndices(
+        constraints.crew_count_per_branch_override,
+        branches,
+        crewCount
+      ) ?? undefined,
     })
 
     if (propertiesMissingCoords.length > 0) {
