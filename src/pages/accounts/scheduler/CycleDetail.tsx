@@ -519,13 +519,20 @@ export default function CycleDetailPage() {
               )}
             </div>
             <div className="flex items-center gap-2">
-              {unplacedVisits.length > 0 && cycle?.template_id && (
+              {cycle?.template_id && (
                 <Button
                   size="sm"
                   variant="secondary"
                   onClick={() => setRebalanceOpen(true)}
+                  title={
+                    unplacedVisits.length > 0
+                      ? `${unplacedVisits.length} unplaced — get rebalance suggestions`
+                      : 'Open the rebalance analyzer (also surfaces severely-idle crews)'
+                  }
                 >
-                  Suggest rebalance ({unplacedVisits.length})
+                  {unplacedVisits.length > 0
+                    ? `Suggest rebalance (${unplacedVisits.length})`
+                    : 'Suggest rebalance'}
                 </Button>
               )}
               <CycleChatDrawer
