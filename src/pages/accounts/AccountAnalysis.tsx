@@ -153,6 +153,9 @@ interface ClientInfo {
   primary_contact_phone?: string | null
   notes?: string | null
   brand_color?: string | null
+  is_combined?: boolean
+  member_client_ids?: string[] | null
+  metadata?: Record<string, unknown> | null
 }
 
 export default function AccountAnalysisPage() {
@@ -214,6 +217,40 @@ export default function AccountAnalysisPage() {
   const [modalK, setModalK] = useState(0)
   const [modalCentroids, setModalCentroids] = useState<ReferenceCentroid[]>([])
   const [modalSourceAnalysisId, setModalSourceAnalysisId] = useState<string | null>(null)
+
+  // Combined-client sync (only used when client.is_combined).
+  const [syncing, setSyncing] = useState(false)
+  const [syncError, setSyncError] = useState<string | null>(null)
+  const [syncResult, setSyncResult] = useState<{ branches: number; crew_total: number; synced_at: string } | null>(null)
+  async function handleSyncCombined() {
+    if (!client) return
+    setSyncing(true)
+    setSyncError(null)
+    try {
+      const token = await getToken()
+      const res = await fetch(`/api/v1/clients/${client.id}/sync-combined`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error ?? `Sync failed (${res.status})`)
+      setSyncResult({
+        branches: body.branches,
+        crew_total: body.crew_total,
+        synced_at: body.synced_at,
+      })
+      // Re-fetch the client (so metadata.combined_last_synced_at refreshes)
+      // and the constraints (so selected_branches surfaces in the panel).
+      const headers = { Authorization: `Bearer ${token}` }
+      const cliRes = await fetch(`/api/v1/clients/${client.id}`, { headers })
+      if (cliRes.ok) setClient(await cliRes.json())
+      await refreshConstraints()
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   // ─── Constraints refresh — call after any save / select / clear ───
   const refreshConstraints = useCallback(async () => {
@@ -858,6 +895,57 @@ export default function AccountAnalysisPage() {
             Run all analyses
           </Button>
         </header>
+
+          {/* Combined-client sync banner. Only shown when this client is
+              a combined virtual portfolio. Pulls each member's selected
+              branches + crew counts into the combined client's own
+              constraints so Branch Optimization / scheduler see them. */}
+          {client?.is_combined && (
+            <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1 min-w-0">
+                  <h2 className="text-sm font-semibold text-blue-900">
+                    Combined client · {client.member_client_ids?.length ?? 0} members
+                  </h2>
+                  <p className="text-xs text-blue-800/80">
+                    Properties, service locations, and offerings are unioned from members on
+                    every read (no copy needed). Click "Sync from members" to pull each
+                    member's selected branches and crew counts into this combined client so
+                    Branch Optimization can see them — or run Branch Optimization here to
+                    compute new optimal branches across the whole portfolio.
+                  </p>
+                  {(() => {
+                    const last = (client.metadata as any)?.combined_last_synced_at as string | undefined
+                    if (last) {
+                      return (
+                        <p className="text-[11px] text-blue-700/70">
+                          Last synced: {new Date(last).toLocaleString()}
+                        </p>
+                      )
+                    }
+                    return (
+                      <p className="text-[11px] text-blue-700/70">
+                        Never synced — Branch Optimization needs a sync (or its own run) to
+                        suggest branches.
+                      </p>
+                    )
+                  })()}
+                  {syncResult && (
+                    <p className="text-[11px] text-blue-900">
+                      Synced {syncResult.branches} branches, {syncResult.crew_total} crews
+                      total at {new Date(syncResult.synced_at).toLocaleTimeString()}.
+                    </p>
+                  )}
+                  {syncError && (
+                    <p className="text-[11px] text-danger">{syncError}</p>
+                  )}
+                </div>
+                <Button size="sm" onClick={handleSyncCombined} loading={syncing}>
+                  Sync from members
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* Operational Constraints panel */}
           {accountId && clientId && (
