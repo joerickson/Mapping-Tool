@@ -289,6 +289,9 @@ export default function AccountDetailPage() {
               <Button size="sm" variant="ghost" asChild>
                 <Link to={`/accounts/${id}/combined-schedules`}>Combined schedules</Link>
               </Button>
+              <Button size="sm" variant="ghost" asChild>
+                <Link to={`/accounts/${id}/clients/new-combined`}>+ Combined client</Link>
+              </Button>
               {isPM && (
                 <Button size="sm" variant="secondary" asChild>
                   <Link to={`/accounts/${id}/clients/new`}>+ Add client</Link>
@@ -320,14 +323,18 @@ export default function AccountDetailPage() {
             </Card>
           ) : (
             <ul className="space-y-2">
-              {clientsForDisplay(overview, clients).map((c) => (
-                <ClientOverviewRow
-                  key={c.id}
-                  accountId={id!}
-                  client={c}
-                  pending={!overview}
-                />
-              ))}
+              {clientsForDisplay(overview, clients).map((c) => {
+                const isCombined = clients.find((cl) => cl.id === c.id)?.is_combined === true
+                return (
+                  <ClientOverviewRow
+                    key={c.id}
+                    accountId={id!}
+                    client={c}
+                    pending={!overview}
+                    isCombined={isCombined}
+                  />
+                )
+              })}
             </ul>
           )}
         </section>
@@ -619,11 +626,13 @@ function ClientOverviewRow({
   accountId,
   client,
   pending,
+  isCombined,
 }: {
   accountId: string
   client: OverviewClient | Pick<OverviewClient, 'id' | 'name' | 'display_name' | 'property_count'>
   /** When true, only the bare-bones fields are populated. Hide derived UI. */
   pending?: boolean
+  isCombined?: boolean
 }) {
   const full = !pending && 'synthesis_status' in client
   const lastRun =
@@ -654,6 +663,11 @@ function ClientOverviewRow({
               <span className="text-base font-semibold text-fg truncate">
                 {client.display_name ?? client.name}
               </span>
+              {isCombined && (
+                <span className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent">
+                  Combined
+                </span>
+              )}
               {full && synthesisBadge((client as OverviewClient).synthesis_status)}
             </div>
             <p className="mt-1 text-xs text-fg-muted">
