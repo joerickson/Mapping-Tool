@@ -255,8 +255,7 @@ export default function BranchAssignmentsPanel({
                   <TableCell>
                     <select
                       value={overrideVal != null ? String(overrideVal) : 'auto'}
-                      disabled={savingId === a.service_location_id || a.is_remote}
-                      title={a.is_remote ? 'Remote properties auto-route to nearest branch' : undefined}
+                      disabled={savingId === a.service_location_id}
                       onChange={(e) => {
                         const v = e.target.value
                         setOverride(
@@ -264,10 +263,7 @@ export default function BranchAssignmentsPanel({
                           v === 'auto' ? null : Number(v)
                         )
                       }}
-                      className={
-                        'h-7 rounded-md border border-border bg-surface px-2 text-xs text-fg ' +
-                        (a.is_remote ? 'opacity-50' : '')
-                      }
+                      className="h-7 rounded-md border border-border bg-surface px-2 text-xs text-fg"
                     >
                       <option value="auto">Auto (engine)</option>
                       {branches.map((b, i) => (

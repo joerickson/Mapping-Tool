@@ -244,30 +244,26 @@ export default function BranchAssignmentsMap({
           : a.transferred
             ? '2px solid #fff'
             : '1.5px solid rgba(0,0,0,0.3)'
-        el.style.cursor = a.is_remote ? 'not-allowed' : 'pointer'
+        el.style.cursor = 'pointer'
         el.style.pointerEvents = 'auto'
-        el.title = `${a.address}${a.is_remote ? ' (remote — auto-routed)' : ' — click to reassign'}`
-        if (!a.is_remote) {
-          el.addEventListener('mouseenter', () => {
-            el.style.transform = 'scale(1.6)'
-            el.style.zIndex = '10'
+        el.title = `${a.address}${a.is_remote ? ' (overnight — click to reassign)' : ' — click to reassign'}`
+        el.addEventListener('mouseenter', () => {
+          el.style.transform = 'scale(1.6)'
+          el.style.zIndex = '10'
+        })
+        el.addEventListener('mouseleave', () => {
+          el.style.transform = 'scale(1)'
+          el.style.zIndex = ''
+        })
+        el.addEventListener('click', (e) => {
+          e.stopPropagation()
+          setSelected(a)
+          mapRef.current?.flyTo({
+            center: [a.lng, a.lat],
+            zoom: Math.max(mapRef.current.getZoom(), 9),
+            duration: 400,
           })
-          el.addEventListener('mouseleave', () => {
-            el.style.transform = 'scale(1)'
-            el.style.zIndex = ''
-          })
-          el.addEventListener('click', (e) => {
-            e.stopPropagation()
-            setSelected(a)
-            // Fly to the clicked dot so the visual connection between
-            // dot and override panel is clear.
-            mapRef.current?.flyTo({
-              center: [a.lng, a.lat],
-              zoom: Math.max(mapRef.current.getZoom(), 9),
-              duration: 400,
-            })
-          })
-        }
+        })
         markersRef.current.push(
           new mapboxgl.Marker({ element: el }).setLngLat([a.lng, a.lat]).addTo(map)
         )
