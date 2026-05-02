@@ -21,6 +21,7 @@ import ViewSwitcher, { type CycleViewKind } from '../../../components/scheduler/
 import GanttView, { type UtilDay } from '../../../components/scheduler/GanttView'
 import CalendarView from '../../../components/scheduler/CalendarView'
 import CycleMapView from '../../../components/scheduler/CycleMapView'
+import UtilizationPanel from '../../../components/scheduler/UtilizationPanel'
 import HistoryDrawer from '../../../components/scheduler/HistoryDrawer'
 import CycleChatDrawer from '../../../components/scheduler/CycleChatDrawer'
 import RebalanceSuggestionsDialog from '../../../components/scheduler/RebalanceSuggestionsDialog'
@@ -868,6 +869,10 @@ export default function CycleDetailPage() {
               cycleEnd={cycle.end_date}
             />
           </div>
+        )}
+
+        {view === 'utilization' && cycleId && (
+          <UtilizationPanel cycleId={cycleId} />
         )}
 
         {/* List view: existing crew_days + visits tables */}

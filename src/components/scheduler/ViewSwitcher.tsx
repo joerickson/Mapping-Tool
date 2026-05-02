@@ -1,16 +1,17 @@
 // Phase 4f-1 — view switcher tabs (Gantt / Calendar / List / Map).
 // Keyboard shortcuts: 1, 2, 3, 4.
 import { useEffect } from 'react'
-import { LayoutGrid, Calendar, List, Map as MapIcon } from 'lucide-react'
+import { LayoutGrid, Calendar, List, Map as MapIcon, Activity } from 'lucide-react'
 import { cn } from '../../lib/cn'
 
-export type CycleViewKind = 'gantt' | 'calendar' | 'list' | 'map'
+export type CycleViewKind = 'gantt' | 'calendar' | 'list' | 'map' | 'utilization'
 
 const VIEWS: Array<{ key: CycleViewKind; label: string; icon: any; shortcut: string }> = [
   { key: 'gantt', label: 'Gantt', icon: LayoutGrid, shortcut: '1' },
   { key: 'calendar', label: 'Calendar', icon: Calendar, shortcut: '2' },
   { key: 'list', label: 'List', icon: List, shortcut: '3' },
   { key: 'map', label: 'Map', icon: MapIcon, shortcut: '4' },
+  { key: 'utilization', label: 'Utilization', icon: Activity, shortcut: '5' },
 ]
 
 interface Props {
