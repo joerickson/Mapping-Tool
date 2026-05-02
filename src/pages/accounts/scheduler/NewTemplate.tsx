@@ -50,7 +50,7 @@ export default function NewTemplatePage() {
     count: number // conservative — what to default to
     optimistic: number | null
     option: string
-    source: 'building_count' | 'option_count'
+    source: 'building_count' | 'option_count' | 'per_branch_staging'
   } | null>(null)
   const [cycleStartYear, setCycleStartYear] = useState(new Date().getUTCFullYear())
   const [planningMode, setPlanningMode] = useState<'auto' | 'hybrid' | 'manual'>('auto')
@@ -62,7 +62,7 @@ export default function NewTemplatePage() {
     setLoading(true)
     try {
       const token = await getToken()
-      const [slRes, offRes, latestRes, cliRes] = await Promise.all([
+      const [slRes, offRes, latestRes, cliRes, conRes] = await Promise.all([
         fetch(`/api/v1/service-locations?client_id=${clientId}`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
@@ -73,6 +73,9 @@ export default function NewTemplatePage() {
           headers: { Authorization: `Bearer ${token}` },
         }),
         fetch(`/api/v1/clients/${clientId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`/api/accounts/${accountId}/clients/${clientId}/operational-constraints`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
       ])
@@ -90,6 +93,26 @@ export default function NewTemplatePage() {
         const o = await offRes.json()
         setOfferings(Array.isArray(o) ? o : o.items ?? [])
       }
+      // Per-branch staging override from operational constraints. If the
+      // user has applied optimal staging (Crew Strategy → Apply optimal
+      // staging button), this is a Record<branchName, count>. Sum it
+      // and let it win over the Crew Strategy total — that way the form
+      // crew_count stays in sync with what the engine will actually use
+      // via deriveHomeBranchIndices().
+      let stagingTotal: number | null = null
+      if (conRes.ok) {
+        const con = await conRes.json()
+        const ovr = con?.crew_count_per_branch_override
+        if (ovr && typeof ovr === 'object') {
+          let sum = 0
+          for (const v of Object.values(ovr)) {
+            const n = Number(v)
+            if (Number.isFinite(n) && n > 0) sum += Math.floor(n)
+          }
+          if (sum > 0) stagingTotal = sum
+        }
+      }
+
       if (latestRes.ok) {
         const rows = await latestRes.json()
         const cs = (rows as any[]).find((r) => r.module_key === 'crew_strategy' && r.status === 'completed')
@@ -112,18 +135,38 @@ export default function NewTemplatePage() {
               count: cons,
               optimistic: optimi !== cons ? optimi : null,
               option: opt ?? '?',
-              source: 'building_count',
+              source: stagingTotal != null ? 'per_branch_staging' : 'building_count',
             })
-            if (!crewCountUserEdited) setCrewCount(cons)
+            if (!crewCountUserEdited) setCrewCount(stagingTotal ?? cons)
           } else if (optionCount != null) {
             setRecommendedCrew({
               count: optionCount,
               optimistic: null,
               option: opt ?? '?',
-              source: 'option_count',
+              source: stagingTotal != null ? 'per_branch_staging' : 'option_count',
             })
-            if (!crewCountUserEdited) setCrewCount(optionCount)
+            if (!crewCountUserEdited) setCrewCount(stagingTotal ?? optionCount)
+          } else if (stagingTotal != null) {
+            // Constraints override exists but Crew Strategy has no
+            // recommendation — still pre-fill from the staging total.
+            setRecommendedCrew({
+              count: stagingTotal,
+              optimistic: null,
+              option: '?',
+              source: 'per_branch_staging',
+            })
+            if (!crewCountUserEdited) setCrewCount(stagingTotal)
           }
+        } else if (stagingTotal != null) {
+          // No Crew Strategy run at all — staging override alone is
+          // enough to seed the form.
+          setRecommendedCrew({
+            count: stagingTotal,
+            optimistic: null,
+            option: '?',
+            source: 'per_branch_staging',
+          })
+          if (!crewCountUserEdited) setCrewCount(stagingTotal)
         }
       }
     } catch (err) {
@@ -266,7 +309,9 @@ export default function NewTemplatePage() {
               label="Crew count"
               helper={
                 recommendedCrew
-                  ? recommendedCrew.source === 'building_count'
+                  ? recommendedCrew.source === 'per_branch_staging'
+                    ? `Pre-filled from your applied per-branch staging (${recommendedCrew.count} crews summed across branches). The engine will home each crew per the staging override.`
+                    : recommendedCrew.source === 'building_count'
                     ? recommendedCrew.optimistic != null
                       ? `Recommended: ${recommendedCrew.count} crews (conservative). ${recommendedCrew.optimistic} with small-property pairing.`
                       : `Recommended: ${recommendedCrew.count} crews from building-count math.`
