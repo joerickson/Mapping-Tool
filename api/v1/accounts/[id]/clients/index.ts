@@ -36,14 +36,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (req.method === 'POST') {
-    if (account.account_type === 'self_managed') {
+    const body = (req.body ?? {}) as Record<string, unknown>
+    const isCombined = body.is_combined === true
+    const memberIds = Array.isArray(body.member_client_ids)
+      ? (body.member_client_ids as string[]).filter((s) => typeof s === 'string')
+      : []
+
+    // Combined clients are a virtual portfolio across N member clients.
+    // They can be hosted under any account type (the host account is just
+    // for nav/permission scope) — the self_managed restriction only
+    // applies to ordinary clients.
+    if (!isCombined && account.account_type === 'self_managed') {
       return res.status(400).json({ error: 'Self-managed accounts cannot add clients manually' })
     }
 
-    const {
-      name, display_name, status = 'active',
-      notes, contact_name, contact_email, contact_phone,
-    } = req.body ?? {}
+    if (isCombined) {
+      if (memberIds.length < 2) {
+        return res.status(400).json({ error: 'Combined clients require at least 2 member_client_ids' })
+      }
+      // Verify all member ids exist and are not themselves combined.
+      const { data: members, error: mErr } = await db
+        .from('clients')
+        .select('id, is_combined')
+        .in('id', memberIds)
+      if (mErr) return res.status(500).json({ error: mErr.message })
+      const found = new Set((members ?? []).map((m: any) => m.id as string))
+      const missing = memberIds.filter((id) => !found.has(id))
+      if (missing.length > 0) {
+        return res.status(400).json({ error: `Unknown member client ids: ${missing.join(', ')}` })
+      }
+      const nestedCombined = (members ?? []).filter((m: any) => m.is_combined)
+      if (nestedCombined.length > 0) {
+        return res.status(400).json({ error: 'Cannot nest combined clients (a member is itself combined)' })
+      }
+    }
+
+    const name = body.name as string | undefined
+    const displayName = body.display_name as string | undefined
+    const status = (body.status as string | undefined) ?? 'active'
 
     if (!name?.trim()) return res.status(400).json({ error: 'name is required' })
 
@@ -52,12 +82,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .insert({
         account_id: accountId,
         name: name.trim(),
-        display_name: display_name?.trim() ?? null,
+        display_name: displayName?.trim() ?? null,
         status,
-        notes: notes ?? null,
-        primary_contact_name: contact_name ?? null,
-        primary_contact_email: contact_email ?? null,
-        primary_contact_phone: contact_phone ?? null,
+        notes: (body.notes as string | undefined) ?? null,
+        primary_contact_name: (body.contact_name as string | undefined) ?? null,
+        primary_contact_email: (body.contact_email as string | undefined) ?? null,
+        primary_contact_phone: (body.contact_phone as string | undefined) ?? null,
+        is_combined: isCombined,
+        member_client_ids: isCombined ? memberIds : null,
         created_by: ctx.userId ?? null,
       })
       .select('*')

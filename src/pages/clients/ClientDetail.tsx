@@ -185,11 +185,16 @@ export default function ClientDetailPage() {
                   {(client.display_name ?? client.name).charAt(0).toUpperCase()}
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <h1 className="text-2xl font-bold text-gray-900">{client.display_name ?? client.name}</h1>
                     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_BADGE[client.status] ?? 'bg-gray-100 text-gray-500'}`}>
                       {client.status}
                     </span>
+                    {client.is_combined && (
+                      <span className="rounded-full border border-blue-300 bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
+                        Combined · {client.member_client_ids?.length ?? 0} members
+                      </span>
+                    )}
                   </div>
                   {client.display_name && <p className="text-sm text-gray-400">{client.name}</p>}
                 </div>

@@ -42,6 +42,7 @@ import CombinedSchedulesPage from './pages/accounts/scheduler/CombinedSchedules'
 import TravelPlannerPage from './pages/accounts/TravelPlanner'
 import CustomFieldsAdminPage from './pages/accounts/CustomFieldsAdmin'
 import NewAccountClientPage from './pages/accounts/NewAccountClient'
+import NewCombinedClientPage from './pages/accounts/NewCombinedClient'
 import ClientsListPage from './pages/clients/ClientsList'
 import NewClientPage from './pages/clients/NewClient'
 import ClientDetailPage from './pages/clients/ClientDetail'
@@ -186,6 +187,7 @@ export default function App() {
             element={<AuthGuard><CustomFieldsAdminPage /></AuthGuard>}
           />
           <Route path="/accounts/:id/clients/new" element={<AuthGuard><NewAccountClientPage /></AuthGuard>} />
+          <Route path="/accounts/:id/clients/new-combined" element={<AuthGuard><NewCombinedClientPage /></AuthGuard>} />
 
           {/* Clients */}
           <Route path="/clients" element={<AuthGuard><ClientsListPage /></AuthGuard>} />

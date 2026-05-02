@@ -29,6 +29,8 @@ export interface Client {
   brand_color?: string | null
   logo_url?: string | null
   metadata?: Record<string, unknown>
+  is_combined?: boolean
+  member_client_ids?: string[] | null
   created_at: string
   updated_at: string
   created_by?: string | null
