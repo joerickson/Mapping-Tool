@@ -22,9 +22,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(err.statusCode ?? 401).json({ error: err.message ?? 'Unauthorized' })
   }
   const templateId = req.query.templateId as string
-  const body = (req.body ?? {}) as { service_location_id?: string; branch_idx?: number | null }
-  if (!body.service_location_id) {
-    return res.status(400).json({ error: 'service_location_id required' })
+  const body = (req.body ?? {}) as {
+    service_location_id?: string
+    branch_idx?: number | null
+    // Batch form: apply N overrides at once (used by the rebalance
+    // suggestions modal). Single-form is preserved for backwards compat.
+    batch?: Array<{ service_location_id: string; branch_idx: number | null }>
+  }
+  const isBatch = Array.isArray(body.batch) && body.batch.length > 0
+  if (!isBatch && !body.service_location_id) {
+    return res.status(400).json({ error: 'service_location_id or batch required' })
   }
   const db = createAdminClient()
 
@@ -38,15 +45,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const overrides = ((tpl as any).branch_assignment_overrides ?? {}) as Record<string, number>
   const branches = ((tpl as any).branches ?? []) as any[]
 
-  if (body.branch_idx === null || body.branch_idx === undefined) {
-    delete overrides[body.service_location_id]
-  } else {
-    if (!Number.isInteger(body.branch_idx) || body.branch_idx < 0 || body.branch_idx >= branches.length) {
-      return res
-        .status(400)
-        .json({ error: `branch_idx must be an integer in [0, ${branches.length - 1}]` })
+  const applyOne = (sl: string, idx: number | null | undefined): string | null => {
+    if (idx === null || idx === undefined) {
+      delete overrides[sl]
+      return null
     }
-    overrides[body.service_location_id] = body.branch_idx
+    if (!Number.isInteger(idx) || idx < 0 || idx >= branches.length) {
+      return `branch_idx must be an integer in [0, ${branches.length - 1}] (got ${idx} for ${sl})`
+    }
+    overrides[sl] = idx
+    return null
+  }
+
+  if (isBatch) {
+    for (const item of body.batch!) {
+      if (!item.service_location_id) continue
+      const err = applyOne(item.service_location_id, item.branch_idx ?? null)
+      if (err) return res.status(400).json({ error: err })
+    }
+  } else {
+    const err = applyOne(body.service_location_id!, body.branch_idx)
+    if (err) return res.status(400).json({ error: err })
   }
 
   const { error: updErr } = await db
