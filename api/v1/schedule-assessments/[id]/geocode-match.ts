@@ -243,16 +243,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
   }
 
-  // Persist in chunks.
-  for (let i = 0; i < updates.length; i += 200) {
-    const chunk = updates.slice(i, i + 200)
-    const { error } = await db
-      .from('schedule_assessment_rows')
-      .upsert(chunk, { onConflict: 'id' })
-    if (error) {
-      // eslint-disable-next-line no-console
-      console.warn(`geocode-match update batch failed: ${error.message}`)
+  // Persist results. Per-row UPDATE (not upsert) — schedule_assessment_rows
+  // has NOT NULL columns (assessment_id, file_id, raw_address) so an upsert
+  // with a partial payload silently fails the INSERT path and never reaches
+  // the ON CONFLICT update. Parallelize in modest batches; 645 rows
+  // finishes in well under a second.
+  const PARALLEL = 25
+  let writeFailures = 0
+  for (let i = 0; i < updates.length; i += PARALLEL) {
+    const batch = updates.slice(i, i + PARALLEL)
+    const results = await Promise.all(
+      batch.map((u) => {
+        const { id: rowId, ...patch } = u
+        return db.from('schedule_assessment_rows').update(patch).eq('id', rowId)
+      })
+    )
+    for (const r of results) {
+      if (r.error) {
+        writeFailures++
+        // eslint-disable-next-line no-console
+        console.warn(`geocode-match row update failed: ${r.error.message}`)
+      }
     }
+  }
+  if (writeFailures > 0) {
+    return res.status(500).json({
+      error: `Persisted some rows but ${writeFailures} of ${updates.length} updates failed. Check server logs.`,
+      processed: targets.length,
+      write_failures: writeFailures,
+    })
   }
 
   await db

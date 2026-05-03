@@ -162,15 +162,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       match_status: 'pending',
     })
   }
-  for (let i = 0; i < updates.length; i += INSERT_CHUNK) {
-    const chunk = updates.slice(i, i + INSERT_CHUNK)
-    const { error: upErr } = await db
-      .from('schedule_assessment_rows')
-      .upsert(chunk, { onConflict: 'id' })
-    if (upErr) {
-      // eslint-disable-next-line no-console
-      console.warn(`match update batch failed: ${upErr.message}`)
+  // Per-row UPDATE (not upsert) — partial upserts trip NOT NULL on the
+  // INSERT path and silently no-op. Parallelize.
+  const PARALLEL = 25
+  let writeFailures = 0
+  for (let i = 0; i < updates.length; i += PARALLEL) {
+    const batch = updates.slice(i, i + PARALLEL)
+    const results = await Promise.all(
+      batch.map((u) => {
+        const { id: rowId, ...patch } = u
+        return db.from('schedule_assessment_rows').update(patch).eq('id', rowId)
+      })
+    )
+    for (const r of results) {
+      if (r.error) {
+        writeFailures++
+        // eslint-disable-next-line no-console
+        console.warn(`match update failed: ${r.error.message}`)
+      }
     }
+  }
+  if (writeFailures > 0) {
+    return res.status(500).json({
+      error: `Persisted some rows but ${writeFailures} of ${updates.length} match-status updates failed.`,
+    })
   }
 
   if (codeMatchedCount > 0) {
