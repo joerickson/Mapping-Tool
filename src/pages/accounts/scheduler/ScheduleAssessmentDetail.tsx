@@ -486,6 +486,15 @@ export default function ScheduleAssessmentDetailPage() {
     [rows]
   )
 
+  // Auto-load the full SL list when there are rows that need review.
+  // Previously this required a manual button click — confusing because
+  // dropdowns appeared empty until the operator hit it.
+  useEffect(() => {
+    if (reviewRows.length > 0 && slOptions.length === 0) {
+      void loadSlOptions()
+    }
+  }, [reviewRows.length, slOptions.length, loadSlOptions])
+
   if (loading) {
     return (
       <AppShell><div className="p-10 text-fg-muted">Loading…</div></AppShell>
@@ -768,15 +777,82 @@ export default function ScheduleAssessmentDetailPage() {
         {reviewRows.length > 0 && (
           <Card padding="none">
             <div className="px-4 py-3 border-b border-border">
-              <CardTitle>Review unmatched / low-confidence rows</CardTitle>
+              <CardTitle>Review {reviewRows.length} unmatched / low-confidence rows</CardTitle>
               <p className="text-xs text-fg-muted mt-0.5">
-                Each row's top 3 candidates are pre-loaded from the matcher
-                — pick one or skip. The full SL list (all { (slOptions.length || '...') } locations) is available as a fallback.
+                The matcher's best guess is pre-selected in each dropdown. Just
+                confirm with <strong>Accept</strong> if the top suggestion is
+                right, change the selection, or <strong>Skip</strong> if the
+                row isn't part of this client's portfolio.
               </p>
-              <div className="mt-2">
-                <Button size="sm" variant="ghost" onClick={loadSlOptions}>
-                  {slOptions.length > 0 ? `Full list loaded (${slOptions.length})` : 'Load full SL list (fallback)'}
+              <div className="mt-2 flex items-center gap-2 flex-wrap">
+                <Button
+                  size="sm"
+                  onClick={async () => {
+                    // Bulk-accept the top candidate on every review row that
+                    // has one. The operator can still revisit individual rows
+                    // afterward.
+                    const accepts = reviewRows
+                      .filter((r) => Array.isArray(r.match_candidates) && r.match_candidates.length > 0)
+                      .map((r) => ({
+                        id: r.id,
+                        matched_service_location_id: r.match_candidates![0].sl_id,
+                        match_status: 'manual' as const,
+                      }))
+                    if (accepts.length === 0) return
+                    if (!confirm(`Auto-accept the top candidate for ${accepts.length} rows? You can still change individual rows after.`)) return
+                    try {
+                      const token = await getToken()
+                      // Chunk to keep payloads sane.
+                      for (let i = 0; i < accepts.length; i += 200) {
+                        const chunk = accepts.slice(i, i + 200)
+                        await fetch(`/api/v1/schedule-assessments/${id}/rows`, {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                          body: JSON.stringify({ rows: chunk }),
+                        })
+                      }
+                      await load()
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : String(err))
+                    }
+                  }}
+                >
+                  Accept top suggestion for all (
+                  {reviewRows.filter((r) => Array.isArray(r.match_candidates) && r.match_candidates.length > 0).length}
+                  )
                 </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={async () => {
+                    const skips = reviewRows
+                      .filter((r) => !Array.isArray(r.match_candidates) || r.match_candidates.length === 0)
+                      .map((r) => ({ id: r.id, match_status: 'skipped' as const }))
+                    if (skips.length === 0) return
+                    if (!confirm(`Skip ${skips.length} rows that have no candidates at all (almost certainly not in this portfolio)?`)) return
+                    try {
+                      const token = await getToken()
+                      for (let i = 0; i < skips.length; i += 200) {
+                        const chunk = skips.slice(i, i + 200)
+                        await fetch(`/api/v1/schedule-assessments/${id}/rows`, {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                          body: JSON.stringify({ rows: chunk }),
+                        })
+                      }
+                      await load()
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : String(err))
+                    }
+                  }}
+                >
+                  Skip all unmatched ({reviewRows.filter((r) => !Array.isArray(r.match_candidates) || r.match_candidates.length === 0).length})
+                </Button>
+                {slOptions.length > 0 && (
+                  <span className="text-[11px] text-fg-subtle">
+                    Full SL list loaded ({slOptions.length})
+                  </span>
+                )}
               </div>
             </div>
             <Table>
@@ -794,6 +870,11 @@ export default function ScheduleAssessmentDetailPage() {
                 {reviewRows.slice(0, 200).map((r) => {
                   const candidates = Array.isArray(r.match_candidates) ? r.match_candidates : []
                   const usingCandidates = candidates.length > 0
+                  // Pre-select the best candidate so the dropdown isn't empty
+                  // and the operator can confirm with one click.
+                  const selectedValue =
+                    r.matched_service_location_id ??
+                    (candidates[0]?.sl_id ?? '')
                   return (
                     <TableRow key={r.id}>
                       <TableCell className="text-xs">
@@ -809,7 +890,7 @@ export default function ScheduleAssessmentDetailPage() {
                       </TableCell>
                       <TableCell>
                         <select
-                          value={r.matched_service_location_id ?? ''}
+                          value={selectedValue}
                           onChange={(e) =>
                             updateRow(r.id, {
                               matched_service_location_id: e.target.value || null,
@@ -840,13 +921,27 @@ export default function ScheduleAssessmentDetailPage() {
                         </select>
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => updateRow(r.id, { match_status: 'skipped' })}
-                        >
-                          Skip
-                        </Button>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            size="sm"
+                            onClick={() =>
+                              updateRow(r.id, {
+                                matched_service_location_id: selectedValue || null,
+                                match_status: selectedValue ? 'manual' : 'unmatched',
+                              })
+                            }
+                            disabled={!selectedValue || r.matched_service_location_id === selectedValue}
+                          >
+                            Accept
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => updateRow(r.id, { match_status: 'skipped' })}
+                          >
+                            Skip
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   )

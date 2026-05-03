@@ -62,6 +62,12 @@ function jaccard(a: string[], b: string[]): number {
 export interface MatchInput {
   row_id: string
   raw_address: string
+  // Optional disambiguators. When present, they boost the match score
+  // for candidates whose property has the same city/state/zip — turning
+  // ambiguous "123 Main St" into a confident match.
+  raw_city?: string | null
+  raw_state?: string | null
+  raw_postal_code?: string | null
 }
 
 export interface MatchOutput {
@@ -109,13 +115,32 @@ export async function matchAddresses(
     cand: c,
     tokens: normalize(c.address_line1),
   }))
-  // Score each input against every candidate; keep top 3.
+  // Score each input against every candidate; keep top 3. When the
+  // input row has city / state / zip, boost the score for candidates
+  // whose property's city/state/zip matches — turns "123 Main St"
+  // into a confident match when 5 SLs share the street name but only
+  // one is in Phoenix.
   const out: MatchOutput[] = []
+  const norm = (s: string | null | undefined) => (s ?? '').trim().toLowerCase()
   for (const inp of inputs) {
     const inputTokens = normalize(inp.raw_address)
+    const inCity = norm(inp.raw_city)
+    const inState = norm(inp.raw_state)
+    const inZip = norm(inp.raw_postal_code).replace(/\D/g, '').slice(0, 5)
     const scored: Array<{ sl_id: string; address: string; score: number }> = []
     for (const ct of candTokens) {
-      const score = jaccard(inputTokens, ct.tokens)
+      let score = jaccard(inputTokens, ct.tokens)
+      // City exact match: +0.10. State match: +0.05. Zip match: +0.10.
+      // Mismatches penalize lightly so we don't over-confident on a
+      // street collision when city/state are wrong.
+      const cCity = norm(ct.cand.city)
+      const cState = norm(ct.cand.state)
+      const cZip = norm(ct.cand.postal_code).replace(/\D/g, '').slice(0, 5)
+      if (inCity && cCity) score += inCity === cCity ? 0.1 : -0.05
+      if (inState && cState) score += inState === cState ? 0.05 : -0.05
+      if (inZip && cZip) score += inZip === cZip ? 0.1 : -0.03
+      // Clamp to [0, 1].
+      score = Math.max(0, Math.min(1, score))
       if (score >= REVIEW_THRESHOLD) {
         scored.push({ sl_id: ct.cand.sl_id, address: ct.cand.address_line1, score })
       }
