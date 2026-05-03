@@ -179,6 +179,8 @@ export default function ScheduleAssessmentDetailPage() {
   const [calendarSummary, setCalendarSummary] = useState<CalendarSummary | null>(null)
   const [calendarLoading, setCalendarLoading] = useState(false)
   const [calendarError, setCalendarError] = useState<string | null>(null)
+  const [proposedDays, setProposedDays] = useState<CalendarDay[] | null>(null)
+  const [proposedSummary, setProposedSummary] = useState<CalendarSummary | null>(null)
   const [diffFilter, setDiffFilter] = useState<DiffStatus | 'all_actionable'>('all_actionable')
   const [detections, setDetections] = useState<DetectedConstraint[]>([])
   const [detecting, setDetecting] = useState(false)
@@ -275,13 +277,30 @@ export default function ScheduleAssessmentDetailPage() {
     setCalendarError(null)
     try {
       const token = await getToken()
-      const res = await fetch(`/api/v1/schedule-assessments/${id}/calendar`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      const j = await res.json()
-      if (!res.ok) throw new Error(j.error ?? `Calendar failed (${res.status})`)
-      setCalendarDays(j.days as CalendarDay[])
-      setCalendarSummary(j.summary as CalendarSummary)
+      // Fire current + proposed in parallel. Proposed is best-effort —
+      // returns 400 when there's no baseline_template_id, which is
+      // expected for a fresh assessment.
+      const [curRes, propRes] = await Promise.all([
+        fetch(`/api/v1/schedule-assessments/${id}/calendar`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`/api/v1/schedule-assessments/${id}/proposed-calendar`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ])
+      const cur = await curRes.json()
+      if (!curRes.ok) throw new Error(cur.error ?? `Calendar failed (${curRes.status})`)
+      setCalendarDays(cur.days as CalendarDay[])
+      setCalendarSummary(cur.summary as CalendarSummary)
+      if (propRes.ok) {
+        const prop = await propRes.json()
+        setProposedDays(prop.days as CalendarDay[])
+        setProposedSummary(prop.summary as CalendarSummary)
+      } else {
+        // 400/404 just means no baseline yet — clear any stale data.
+        setProposedDays(null)
+        setProposedSummary(null)
+      }
     } catch (err) {
       setCalendarError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -1550,6 +1569,8 @@ export default function ScheduleAssessmentDetailPage() {
                 days={calendarDays}
                 summary={calendarSummary}
                 onEditDate={editRowDate}
+                proposedDays={proposedDays}
+                proposedSummary={proposedSummary}
               />
             )}
           </Card>
