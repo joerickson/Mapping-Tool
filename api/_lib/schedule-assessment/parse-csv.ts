@@ -21,24 +21,15 @@ export interface ParseResult {
   errors: ParseError[]
 }
 
-// Headers that always mean "address."
-const ADDRESS_ALIASES = new Set([
-  'address',
-  'property',
-  'property_address',
-  'location',
-  'site',
-])
-// Headers that always mean "crew."
-const CREW_ALIASES = new Set(['crew_name', 'crew', 'team'])
-
-// Single-visit date headers.
-const SINGLE_DATE_ALIASES = new Set([
-  'scheduled_date',
-  'date',
-  'visit_date',
-  'service_date',
-])
+// Substrings that, when found in a normalized header, mark it as an
+// address/property column. Permissive to handle real-world spreadsheets
+// ("Building," "Site Name," "Property Address (Street)" etc.).
+const ADDRESS_SUBSTRINGS = ['address', 'property', 'building', 'location', 'site_name', 'site_address']
+// Crew column markers.
+const CREW_SUBSTRINGS = ['crew', 'team', 'tech', 'technician', 'worker']
+// Date column markers (any of these substrings → it's a date column).
+// Combined with visit-index detection below for multi-visit schedules.
+const DATE_SUBSTRINGS = ['date', 'visit', 'scheduled', 'service']
 
 // Multi-visit date column patterns. Each property row may have N
 // separate date columns (first_visit_date, second_visit_date,
@@ -62,23 +53,45 @@ interface HeaderInfo {
 
 function normalizeHeader(h: string): HeaderInfo {
   const raw = h
-  const k = h.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
-  if (ADDRESS_ALIASES.has(k)) return { semantic: 'address', visit_index: null, raw }
-  if (CREW_ALIASES.has(k)) return { semantic: 'crew', visit_index: null, raw }
-  if (SINGLE_DATE_ALIASES.has(k)) return { semantic: 'date', visit_index: null, raw }
-  // Multi-visit pattern: "first_visit_date", "visit_1_date", "1st_visit",
-  // "visit2", "second_date", etc.
-  // Try ordinal-word + date: "first_visit_date" → visit 1
+  // Strip BOM (﻿) which Excel-exported CSVs prepend to the first
+  // header. Also normalize whitespace + punctuation so "Property
+  // Address (Street)" matches "address" via substring contains.
+  const k = h
+    .replace(/^﻿/, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]/g, '')
+  if (!k) return { semantic: null, visit_index: null, raw }
+
+  // Multi-visit ordinal pattern (most specific — must check before
+  // generic date detection since "first_visit_date" contains "date").
   for (const [word, idx] of Object.entries(ORDINAL_WORDS)) {
     if (k.startsWith(word) && (k.includes('visit') || k.includes('date'))) {
       return { semantic: 'date', visit_index: idx, raw }
     }
   }
-  // Try numeric pattern: "visit_1_date", "visit_2", "1st_visit_date",
-  // "date_1", "second_visit_date" already covered above.
+  // Numeric visit pattern: "visit_1", "visit_2_date", "1st_visit_date",
+  // "date_1", "service_2".
   const num = k.match(/(?:^|_)(\d+)(?:st|nd|rd|th)?(?:_|$)/)?.[1]
-  if (num && (k.includes('visit') || k.includes('date'))) {
-    return { semantic: 'date', visit_index: parseInt(num, 10), raw }
+  if (num) {
+    const hasDateSubstring = DATE_SUBSTRINGS.some((s) => k.includes(s))
+    if (hasDateSubstring) {
+      return { semantic: 'date', visit_index: parseInt(num, 10), raw }
+    }
+  }
+
+  // Permissive substring matching. Order matters: address/crew checked
+  // before date so a header like "service_address" goes to address
+  // even though it contains "service".
+  if (ADDRESS_SUBSTRINGS.some((s) => k.includes(s))) {
+    return { semantic: 'address', visit_index: null, raw }
+  }
+  if (CREW_SUBSTRINGS.some((s) => k.includes(s))) {
+    return { semantic: 'crew', visit_index: null, raw }
+  }
+  if (DATE_SUBSTRINGS.some((s) => k.includes(s))) {
+    return { semantic: 'date', visit_index: null, raw }
   }
   return { semantic: null, visit_index: null, raw }
 }
@@ -141,14 +154,23 @@ export function parseScheduleCsv(csv: string): ParseResult {
   })
 
   if (addressCols.length === 0 || orderedDateCols.length === 0) {
+    // Build a per-header diagnostic so the operator can see what we
+    // classified each column as (and why it didn't match).
+    const classified = headers
+      .map(
+        (h) =>
+          `"${h.raw}" → ${h.semantic ?? 'unrecognized'}${h.visit_index ? ` (visit ${h.visit_index})` : ''}`
+      )
+      .join('; ')
     return {
       rows: [],
       errors: [
         {
           line: 1,
           reason:
-            'CSV must include an "address" column and at least one "scheduled_date" / "first_visit_date" / "second_visit_date" column. ' +
-            `Got: ${fields.join(', ')}`,
+            'CSV must include an "address"-like column AND at least one date column ' +
+            '(scheduled_date, first_visit_date, second_visit_date, etc.). ' +
+            `Headers seen: ${classified}.`,
         },
       ],
     }

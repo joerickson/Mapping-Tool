@@ -42,8 +42,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Parse CSV.
   const { rows, errors } = parseScheduleCsv(body.csv)
   if (rows.length === 0) {
+    // Surface the FULL parse-error detail in the response so the UI
+    // can show the operator exactly which column was misclassified.
+    // Roll the diagnostic into the top-level error so a basic toast
+    // shows the headers we saw rather than just "no valid rows."
+    const detail = errors.length > 0 ? `: ${errors[0].reason}` : ''
     return res.status(400).json({
-      error: 'No valid rows parsed.',
+      error: `No valid rows parsed${detail}`,
       parse_errors: errors,
     })
   }
