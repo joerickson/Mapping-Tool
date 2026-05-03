@@ -480,6 +480,72 @@ export default function ScheduleAssessmentDetailPage() {
     }
   }
 
+  // Member clients for combined-client targets. Loaded lazily when
+  // the operator opens "Add to portfolio" on a combined assessment.
+  const [memberClients, setMemberClients] = useState<Array<{ id: string; name: string }>>([])
+  const [addingToPortfolio, setAddingToPortfolio] = useState(false)
+  const [targetClientId, setTargetClientId] = useState<string>('')
+
+  useEffect(() => {
+    if (!clientId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const token = await getToken()
+        const res = await fetch(`/api/v1/clients/${clientId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!res.ok) return
+        const cli = await res.json()
+        if (cancelled) return
+        if (cli.is_combined && Array.isArray(cli.member_client_ids) && cli.member_client_ids.length > 0) {
+          // Pull member names for the dropdown.
+          const all = await fetch(`/api/v1/clients`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }).then((r) => (r.ok ? r.json() : []))
+          const memberSet = new Set(cli.member_client_ids)
+          const filtered = (all as Array<{ id: string; name: string; display_name: string | null }>)
+            .filter((c) => memberSet.has(c.id))
+            .map((c) => ({ id: c.id, name: c.display_name ?? c.name }))
+          setMemberClients(filtered)
+          if (filtered.length > 0) setTargetClientId(filtered[0].id)
+        } else {
+          setTargetClientId(clientId)
+        }
+      } catch {
+        setTargetClientId(clientId ?? '')
+      }
+    })()
+    return () => { cancelled = true }
+  }, [clientId, getToken])
+
+  async function addToPortfolio(rowIds: string[]) {
+    if (!id) return
+    if (!targetClientId) {
+      setError('Pick a target client to receive the new properties.')
+      return
+    }
+    if (rowIds.length === 0) return
+    if (!confirm(`Create ${rowIds.length} new propert${rowIds.length === 1 ? 'y' : 'ies'} + service location${rowIds.length === 1 ? '' : 's'} on the target client?`)) return
+    setAddingToPortfolio(true)
+    setError(null)
+    try {
+      const token = await getToken()
+      const res = await fetch(`/api/v1/schedule-assessments/${id}/add-to-portfolio`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ row_ids: rowIds, client_id: targetClientId }),
+      })
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error ?? `Add failed (${res.status})`)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setAddingToPortfolio(false)
+    }
+  }
+
   async function runGeocodeMatch() {
     if (!id) return
     setGeocoding(true)
@@ -540,7 +606,28 @@ export default function ScheduleAssessmentDetailPage() {
   }, [rows])
 
   const reviewRows = useMemo(
-    () => rows.filter((r) => r.match_status === 'pending' || r.match_status === 'unmatched'),
+    () => rows.filter((r) => r.match_status === 'pending'),
+    [rows]
+  )
+  // Rows that geocoded successfully but no SL was within 500ft —
+  // candidates for "Add to portfolio" since we already have the
+  // formatted address + lat/lng.
+  const notInPortfolioRows = useMemo(
+    () =>
+      rows.filter(
+        (r) =>
+          r.match_status === 'unmatched' &&
+          typeof r.geocoded_lat === 'number' &&
+          typeof r.geocoded_lng === 'number'
+      ),
+    [rows]
+  )
+  // Rows that couldn't be geocoded at all — bad address data.
+  const ungeocodableRows = useMemo(
+    () =>
+      rows.filter(
+        (r) => r.match_status === 'unmatched' && (r.geocoded_lat == null || r.geocoded_lng == null)
+      ),
     [rows]
   )
 
@@ -1084,6 +1171,107 @@ export default function ScheduleAssessmentDetailPage() {
                 Showing 200 of {reviewRows.length} — resolve a batch and refresh.
               </p>
             )}
+          </Card>
+        )}
+
+        {/* Not in portfolio: rows that geocoded fine but no SL was nearby. */}
+        {notInPortfolioRows.length > 0 && (
+          <Card padding="none">
+            <div className="px-4 py-3 border-b border-border space-y-2">
+              <CardTitle>Not in portfolio ({notInPortfolioRows.length})</CardTitle>
+              <p className="text-xs text-fg-muted">
+                Google geocoded these addresses successfully, but no existing
+                service location is within 500ft. These look like real
+                properties not yet in your portfolio. Add them in one click —
+                we'll create the property + service location with the
+                already-resolved coordinates.
+              </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                {memberClients.length > 0 && (
+                  <FormField label="Target client">
+                    <select
+                      value={targetClientId}
+                      onChange={(e) => setTargetClientId(e.target.value)}
+                      className="h-8 rounded-md border border-border bg-surface px-2 text-xs"
+                    >
+                      {memberClients.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </FormField>
+                )}
+                <Button
+                  size="sm"
+                  onClick={() => addToPortfolio(notInPortfolioRows.map((r) => r.id))}
+                  loading={addingToPortfolio}
+                  disabled={!targetClientId}
+                >
+                  Add all {notInPortfolioRows.length} to portfolio
+                </Button>
+              </div>
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Raw address</TableHead>
+                  <TableHead>City / state / zip</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="text-right">Lat / lng</TableHead>
+                  <TableHead />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {notInPortfolioRows.slice(0, 200).map((r) => (
+                  <TableRow key={r.id}>
+                    <TableCell className="text-xs">{r.raw_address}</TableCell>
+                    <TableCell className="text-xs text-fg-muted">
+                      {[r.raw_city, r.raw_state, r.raw_postal_code].filter(Boolean).join(', ') || '—'}
+                    </TableCell>
+                    <TableCell className="text-xs font-tabular">{r.raw_scheduled_date ?? '—'}</TableCell>
+                    <TableCell numeric className="text-xs font-tabular text-fg-muted">
+                      {r.geocoded_lat?.toFixed(4)}, {r.geocoded_lng?.toFixed(4)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          size="sm"
+                          onClick={() => addToPortfolio([r.id])}
+                          loading={addingToPortfolio}
+                          disabled={!targetClientId}
+                        >
+                          Add
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => updateRow(r.id, { match_status: 'skipped' })}
+                        >
+                          Skip
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {notInPortfolioRows.length > 200 && (
+              <p className="px-4 py-2 text-xs text-fg-subtle border-t border-border">
+                Showing 200 of {notInPortfolioRows.length} — resolve a batch and refresh.
+              </p>
+            )}
+          </Card>
+        )}
+
+        {/* Ungeocodable rows — bad address data, can't auto-add. */}
+        {ungeocodableRows.length > 0 && (
+          <Card>
+            <CardTitle>Couldn't geocode ({ungeocodableRows.length})</CardTitle>
+            <p className="text-sm text-fg-muted mt-2">
+              Google couldn't resolve these addresses. Most likely the address,
+              city, or postal-code columns weren't populated correctly in the
+              upload. Skip them or delete the file and re-upload with the
+              right column mapping.
+            </p>
           </Card>
         )}
 
