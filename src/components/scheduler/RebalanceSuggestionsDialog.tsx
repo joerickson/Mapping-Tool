@@ -1,13 +1,16 @@
-// Rebalance suggestions dialog. Three suggestion types:
-//   property_move  — patches template.branch_assignment_overrides
-//   crew_relocate  — patches account_operational_constraints
-//                    crew_count_per_branch_override (-1 origin, +1 target)
-//   crew_reduce    — patches the same override (-1 from branch)
+// Rebalance suggestions dialog. Two suggestion types:
+//   property_move      — patches template.branch_assignment_overrides
+//                        for individual unplaced clusters.
+//   staging_rebalance  — replaces the entire crew_count_per_branch_override
+//                        with the optimal distribution computed from
+//                        actual cycle placements. One apply, one
+//                        regenerate, converged. Replaces the per-crew
+//                        relocate/reduce moves which oscillated.
 //
 // Optional Claude advisor narrative at the top, with a ranked sequence
 // of suggestion IDs to apply in order.
 import { useEffect, useState } from 'react'
-import { ArrowRight, Sparkles, Users, MapPin, Minus } from 'lucide-react'
+import { ArrowRight, Sparkles, Users, MapPin } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -20,7 +23,7 @@ import Button from '../ui/Button'
 import { Badge } from '../ui/Badge'
 import { useAuth } from '../../hooks/useAuth'
 
-type SuggestionType = 'property_move' | 'crew_relocate' | 'crew_reduce'
+type SuggestionType = 'property_move' | 'staging_rebalance'
 
 interface BaseSuggestion {
   id: string
@@ -41,23 +44,14 @@ interface PropertyMoveSuggestion extends BaseSuggestion {
   cluster_label: string
   drive_delta_miles: number
 }
-interface CrewRelocateSuggestion extends BaseSuggestion {
-  type: 'crew_relocate'
-  crew_index: number
-  crew_label: string
-  from_branch_name: string
-  to_branch_name: string
-  idle_days_freed: number
-  expected_absorbed_count: number
+interface StagingRebalanceSuggestion extends BaseSuggestion {
+  type: 'staging_rebalance'
+  current_per_branch: Record<string, number>
+  proposed_per_branch: Record<string, number>
+  delta_summary: Array<{ branch_name: string; from: number; to: number; change: number }>
+  total_crews: number
 }
-interface CrewReduceSuggestion extends BaseSuggestion {
-  type: 'crew_reduce'
-  branch_name: string
-  current_count: number
-  proposed_count: number
-  idle_days_freed: number
-}
-type Suggestion = PropertyMoveSuggestion | CrewRelocateSuggestion | CrewReduceSuggestion
+type Suggestion = PropertyMoveSuggestion | StagingRebalanceSuggestion
 
 interface Advisor {
   recommendation: string
@@ -74,8 +68,7 @@ interface Props {
 
 const TYPE_META: Record<SuggestionType, { label: string; icon: any; color: string }> = {
   property_move: { label: 'Property move', icon: MapPin, color: 'accent' },
-  crew_relocate: { label: 'Restage crew', icon: Users, color: 'warning' },
-  crew_reduce: { label: 'Reduce crews', icon: Minus, color: 'danger' },
+  staging_rebalance: { label: 'Restage crews', icon: Users, color: 'warning' },
 }
 
 export default function RebalanceSuggestionsDialog({
@@ -159,32 +152,15 @@ export default function RebalanceSuggestionsDialog({
           const j = await res.json().catch(() => ({}))
           throw new Error((j as any).error ?? `HTTP ${res.status}`)
         }
-      } else if (s.type === 'crew_relocate') {
+      } else if (s.type === 'staging_rebalance') {
         const res = await fetch(
           `/api/scheduler/cycles/${cycleId}/apply-rebalance`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({
-              type: 'crew_relocate',
-              from_branch_name: s.from_branch_name,
-              to_branch_name: s.to_branch_name,
-            }),
-          }
-        )
-        if (!res.ok) {
-          const j = await res.json().catch(() => ({}))
-          throw new Error((j as any).error ?? `HTTP ${res.status}`)
-        }
-      } else if (s.type === 'crew_reduce') {
-        const res = await fetch(
-          `/api/scheduler/cycles/${cycleId}/apply-rebalance`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({
-              type: 'crew_reduce',
-              branch_name: s.branch_name,
+              type: 'staging_rebalance',
+              proposed_per_branch: s.proposed_per_branch,
             }),
           }
         )
@@ -194,14 +170,6 @@ export default function RebalanceSuggestionsDialog({
         }
       }
       setApplied((prev) => new Set([...prev, s.id]))
-      // After a crew_relocate / crew_reduce, the constraints just
-      // changed but the cycle hasn't been regenerated. Reload suggestions
-      // so any newly-stale ones (e.g. another move out of the same
-      // branch we just emptied) get filtered out and the user sees a
-      // "regenerate to refresh" hint.
-      if (s.type === 'crew_relocate' || s.type === 'crew_reduce') {
-        await loadSuggestions(false)
-      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -252,11 +220,11 @@ export default function RebalanceSuggestionsDialog({
         <DialogHeader>
           <DialogTitle>Rebalance suggestions</DialogTitle>
           <DialogDescription>
-            Three remediation types: <strong>property moves</strong> re-route
-            unplaced clusters; <strong>restage crew</strong> relocates an idle
-            crew's home branch to where the work is; <strong>reduce crews</strong>
-            drops staffing where geography doesn't justify it. Apply any combination,
-            then regenerate the template.
+            <strong>Property moves</strong> re-route unplaced clusters to
+            crews with idle capacity. <strong>Restage crews</strong> rewrites
+            your entire per-branch staging to match where the cycle actually
+            placed work — one apply, one regenerate, converged (no oscillating
+            between branches). Apply, then regenerate the template.
           </DialogDescription>
         </DialogHeader>
 
@@ -432,22 +400,19 @@ function SuggestionVisual({ s }: { s: Suggestion }) {
       </div>
     )
   }
-  if (s.type === 'crew_relocate') {
-    return (
-      <div className="flex items-center gap-1 text-xs text-fg-muted">
-        <Badge variant="outline" className="text-[10px]">{s.crew_label} @ {s.from_branch_name}</Badge>
-        <ArrowRight className="h-3 w-3" />
-        <Badge variant="warning" className="text-[10px]">{s.to_branch_name}</Badge>
-        <span className="ml-1 font-tabular">{s.idle_days_freed}d freed</span>
-      </div>
-    )
-  }
+  // staging_rebalance — render the per-branch delta as a chip list.
   return (
-    <div className="flex items-center gap-1 text-xs text-fg-muted">
-      <Badge variant="danger" className="text-[10px]">
-        {s.branch_name}: {s.current_count} → {s.proposed_count}
-      </Badge>
-      <span className="ml-1 font-tabular">~{s.idle_days_freed}d/crew freed</span>
+    <div className="flex flex-wrap items-center gap-1 text-xs text-fg-muted">
+      {s.delta_summary.map((d) => (
+        <Badge
+          key={d.branch_name}
+          variant={d.change > 0 ? 'accent' : d.change < 0 ? 'warning' : 'outline'}
+          className="text-[10px]"
+        >
+          {d.branch_name}: {d.from} → {d.to}
+        </Badge>
+      ))}
+      <span className="ml-1 font-tabular">{s.total_crews} crews total</span>
     </div>
   )
 }

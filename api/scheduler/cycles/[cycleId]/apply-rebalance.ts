@@ -20,10 +20,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
   const cycleId = req.query.cycleId as string
   const body = (req.body ?? {}) as {
-    type?: 'crew_relocate' | 'crew_reduce'
-    from_branch_name?: string
-    to_branch_name?: string
-    branch_name?: string
+    type?: 'staging_rebalance'
+    proposed_per_branch?: Record<string, number>
   }
   if (!body.type) return res.status(400).json({ error: 'type required' })
   const db = createAdminClient()
@@ -57,29 +55,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (n > 0) next[k] = n
   }
 
-  if (body.type === 'crew_relocate') {
-    if (!body.from_branch_name || !body.to_branch_name) {
-      return res.status(400).json({ error: 'from_branch_name + to_branch_name required' })
+  if (body.type === 'staging_rebalance') {
+    if (!body.proposed_per_branch || typeof body.proposed_per_branch !== 'object') {
+      return res.status(400).json({ error: 'proposed_per_branch required' })
     }
-    const fromN = next[body.from_branch_name] ?? 0
-    if (fromN <= 0) {
-      return res
-        .status(400)
-        .json({ error: `Cannot relocate from ${body.from_branch_name}: no crews staged there.` })
+    // Replace the entire override with the proposed map. This is the
+    // global re-staging: not a delta, the whole thing in one shot.
+    const fresh: Record<string, number> = {}
+    for (const [k, v] of Object.entries(body.proposed_per_branch)) {
+      const n = Math.floor(Number(v) || 0)
+      if (n > 0) fresh[k] = n
     }
-    next[body.from_branch_name] = fromN - 1
-    if (next[body.from_branch_name] === 0) delete next[body.from_branch_name]
-    next[body.to_branch_name] = (next[body.to_branch_name] ?? 0) + 1
-  } else if (body.type === 'crew_reduce') {
-    if (!body.branch_name) return res.status(400).json({ error: 'branch_name required' })
-    const cur = next[body.branch_name] ?? 0
-    if (cur <= 0) {
-      return res
-        .status(400)
-        .json({ error: `Cannot reduce ${body.branch_name}: no crews staged there.` })
+    if (Object.keys(fresh).length === 0) {
+      return res.status(400).json({ error: 'proposed_per_branch must have at least one positive entry' })
     }
-    next[body.branch_name] = cur - 1
-    if (next[body.branch_name] === 0) delete next[body.branch_name]
+    // Replace next entirely.
+    for (const k of Object.keys(next)) delete next[k]
+    Object.assign(next, fresh)
   } else {
     return res.status(400).json({ error: 'unsupported type' })
   }
