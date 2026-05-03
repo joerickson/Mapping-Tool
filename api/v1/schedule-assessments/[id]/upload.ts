@@ -25,7 +25,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(err.statusCode ?? 401).json({ error: err.message ?? 'Unauthorized' })
   }
   const assessmentId = req.query.id as string
-  const body = (req.body ?? {}) as { filename?: string; cycle_label?: string; csv?: string }
+  const body = (req.body ?? {}) as {
+    filename?: string
+    cycle_label?: string
+    csv?: string
+    column_mapping?: {
+      address?: string
+      date_columns?: string[]
+      crew?: string | null
+    }
+  }
   if (!body.csv) return res.status(400).json({ error: 'csv required' })
   const filename = (body.filename ?? 'upload.csv').trim() || 'upload.csv'
   const cycleLabel = body.cycle_label ?? null
@@ -39,8 +48,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!assessment) return res.status(404).json({ error: 'Assessment not found' })
   const clientId = (assessment as any).client_id as string
 
-  // Parse CSV.
-  const { rows, errors } = parseScheduleCsv(body.csv)
+  // Parse CSV. Operator may pass an explicit column_mapping to
+  // bypass the heuristic header classifier — the wizard uses this
+  // after the user confirms columns in the preview step.
+  const { rows, errors } = parseScheduleCsv(body.csv, body.column_mapping)
   if (rows.length === 0) {
     // Surface the FULL parse-error detail in the response so the UI
     // can show the operator exactly which column was misclassified.
