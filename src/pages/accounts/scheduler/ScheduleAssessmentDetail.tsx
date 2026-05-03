@@ -167,6 +167,9 @@ export default function ScheduleAssessmentDetailPage() {
   const [diffLoading, setDiffLoading] = useState(false)
   const [showAllDiffRows, setShowAllDiffRows] = useState(false)
   const [showConstraintsList, setShowConstraintsList] = useState(false)
+  const [coachNarrative, setCoachNarrative] = useState<string | null>(null)
+  const [coachLoading, setCoachLoading] = useState(false)
+  const [coachError, setCoachError] = useState<string | null>(null)
   const [diffFilter, setDiffFilter] = useState<DiffStatus | 'all_actionable'>('all_actionable')
   const [detections, setDetections] = useState<DetectedConstraint[]>([])
   const [detecting, setDetecting] = useState(false)
@@ -243,10 +246,37 @@ export default function ScheduleAssessmentDetailPage() {
       const j = await res.json()
       if (!res.ok) throw new Error(j.error ?? `Diff failed (${res.status})`)
       setDiff(j as DiffPayload)
+      // Auto-trigger the coach narrative in parallel so the operator sees
+      // the AI review without a separate click. Cheap to skip on re-runs
+      // since the user can also kick a fresh review with the button.
+      void loadCoach()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setDiffLoading(false)
+    }
+  }
+
+  // Ask the AI coach for a narrative review of the upload. Doesn't
+  // require a baseline_template_id — coach gives schedule-on-its-own
+  // feedback, with optimized-cycle contrast added if available.
+  async function loadCoach() {
+    if (!id) return
+    setCoachLoading(true)
+    setCoachError(null)
+    try {
+      const token = await getToken()
+      const res = await fetch(`/api/v1/schedule-assessments/${id}/coach`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error ?? `Coach failed (${res.status})`)
+      setCoachNarrative(j.narrative as string)
+    } catch (err) {
+      setCoachError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setCoachLoading(false)
     }
   }
 
@@ -1420,26 +1450,66 @@ export default function ScheduleAssessmentDetailPage() {
           </div>
         </Card>
 
-        {/* Step 4: Schedule health summary */}
+        {/* Step 4: Coach narrative — AI-written feedback on the upload */}
+        <Card className="space-y-3">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <CardTitle>Coach review</CardTitle>
+              <p className="text-xs text-fg-muted mt-0.5">
+                AI coaching feedback on the uploaded schedule — what's working,
+                what to consider. Not a verdict against the engine; the engine
+                is one possible plan among many.
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant={coachNarrative ? 'secondary' : 'primary'}
+              onClick={loadCoach}
+              loading={coachLoading}
+            >
+              {coachNarrative ? 'Re-review' : 'Get coaching review'}
+            </Button>
+          </div>
+          {coachError && <p className="text-sm text-danger">{coachError}</p>}
+          {coachNarrative ? (
+            <div className="rounded-md border border-border bg-surface-subtle p-4 text-sm leading-relaxed text-fg whitespace-pre-wrap">
+              {coachNarrative}
+            </div>
+          ) : (
+            !coachLoading && (
+              <p className="text-xs text-fg-subtle italic">
+                Click "Get coaching review" once your matches are resolved
+                (and a baseline template is set, if you want optimized-cycle
+                contrast).
+              </p>
+            )
+          )}
+        </Card>
+
+        {/* Step 4b: Cycle-shape stats — kept for context, not as a verdict.
+            "Already optimal" was misleading (the optimized cycle is on a
+            different date window) and is dropped; we keep the optimized
+            shape numbers so the operator sees what the engine produces. */}
         {diff?.health && (
           <Card className="space-y-3">
             <div className="flex items-baseline justify-between gap-3 flex-wrap">
-              <CardTitle>Schedule health</CardTitle>
+              <CardTitle>Cycle shape</CardTitle>
               <p className="text-xs text-fg-muted">
-                vs cycle {diff.cycle.start_date} → {diff.cycle.end_date}
+                Optimized cycle: {diff.cycle.start_date} → {diff.cycle.end_date}
               </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="rounded-md border border-border bg-surface-subtle p-3">
                 <p className="text-xs text-fg-muted uppercase tracking-wide">
-                  Already optimal
+                  Visits in upload
                 </p>
                 <p className="text-3xl font-semibold text-fg font-tabular mt-1">
-                  {diff.health.match_rate_pct}%
+                  {diff.health.visits_already_optimal +
+                    diff.health.visits_to_move +
+                    diff.health.visits_to_remove}
                 </p>
                 <p className="text-xs text-fg-muted mt-1">
-                  {diff.health.visits_already_optimal} of {diff.health.total_evaluated} visits
-                  match the engine's date.
+                  Matched + scheduled in your upload.
                 </p>
               </div>
               <div className="rounded-md border border-border bg-surface-subtle p-3">
@@ -1450,7 +1520,7 @@ export default function ScheduleAssessmentDetailPage() {
                   {diff.health.optimized_utilization_pct}%
                 </p>
                 <p className="text-xs text-fg-muted mt-1">
-                  {diff.health.optimized_total_hours.toFixed(1)} work hours scheduled across{' '}
+                  {diff.health.optimized_total_hours.toFixed(1)} work hours across{' '}
                   {diff.health.optimized_workday_count} crew-days
                   {diff.health.optimized_idle_days > 0
                     ? ` (${diff.health.optimized_idle_days} idle)`
@@ -1460,59 +1530,17 @@ export default function ScheduleAssessmentDetailPage() {
               </div>
               <div className="rounded-md border border-border bg-surface-subtle p-3">
                 <p className="text-xs text-fg-muted uppercase tracking-wide">
-                  Changes proposed
+                  Visits engine adds
                 </p>
                 <p className="text-3xl font-semibold text-fg font-tabular mt-1">
-                  {diff.health.visits_to_move +
-                    diff.health.visits_to_add +
-                    diff.health.visits_to_remove}
+                  {diff.health.visits_to_add}
                 </p>
                 <p className="text-xs text-fg-muted mt-1">
-                  {diff.health.visits_to_move} move · {diff.health.visits_to_add} add ·{' '}
-                  {diff.health.visits_to_remove} skip
+                  Properties the optimized cycle visits but the upload doesn't
+                  include.
                 </p>
               </div>
             </div>
-          </Card>
-        )}
-
-        {/* Step 4b: Recommendations — actionable, ranked, one-click apply */}
-        {diff?.recommendations && diff.recommendations.length > 0 && (
-          <Card className="space-y-3">
-            <CardTitle>Recommendations</CardTitle>
-            <p className="text-xs text-fg-muted">
-              Each entry batches a group of moves the engine wants to make.
-              "Apply" sets the per-row hybrid choice for every visit in the
-              group; you can still tweak individual rows in the detail table
-              below.
-            </p>
-            <ul className="space-y-2">
-              {diff.recommendations.map((rec) => {
-                const allRowsHaveChoice = rec.affected_keys.every((key) =>
-                  diff.diff.some(
-                    (r) => r.hybrid_key === key && r.hybrid_choice === rec.apply_choice
-                  )
-                )
-                return (
-                  <li
-                    key={rec.id}
-                    className="rounded-md border border-border bg-surface p-3 flex items-start justify-between gap-3"
-                  >
-                    <div className="space-y-1 min-w-0">
-                      <p className="text-sm font-medium text-fg">{rec.title}</p>
-                      <p className="text-xs text-fg-muted">{rec.description}</p>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant={allRowsHaveChoice ? 'secondary' : 'primary'}
-                      onClick={() => applyRecommendation(rec)}
-                    >
-                      {allRowsHaveChoice ? 'Applied' : 'Apply'}
-                    </Button>
-                  </li>
-                )
-              })}
-            </ul>
           </Card>
         )}
 
