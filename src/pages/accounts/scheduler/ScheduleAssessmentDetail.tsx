@@ -181,6 +181,21 @@ export default function ScheduleAssessmentDetailPage() {
   const [calendarError, setCalendarError] = useState<string | null>(null)
   const [proposedDays, setProposedDays] = useState<CalendarDay[] | null>(null)
   const [proposedSummary, setProposedSummary] = useState<CalendarSummary | null>(null)
+  type ImplausibleRow = {
+    row_id: string
+    raw_scheduled_date: string | null
+    address: string | null
+    city: string | null
+    state: string | null
+    postal_code: string | null
+    sqft: number | null
+    crew_name: string | null
+  }
+  const [implausibleRows, setImplausibleRows] = useState<ImplausibleRow[]>([])
+  const [implausibleEditingId, setImplausibleEditingId] = useState<string | null>(null)
+  const [implausibleEditingDate, setImplausibleEditingDate] = useState<string>('')
+  const [implausibleSaving, setImplausibleSaving] = useState(false)
+  const [implausibleError, setImplausibleError] = useState<string | null>(null)
   const [diffFilter, setDiffFilter] = useState<DiffStatus | 'all_actionable'>('all_actionable')
   const [detections, setDetections] = useState<DetectedConstraint[]>([])
   const [detecting, setDetecting] = useState(false)
@@ -292,6 +307,7 @@ export default function ScheduleAssessmentDetailPage() {
       if (!curRes.ok) throw new Error(cur.error ?? `Calendar failed (${curRes.status})`)
       setCalendarDays(cur.days as CalendarDay[])
       setCalendarSummary(cur.summary as CalendarSummary)
+      setImplausibleRows(Array.isArray(cur.implausible_rows) ? cur.implausible_rows : [])
       if (propRes.ok) {
         const prop = await propRes.json()
         setProposedDays(prop.days as CalendarDay[])
@@ -1557,12 +1573,99 @@ export default function ScheduleAssessmentDetailPage() {
               )}
             </div>
             {calendarError && <p className="text-sm text-danger">{calendarError}</p>}
-            {calendarSummary && (calendarSummary.implausible_date_count ?? 0) > 0 && (
-              <p className="text-xs text-warning bg-warning-subtle/30 border border-warning/40 rounded-md px-3 py-2">
-                {calendarSummary.implausible_date_count} row
-                {calendarSummary.implausible_date_count === 1 ? '' : 's'} had an
-                unrealistic year (outside 1900–2200) and {calendarSummary.implausible_date_count === 1 ? 'was' : 'were'} hidden from the calendar. This usually means a non-date column was mapped as a date — re-upload with the correct mapping to recover them.
-              </p>
+            {implausibleRows.length > 0 && (
+              <div className="rounded-md border border-warning/40 bg-warning-subtle/30 p-3 space-y-2">
+                <div>
+                  <p className="text-sm font-medium text-fg">
+                    {implausibleRows.length} row{implausibleRows.length === 1 ? ' has' : 's have'} an unrealistic date (year outside 1900–2200)
+                  </p>
+                  <p className="text-xs text-fg-muted mt-0.5">
+                    Likely a typo or stray value in that row's date cell. Pick the correct date below to fix it; the row will move into the calendar once saved.
+                  </p>
+                </div>
+                <ul className="divide-y divide-warning/20">
+                  {implausibleRows.map((r) => {
+                    const isEditing = implausibleEditingId === r.row_id
+                    const cityState = [r.city, r.state, r.postal_code].filter(Boolean).join(', ')
+                    return (
+                      <li key={r.row_id} className="py-2 flex items-start gap-3 text-xs">
+                        <span className="font-tabular text-fg-muted shrink-0 w-32 pt-0.5">
+                          stored as <span className="text-danger">{r.raw_scheduled_date ?? '—'}</span>
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-fg truncate">{r.address ?? '(no address)'}</p>
+                          {cityState && <p className="text-fg-muted truncate">{cityState}</p>}
+                          {r.crew_name && (
+                            <p className="text-fg-subtle">crew: {r.crew_name}</p>
+                          )}
+                          {r.sqft != null && (
+                            <p className="text-fg-subtle">{r.sqft.toLocaleString()} sqft</p>
+                          )}
+                          {isEditing && (
+                            <div className="mt-1.5 flex items-center gap-2">
+                              <input
+                                type="date"
+                                value={implausibleEditingDate}
+                                onChange={(e) => setImplausibleEditingDate(e.target.value)}
+                                className="h-7 rounded border border-border bg-surface px-2 text-xs"
+                                autoFocus
+                              />
+                              <Button
+                                size="sm"
+                                loading={implausibleSaving}
+                                disabled={!implausibleEditingDate || implausibleSaving}
+                                onClick={async () => {
+                                  setImplausibleError(null)
+                                  setImplausibleSaving(true)
+                                  try {
+                                    await editRowDate(r.row_id, implausibleEditingDate)
+                                    setImplausibleEditingId(null)
+                                  } catch (e) {
+                                    setImplausibleError(
+                                      e instanceof Error ? e.message : String(e)
+                                    )
+                                  } finally {
+                                    setImplausibleSaving(false)
+                                  }
+                                }}
+                              >
+                                Save
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={implausibleSaving}
+                                onClick={() => {
+                                  setImplausibleEditingId(null)
+                                  setImplausibleError(null)
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                              {implausibleError && (
+                                <span className="text-danger">{implausibleError}</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        {!isEditing && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => {
+                              setImplausibleEditingId(r.row_id)
+                              setImplausibleEditingDate('')
+                              setImplausibleError(null)
+                            }}
+                          >
+                            Fix date
+                          </Button>
+                        )}
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
             )}
             {calendarDays && calendarSummary && (
               <ScheduleAssessmentCalendar
