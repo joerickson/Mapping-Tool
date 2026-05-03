@@ -9,17 +9,25 @@ import Button from '../ui/Button'
 import { Textarea } from '../ui/Input'
 import { useAuth } from '../../hooks/useAuth'
 
+interface ToolEvent {
+  tool: string
+  input: Record<string, unknown>
+  result: { ok: boolean; summary: string; data?: unknown }
+}
+
 interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
+  events?: ToolEvent[]
 }
 
 interface Props {
   cycleId: string
   cycleLabel?: string | null
+  onCycleRegenerated?: () => void | Promise<void>
 }
 
-export default function CycleChatDrawer({ cycleId, cycleLabel }: Props) {
+export default function CycleChatDrawer({ cycleId, cycleLabel, onCycleRegenerated }: Props) {
   const { getToken } = useAuth()
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -56,7 +64,15 @@ export default function CycleChatDrawer({ cycleId, cycleLabel }: Props) {
       if (!res.ok) {
         throw new Error((json as any).error ?? `HTTP ${res.status}`)
       }
-      setMessages((prev) => [...prev, { role: 'assistant', content: (json as any).message ?? '' }])
+      const events = ((json as any).events ?? []) as ToolEvent[]
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: (json as any).message ?? '', events },
+      ])
+      // If the agent ran a regenerate, refresh the parent cycle data.
+      if (events.some((e) => e.tool === 'regenerate' && e.result.ok)) {
+        await onCycleRegenerated?.()
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -89,7 +105,7 @@ export default function CycleChatDrawer({ cycleId, cycleLabel }: Props) {
               <div>
                 <h2 className="text-sm font-semibold text-fg">Chat with cycle</h2>
                 <p className="text-[11px] text-fg-muted">
-                  {cycleLabel ?? 'Advisory only — agent suggests, you apply moves in the scheduler.'}
+                  {cycleLabel ?? 'Ask in plain English — the agent can rebalance staging, change crew counts, and regenerate the cycle.'}
                 </p>
               </div>
               <button
@@ -104,14 +120,15 @@ export default function CycleChatDrawer({ cycleId, cycleLabel }: Props) {
             <div ref={listRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
               {messages.length === 0 && (
                 <div className="rounded-md border border-border bg-surface-subtle p-3 text-xs text-fg-muted">
-                  Ask about idle days, over/under-utilized crews, why properties
-                  are unplaced, or what to change to compress the cycle.
+                  Ask in plain English. The agent can ANALYZE the cycle and
+                  also EXECUTE staging changes and regenerate.
                   <ul className="mt-2 space-y-1">
                     {[
-                      'Which crew is most over-utilized?',
+                      'Spread out idle days so they aren\'t all at the end of the cycle',
+                      'Drop to 13 crews and rebalance',
+                      'Move a crew from Lindon to Phoenix',
                       'Why are these properties unplaced?',
                       'What would help reduce the crew end-day spread?',
-                      'Where can I double up properties on the same day?',
                     ].map((q) => (
                       <li key={q}>
                         <button
@@ -127,15 +144,39 @@ export default function CycleChatDrawer({ cycleId, cycleLabel }: Props) {
                 </div>
               )}
               {messages.map((m, i) => (
-                <div
-                  key={i}
-                  className={
-                    m.role === 'user'
-                      ? 'rounded-md bg-accent/10 border border-accent/20 px-3 py-2 text-sm text-fg whitespace-pre-wrap'
-                      : 'rounded-md bg-surface-subtle border border-border px-3 py-2 text-sm text-fg whitespace-pre-wrap'
-                  }
-                >
-                  {m.content}
+                <div key={i} className="space-y-1.5">
+                  {m.events && m.events.length > 0 && (
+                    <ul className="space-y-1">
+                      {m.events.map((ev, j) => (
+                        <li
+                          key={j}
+                          className={
+                            'rounded-md border px-2.5 py-1.5 text-[11px] flex items-start gap-2 ' +
+                            (ev.result.ok
+                              ? 'border-success/30 bg-success-subtle/40 text-fg'
+                              : 'border-danger/30 bg-danger-subtle/40 text-fg')
+                          }
+                          title={JSON.stringify(ev.input)}
+                        >
+                          <span className="font-mono text-fg-muted">
+                            {ev.result.ok ? '✓' : '✕'} {ev.tool}
+                          </span>
+                          <span className="flex-1 text-fg-muted">{ev.result.summary}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {m.content && (
+                    <div
+                      className={
+                        m.role === 'user'
+                          ? 'rounded-md bg-accent/10 border border-accent/20 px-3 py-2 text-sm text-fg whitespace-pre-wrap'
+                          : 'rounded-md bg-surface-subtle border border-border px-3 py-2 text-sm text-fg whitespace-pre-wrap'
+                      }
+                    >
+                      {m.content}
+                    </div>
+                  )}
                 </div>
               ))}
               {sending && (

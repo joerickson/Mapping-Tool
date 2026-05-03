@@ -569,6 +569,7 @@ export default function CycleDetailPage() {
               <CycleChatDrawer
                 cycleId={cycleId!}
                 cycleLabel={cycle.cycle_number ? `Cycle #${cycle.cycle_number}` : null}
+                onCycleRegenerated={load}
               />
               <ViewSwitcher value={view} onChange={setView} />
             </div>
