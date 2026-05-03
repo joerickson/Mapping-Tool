@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { Upload, AlertCircle, CheckCircle2 } from 'lucide-react'
+import * as XLSX from 'xlsx'
 import { useAuth } from '../../../hooks/useAuth'
 import AppShell from '../../../components/layout/AppShell'
 import Button from '../../../components/ui/Button'
@@ -309,6 +310,30 @@ export default function ScheduleAssessmentDetailPage() {
 
   async function handleFileUpload(file: File) {
     if (!id) return
+    setError(null)
+    const lower = file.name.toLowerCase()
+    if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
+      // Parse xlsx in the browser, convert the first sheet to CSV,
+      // and feed the existing CSV pipeline. xlsx is already a
+      // dependency for the upload-review flow elsewhere in the app.
+      try {
+        const buf = await file.arrayBuffer()
+        const wb = XLSX.read(buf, { type: 'array' })
+        const sheetName = wb.SheetNames[0]
+        if (!sheetName) throw new Error('Workbook has no sheets.')
+        const sheet = wb.Sheets[sheetName]
+        // raw: false formats values (dates as strings); we still re-parse
+        // dates server-side for normalization. blankrows: false drops
+        // empty rows the spreadsheet may have at the bottom.
+        const csv = XLSX.utils.sheet_to_csv(sheet, { blankrows: false })
+        setUploadCsv(csv)
+        setUploadName(file.name)
+      } catch (e) {
+        setError(e instanceof Error ? `xlsx parse failed: ${e.message}` : String(e))
+      }
+      return
+    }
+    // CSV: read as text directly.
     const text = await file.text()
     setUploadCsv(text)
     setUploadName(file.name)
@@ -409,12 +434,13 @@ export default function ScheduleAssessmentDetailPage() {
         <Card className="space-y-3">
           <CardTitle>Upload schedule files</CardTitle>
           <p className="text-sm text-fg-muted">
-            CSV with columns <code>address</code>, plus one or more visit-date
-            columns (<code>scheduled_date</code>, or <code>first_visit_date</code> /{' '}
-            <code>second_visit_date</code> / etc. for multi-visit-per-cycle
-            schedules). Optional <code>crew_name</code>. Each non-empty date
-            column emits its own row, so a property with both first + second
-            visit dates becomes two rows automatically.
+            <strong>CSV or Excel (.xlsx / .xls)</strong>. Required: an address-like
+            column (<code>address</code>, <code>property</code>, <code>building</code>,{' '}
+            <code>site</code>, etc.) and at least one date column. Multi-visit
+            schedules can use <code>first_visit_date</code> /{' '}
+            <code>second_visit_date</code> (or <code>visit 1</code> / <code>visit 2</code>);
+            each non-empty cell emits its own row. Optional <code>crew_name</code>.
+            Excel files are parsed in the browser; only the first sheet is read.
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <FormField label="Cycle label (optional)">
@@ -427,7 +453,7 @@ export default function ScheduleAssessmentDetailPage() {
             <FormField label="CSV file">
               <input
                 type="file"
-                accept=".csv,text/csv"
+                accept=".csv,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 onChange={(e) => {
                   const f = e.target.files?.[0]
                   if (f) handleFileUpload(f)
