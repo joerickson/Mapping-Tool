@@ -337,10 +337,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // ---- Coaching narrative ----
+  // Pre-format the small set of dates the coach is allowed to cite.
+  // We hand these to the model verbatim and tell it any other date
+  // string is a hallucination. This is the core anti-hallucination
+  // anchor — beats "please don't make up dates" alone.
+  const fmtFriendly = (s: string | null): string => {
+    if (!s) return '?'
+    const dt = new Date(s + 'T00:00:00Z')
+    if (Number.isNaN(dt.getTime())) return s
+    const dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dt.getUTCDay()]
+    const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][dt.getUTCMonth()]
+    return `${dow}, ${mon} ${dt.getUTCDate()}, ${dt.getUTCFullYear()}`
+  }
+  const allowedDates: string[] = []
+  if (startDate) allowedDates.push(`${startDate} (${fmtFriendly(startDate)}) — schedule start`)
+  if (endDate) allowedDates.push(`${endDate} (${fmtFriendly(endDate)}) — schedule end`)
+  for (const sd of surgeDays) {
+    allowedDates.push(`${sd.date} (${fmtFriendly(sd.date)}) — surge day, ${sd.visits} visits`)
+  }
+  for (const hd of heavyDays.slice(0, 5)) {
+    allowedDates.push(`${hd.date} (${fmtFriendly(hd.date)}) — heavy day, ${hd.visits} visits for ${hd.crew}`)
+  }
+  if (optimized) {
+    allowedDates.push(`${optimized.start_date} (${fmtFriendly(optimized.start_date)}) — optimized cycle start`)
+    allowedDates.push(`${optimized.end_date} (${fmtFriendly(optimized.end_date)}) — optimized cycle end`)
+  }
+
   const systemPrompt = buildSystemPrompt()
-  const userPrompt = `Here are the stats for this client's uploaded schedule${
-    optimized ? ' along with the optimized cycle for contrast' : ''
-  }. Write the coaching narrative described in your instructions.\n\nSCHEDULE STATS:\n${JSON.stringify(stats, null, 2)}`
+  const userPrompt =
+    `Here are the stats for this client's uploaded schedule${
+      optimized ? ' along with the optimized cycle for contrast' : ''
+    }.\n\n` +
+    `AUTHORITATIVE DATE LIST — these are the ONLY dates you may cite in your narrative. Any other date is a hallucination. Quote them with the friendly format shown:\n` +
+    allowedDates.map((d) => `  • ${d}`).join('\n') +
+    `\n\nThe schedule covers ${fmtFriendly(startDate)} through ${fmtFriendly(endDate)}. State this date range in your opening sentence and do NOT contradict it.\n\n` +
+    `SCHEDULE STATS:\n${JSON.stringify(stats, null, 2)}\n\n` +
+    `Write the coaching narrative described in your instructions.`
 
   const anthropic = new Anthropic({ apiKey })
   let narrative = ''
@@ -348,6 +380,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const response = await anthropic.messages.create({
       model: COACH_MODEL,
       max_tokens: MAX_TOKENS,
+      // Lower temperature — coaching is fact-anchored. High temp
+      // encouraged the model to invent date ranges (e.g. claiming a
+      // May–Dec window when the data ran Jan–Dec).
+      temperature: 0.2,
       system: systemPrompt,
       messages: [{ role: 'user', content: userPrompt }],
     })
@@ -357,15 +393,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: `Coach call failed: ${err?.message ?? 'unknown'}` })
   }
 
+  // Post-flight hallucination check — scan the narrative for ISO
+  // dates and call out any that aren't in the allowed list. We don't
+  // strip them automatically (false positives would erode trust);
+  // we surface the warning alongside the narrative so the operator
+  // can decide whether to ignore it or hit "Re-review."
+  const allowedIsoDates = new Set<string>()
+  if (startDate) allowedIsoDates.add(startDate)
+  if (endDate) allowedIsoDates.add(endDate)
+  for (const sd of surgeDays) allowedIsoDates.add(sd.date)
+  for (const hd of heavyDays) allowedIsoDates.add(hd.date)
+  if (optimized) {
+    allowedIsoDates.add(optimized.start_date)
+    allowedIsoDates.add(optimized.end_date)
+  }
+  for (const dv of dailyVolumes) allowedIsoDates.add(dv.date)
+  const isoMatches = Array.from(narrative.matchAll(/\b(\d{4}-\d{2}-\d{2})\b/g)).map((m) => m[1])
+  const hallucinatedIso = isoMatches.filter((d) => !allowedIsoDates.has(d))
+
   return res.status(200).json({
     narrative,
     stats,
+    hallucinated_dates: Array.from(new Set(hallucinatedIso)),
     generated_at: new Date().toISOString(),
   })
 }
 
 function buildSystemPrompt(): string {
   return `You are a scheduling coach for a commercial cleaning operations team. You're reviewing an operator's uploaded schedule like a senior dispatcher mentoring a junior dispatcher — but the dispatcher can't reply, so every point you make has to land on its own.
+
+ANTI-HALLUCINATION — READ FIRST, REREAD BEFORE EACH PARAGRAPH
+- The user prompt contains an "AUTHORITATIVE DATE LIST." These are the ONLY dates you may name. Any other date — relative ("the first week of June") or absolute ("around May 4") — is a hallucination. Refuse to invent.
+- Numbers (visit counts, sqft, hours, percentages, miles) must come directly from the SCHEDULE STATS payload. Do NOT estimate, round to a "nicer" number, or interpolate. If a stat isn't in the payload, don't cite it.
+- The schedule's date range is whatever the user prompt says it is in the "covers X through Y" sentence. State that range in your opening. Never contradict it.
+- If you can't make a coaching point with the supplied data, omit it. Do not fill space with invented specifics.
+- Crew names are only the ones in \`current.crew_summary\`. Don't invent crew names.
+- Properties and addresses are only those that appear in stats. Don't invent buildings.
 
 VOICE
 - Warm, direct, specific. Use "you" and "your schedule." Cite real numbers from the stats.

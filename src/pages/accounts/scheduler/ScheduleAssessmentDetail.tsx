@@ -174,6 +174,7 @@ export default function ScheduleAssessmentDetailPage() {
   const [coachNarrative, setCoachNarrative] = useState<string | null>(null)
   const [coachLoading, setCoachLoading] = useState(false)
   const [coachError, setCoachError] = useState<string | null>(null)
+  const [coachHallucinated, setCoachHallucinated] = useState<string[]>([])
   const [calendarDays, setCalendarDays] = useState<CalendarDay[] | null>(null)
   const [calendarSummary, setCalendarSummary] = useState<CalendarSummary | null>(null)
   const [calendarLoading, setCalendarLoading] = useState(false)
@@ -313,6 +314,7 @@ export default function ScheduleAssessmentDetailPage() {
       const j = await res.json()
       if (!res.ok) throw new Error(j.error ?? `Coach failed (${res.status})`)
       setCoachNarrative(j.narrative as string)
+      setCoachHallucinated(Array.isArray(j.hallucinated_dates) ? j.hallucinated_dates : [])
     } catch (err) {
       setCoachError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -1543,6 +1545,15 @@ export default function ScheduleAssessmentDetailPage() {
             </Button>
           </div>
           {coachError && <p className="text-sm text-danger">{coachError}</p>}
+          {coachHallucinated.length > 0 && (
+            <p className="text-xs text-warning bg-warning-subtle/30 border border-warning/40 rounded-md px-3 py-2">
+              The coach mentioned {coachHallucinated.length} date
+              {coachHallucinated.length === 1 ? '' : 's'} that aren't in
+              your schedule data ({coachHallucinated.join(', ')}). This is a
+              model hallucination — treat the narrative critically and
+              click "Re-review" to regenerate.
+            </p>
+          )}
           {coachNarrative ? (
             <div className="rounded-md border border-border bg-surface-subtle p-4 text-sm leading-relaxed text-fg whitespace-pre-wrap">
               {coachNarrative}
