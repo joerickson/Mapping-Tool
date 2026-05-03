@@ -129,12 +129,21 @@ function normalizeHeader(h: string): HeaderInfo {
   return { semantic: null, visit_index: null, raw }
 }
 
+// Guard against years outside what a real schedule could plausibly
+// hold. Year 1016 sneaking through (e.g. from a stray ISO-shaped
+// string in a non-date column) wrecks the calendar and coach.
+function plausibleYear(y: number): boolean {
+  return Number.isFinite(y) && y >= 1900 && y <= 2200
+}
+
 function parseDate(s: string): string | null {
   const trimmed = s.trim()
   if (!trimmed) return null
   // ISO YYYY-MM-DD.
   const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(trimmed)
   if (iso) {
+    const yNum = Number(iso[1])
+    if (!plausibleYear(yNum)) return null
     const y = iso[1]
     const m = iso[2].padStart(2, '0')
     const d = iso[3].padStart(2, '0')
@@ -145,6 +154,8 @@ function parseDate(s: string): string | null {
   if (us) {
     let y = us[3]
     if (y.length === 2) y = `20${y}` // 2-digit assume current millennium
+    const yNum = Number(y)
+    if (!plausibleYear(yNum)) return null
     const m = us[1].padStart(2, '0')
     const d = us[2].padStart(2, '0')
     return `${y}-${m}-${d}`

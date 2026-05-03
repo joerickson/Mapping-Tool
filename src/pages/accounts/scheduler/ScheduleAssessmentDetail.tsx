@@ -1509,6 +1509,13 @@ export default function ScheduleAssessmentDetailPage() {
               )}
             </div>
             {calendarError && <p className="text-sm text-danger">{calendarError}</p>}
+            {calendarSummary && (calendarSummary.implausible_date_count ?? 0) > 0 && (
+              <p className="text-xs text-warning bg-warning-subtle/30 border border-warning/40 rounded-md px-3 py-2">
+                {calendarSummary.implausible_date_count} row
+                {calendarSummary.implausible_date_count === 1 ? '' : 's'} had an
+                unrealistic year (outside 1900–2200) and {calendarSummary.implausible_date_count === 1 ? 'was' : 'were'} hidden from the calendar. This usually means a non-date column was mapped as a date — re-upload with the correct mapping to recover them.
+              </p>
+            )}
             {calendarDays && calendarSummary && (
               <ScheduleAssessmentCalendar days={calendarDays} summary={calendarSummary} />
             )}
