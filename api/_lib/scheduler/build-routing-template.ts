@@ -140,6 +140,8 @@ export interface TemplateBuildResult {
   crew_assignments: Array<{
     crew_index: number
     crew_label: string
+    home_branch_index: number
+    home_branch_name: string
     cluster_ids: string[]
     total_work_hours: number
     total_drive_hours: number
@@ -1383,6 +1385,8 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
     crew_assignments: crews.map((c) => ({
       crew_index: c.index,
       crew_label: c.label,
+      home_branch_index: c.home_branch_index,
+      home_branch_name: input.branches[c.home_branch_index]?.name ?? `Branch ${c.home_branch_index + 1}`,
       cluster_ids: c.cluster_ids,
       total_work_hours: c.total_work_hours,
       total_drive_hours: c.total_drive_hours,

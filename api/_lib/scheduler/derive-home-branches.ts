@@ -56,17 +56,60 @@ export function deriveHomeBranchIndices(
     }
   }
 
-  // Build the flat array: for each entry, push idx repeated count times.
+  // Residuals when sum(per_branch) < crew_count. Distribute them
+  // PROPORTIONALLY to the existing per-branch weights (largest-
+  // remainder method) instead of dumping every extra at branch 0.
+  // Previously this caused a hidden bug: with override = {Albuquerque:
+  // 1, Lindon: 4, Phoenix: 2} sum=7 and crew_count=14, the engine put
+  // 7 extras at Albuquerque → 8 crews there, then suggestions showed
+  // "Albuquerque Crew 1, 2, 3" when the operator only staged 1.
+  const residual = crewCount - counts.reduce((s, c) => s + c.count, 0)
+  if (residual > 0) {
+    const sumExisting = counts.reduce((s, c) => s + c.count, 0)
+    if (sumExisting > 0) {
+      const fracs = counts.map((c) => ({
+        idx: c.idx,
+        whole: 0,
+        rem: 0,
+      }))
+      let assigned = 0
+      for (let i = 0; i < counts.length; i++) {
+        const want = (counts[i].count / sumExisting) * residual
+        fracs[i].whole = Math.floor(want)
+        fracs[i].rem = want - fracs[i].whole
+        assigned += fracs[i].whole
+      }
+      // Largest-remainder: top up the entries with the biggest
+      // fractional parts first.
+      const order = [...fracs].sort((a, b) => b.rem - a.rem)
+      let r = 0
+      while (assigned < residual && r < order.length) {
+        order[r].whole++
+        assigned++
+        r++
+      }
+      for (let i = 0; i < counts.length; i++) {
+        counts[i].count += fracs[i].whole
+      }
+    }
+    // If still under (no existing weights to scale), round-robin across
+    // branches so we don't all-pile on branch 0.
+    if (counts.reduce((s, c) => s + c.count, 0) < crewCount) {
+      const needed = crewCount - counts.reduce((s, c) => s + c.count, 0)
+      for (let i = 0; i < needed; i++) {
+        const targetIdx = i % branches.length
+        // Find existing entry or add a new one.
+        const existing = counts.find((c) => c.idx === targetIdx)
+        if (existing) existing.count++
+        else counts.push({ idx: targetIdx, count: 1 })
+      }
+    }
+  }
+
+  // Build the flat array.
   const result: number[] = []
   for (const c of counts) {
     for (let j = 0; j < c.count; j++) result.push(c.idx)
   }
-
-  // Residual crews when sum(per_branch) < crew_count: stage at branch
-  // index 0 (operator UI in PR2 will require sum = total to remove this
-  // case). For now, branch 0 is a defensible default — it's typically
-  // the primary branch in operator input order.
-  while (result.length < crewCount) result.push(0)
-
   return result
 }

@@ -130,10 +130,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const cfg = (template.config ?? {}) as Record<string, any>
   const clusterRadius = (cfg.cluster_radius_miles as number) ?? 30
   const crewCount = (template.crew_count as number) ?? 0
+  // Persisted with crew_-prefixed keys. home_branch_index has been
+  // emitted since the audit fix; older templates fall through to the
+  // start_location fallback below.
   const crewAssignments = (template.crew_assignments ?? []) as Array<{
-    index?: number
-    label?: string
+    crew_index?: number
+    crew_label?: string
     home_branch_index?: number
+    home_branch_name?: string
   }>
 
   // crew_index → home branch (template snapshot). Always rebuild the
@@ -146,12 +150,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const branchCounters = new Map<number, number>()
   // Walk in crew-index order so numbering is stable.
   const sortedAssignments = [...crewAssignments].sort((a, b) => {
-    const ai = typeof a.index === 'number' ? a.index : 0
-    const bi = typeof b.index === 'number' ? b.index : 0
+    const ai = typeof a.crew_index === 'number' ? a.crew_index : 0
+    const bi = typeof b.crew_index === 'number' ? b.crew_index : 0
     return ai - bi
   })
   for (const ca of sortedAssignments) {
-    const idx = typeof ca.index === 'number' ? ca.index : null
+    const idx = typeof ca.crew_index === 'number' ? ca.crew_index : null
     const home = typeof ca.home_branch_index === 'number' ? ca.home_branch_index : null
     if (idx == null || home == null) continue
     const b = branches[home]

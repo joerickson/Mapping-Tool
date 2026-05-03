@@ -14,6 +14,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createAdminClient } from '../../../_lib/supabase.js'
 import { authenticateRequest } from '../../../_lib/auth.js'
 import { computeCrewUtilization } from '../../../_lib/scheduler/crew-utilization.js'
+import { haversineMiles } from '../../../_lib/analysis/haversine.js'
 
 interface IdleStreak {
   start_date: string
@@ -74,10 +75,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     .maybeSingle()
   const crewCount = (tpl as any)?.crew_count ?? 1
   const branches = ((tpl as any)?.branches ?? []) as Array<{ name: string; lat: number; lng: number }>
+  // Persisted crew_assignments use the crew_-prefixed keys (the engine
+  // renames index→crew_index / label→crew_label on emit). Read the
+  // prefixed form. home_branch_index has been written since the audit
+  // fix — older templates may not have it; we derive from crew_day_routes'
+  // start_location below as a defensive fallback.
   const crewAssignments = ((tpl as any)?.crew_assignments ?? []) as Array<{
-    index?: number
-    label?: string
+    crew_index?: number
+    crew_label?: string
     home_branch_index?: number
+    home_branch_name?: string
   }>
 
   // Unplaced visits — we use the count to compute "what you'd actually
@@ -91,29 +98,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     .eq('status', 'unplaced')
   const unplacedCount = unplacedCountRaw ?? 0
 
-  // crew_index → home_branch_index (template snapshot, taken at build time).
+  // crew_index → home_branch_index. Prefer the template snapshot;
+  // for legacy templates (pre-audit) the field may be missing — derive
+  // from crew_day_routes start_location matched against branches by
+  // haversine distance.
   const homeByCrewIdx = new Map<number, number>()
   for (const ca of crewAssignments) {
-    const idx = ca.index
+    const idx = ca.crew_index
     if (typeof idx === 'number' && typeof ca.home_branch_index === 'number') {
       homeByCrewIdx.set(idx, ca.home_branch_index)
-    }
-  }
-
-  // Per-branch counter so labels are sequential (Lindon Crew 1, 2, …).
-  // Walk crewAssignments in index order so numbering is stable.
-  const crewLabelByIdx = new Map<number, string>()
-  {
-    const counter = new Map<number, number>()
-    const sorted = [...crewAssignments].sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
-    for (const ca of sorted) {
-      const idx = ca.index
-      const home = ca.home_branch_index
-      if (typeof idx !== 'number' || typeof home !== 'number') continue
-      const branchName = branches[home]?.name ?? `Branch ${home + 1}`
-      const n = (counter.get(home) ?? 0) + 1
-      counter.set(home, n)
-      crewLabelByIdx.set(idx, `${branchName} Crew ${n}`)
     }
   }
 
@@ -122,6 +115,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // We only care about workdays here (between_trips, travel, rest, idle,
   // overnight_continuation, fully_utilized are all workday categories).
   const workdays = days.filter((d) => d.is_workday)
+
+  // Defensive fallback: any crew without a snapshot home_branch_index,
+  // resolve via crew_day_routes start_location → nearest branch by
+  // haversine. Necessary for templates generated before the audit fix.
+  if (homeByCrewIdx.size < crewCount && branches.length > 0) {
+    const { data: cdRows } = await db
+      .from('crew_day_routes')
+      .select('crew_index, start_location')
+      .eq('cycle_instance_id', cycleId)
+      .not('start_location', 'is', null)
+      .limit(crewCount * 5) // a few rows per crew is enough
+    const seen = new Set<number>()
+    for (const r of (cdRows ?? []) as any[]) {
+      if (seen.has(r.crew_index)) continue
+      const sl = r.start_location
+      if (!sl || typeof sl.lat !== 'number' || typeof sl.lng !== 'number') continue
+      let bestIdx = 0
+      let best = Number.POSITIVE_INFINITY
+      for (let j = 0; j < branches.length; j++) {
+        const d = haversineMiles({ lat: sl.lat, lng: sl.lng }, branches[j])
+        if (d < best) { best = d; bestIdx = j }
+      }
+      if (!homeByCrewIdx.has(r.crew_index)) {
+        homeByCrewIdx.set(r.crew_index, bestIdx)
+      }
+      seen.add(r.crew_index)
+    }
+    // Final fallback: any still-unmapped crew → branch 0.
+    for (let i = 0; i < crewCount; i++) {
+      if (!homeByCrewIdx.has(i)) homeByCrewIdx.set(i, 0)
+    }
+  }
+
+  // Build labels from the now-complete homeByCrewIdx. Sequential per
+  // home (Lindon Crew 1, Lindon Crew 2, …) by ascending crew_index for
+  // stable numbering across regenerates.
+  const crewLabelByIdx = new Map<number, string>()
+  {
+    const counter = new Map<number, number>()
+    const indices = Array.from(homeByCrewIdx.keys()).sort((a, b) => a - b)
+    for (const idx of indices) {
+      const home = homeByCrewIdx.get(idx)!
+      const branchName = branches[home]?.name ?? `Branch ${home + 1}`
+      const n = (counter.get(home) ?? 0) + 1
+      counter.set(home, n)
+      crewLabelByIdx.set(idx, `${branchName} Crew ${n}`)
+    }
+  }
 
   // Group by crew index for streak analysis.
   const byCrew = new Map<number, typeof workdays>()
