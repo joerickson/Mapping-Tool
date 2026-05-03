@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom'
 import { Upload, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { useAuth } from '../../../hooks/useAuth'
 import AppShell from '../../../components/layout/AppShell'
@@ -68,6 +68,16 @@ interface TemplateOption {
   status: string
 }
 
+interface DetectedConstraint {
+  id: string
+  detection_type: string
+  scope_type: string
+  scope_ids: string[] | null
+  pattern: Record<string, any>
+  confidence: number
+  status: 'detected' | 'accepted' | 'rejected' | 'edited'
+}
+
 const STATUS_VARIANT: Record<string, 'outline' | 'accent' | 'success' | 'warning' | 'danger'> = {
   auto: 'success',
   manual: 'success',
@@ -93,6 +103,11 @@ export default function ScheduleAssessmentDetailPage() {
   const [diff, setDiff] = useState<DiffPayload | null>(null)
   const [diffLoading, setDiffLoading] = useState(false)
   const [diffFilter, setDiffFilter] = useState<DiffStatus | 'all_actionable'>('all_actionable')
+  const [detections, setDetections] = useState<DetectedConstraint[]>([])
+  const [detecting, setDetecting] = useState(false)
+  const [savingTpl, setSavingTpl] = useState(false)
+  const [saveTplName, setSaveTplName] = useState('')
+  const [savedTplId, setSavedTplId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     if (!id) return
@@ -167,6 +182,81 @@ export default function ScheduleAssessmentDetailPage() {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setDiffLoading(false)
+    }
+  }
+
+  async function loadDetections() {
+    if (!id) return
+    try {
+      const token = await getToken()
+      const res = await fetch(`/api/v1/schedule-assessments/${id}/detect`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        const j = await res.json()
+        setDetections(j.constraints ?? [])
+      }
+    } catch {
+      // non-fatal
+    }
+  }
+
+  useEffect(() => { loadDetections() }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function runDetection() {
+    if (!id) return
+    setDetecting(true)
+    setError(null)
+    try {
+      const token = await getToken()
+      const res = await fetch(`/api/v1/schedule-assessments/${id}/detect`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error ?? `Detection failed (${res.status})`)
+      setDetections(j.constraints ?? [])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setDetecting(false)
+    }
+  }
+
+  async function setDetectionStatus(detId: string, status: 'accepted' | 'rejected') {
+    if (!id) return
+    try {
+      const token = await getToken()
+      await fetch(`/api/v1/schedule-assessments/${id}/detect`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ id: detId, status }),
+      })
+      setDetections((prev) => prev.map((d) => (d.id === detId ? { ...d, status } : d)))
+    } catch {
+      // ignore
+    }
+  }
+
+  async function saveAsTemplate() {
+    if (!id || !saveTplName.trim()) return
+    setSavingTpl(true)
+    setError(null)
+    try {
+      const token = await getToken()
+      const res = await fetch(`/api/v1/schedule-assessments/${id}/save-as-template`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: saveTplName.trim(), regenerate: true }),
+      })
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error ?? `Save failed (${res.status})`)
+      setSavedTplId(j.template_id)
+      await load() // refresh status
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSavingTpl(false)
     }
   }
 
@@ -560,9 +650,135 @@ export default function ScheduleAssessmentDetailPage() {
             />
           </Card>
         )}
+
+        {/* Step 5: Detected constraints */}
+        <Card className="space-y-3">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <CardTitle>Detected constraints</CardTitle>
+            <Button size="sm" variant="secondary" onClick={runDetection} loading={detecting}>
+              {detections.length === 0 ? 'Detect constraints' : 'Re-detect'}
+            </Button>
+          </div>
+          <p className="text-sm text-fg-muted">
+            Patterns the upload reveals — day-of-week avoidance, recurring
+            pairs, crew/branch geographic affinity. Per-property patterns
+            require 2+ files for confidence (a single 6-month or annual
+            cycle has too few samples).
+          </p>
+          {detections.length > 0 ? (
+            <ul className="space-y-2">
+              {detections.map((d) => (
+                <li
+                  key={d.id}
+                  className={
+                    'rounded-md border p-3 text-sm flex items-start justify-between gap-3 ' +
+                    (d.status === 'accepted'
+                      ? 'border-success/40 bg-success-subtle/30'
+                      : d.status === 'rejected'
+                        ? 'border-fg-subtle/30 bg-surface-subtle/40 opacity-60'
+                        : 'border-border bg-surface')
+                  }
+                >
+                  <div className="space-y-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge variant="accent" className="text-[10px]">
+                        {d.detection_type}
+                      </Badge>
+                      <Badge variant="outline" className="text-[10px]">
+                        confidence {Math.round(d.confidence * 100)}%
+                      </Badge>
+                      <Badge variant={d.status === 'accepted' ? 'success' : 'outline'} className="text-[10px]">
+                        {d.status}
+                      </Badge>
+                    </div>
+                    <p className="text-fg">{describeDetection(d)}</p>
+                  </div>
+                  {d.status !== 'accepted' && d.status !== 'rejected' && (
+                    <div className="flex gap-1 shrink-0">
+                      <Button size="sm" variant="ghost" onClick={() => setDetectionStatus(d.id, 'rejected')}>
+                        Reject
+                      </Button>
+                      <Button size="sm" onClick={() => setDetectionStatus(d.id, 'accepted')}>
+                        Accept
+                      </Button>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-fg-subtle italic">
+              No detections yet. Click "Detect constraints" once your matches
+              are resolved.
+            </p>
+          )}
+        </Card>
+
+        {/* Step 6: Save as template */}
+        {assessment.baseline_template_id && (
+          <Card className="space-y-3">
+            <CardTitle>Save hybrid as routing template</CardTitle>
+            <p className="text-sm text-fg-muted">
+              Promotes your accumulated diff choices into a new routing template
+              alongside the baseline. Skipped rows are excluded; the new template
+              regenerates immediately so you can see the engine's output for
+              the hybrid set.
+            </p>
+            {savedTplId ? (
+              <div className="rounded-md border border-success/40 bg-success-subtle/30 p-3">
+                <p className="text-sm text-fg">
+                  Saved as a new template.{' '}
+                  <Link
+                    to={`/accounts/${accountId}/clients/${clientId}/scheduler/templates/${savedTplId}`}
+                    className="text-accent hover:underline"
+                  >
+                    Open it →
+                  </Link>
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-end gap-2 flex-wrap">
+                <FormField label="Template name" htmlFor="hybrid-name">
+                  <Input
+                    id="hybrid-name"
+                    value={saveTplName}
+                    onChange={(e) => setSaveTplName(e.target.value)}
+                    placeholder='e.g. "Hybrid 2025 — JLL"'
+                    className="min-w-[20rem]"
+                  />
+                </FormField>
+                <Button
+                  onClick={saveAsTemplate}
+                  loading={savingTpl}
+                  disabled={!saveTplName.trim()}
+                >
+                  Save & regenerate
+                </Button>
+              </div>
+            )}
+          </Card>
+        )}
       </div>
     </AppShell>
   )
+}
+
+function describeDetection(d: DetectedConstraint): string {
+  const p = d.pattern || {}
+  switch (d.detection_type) {
+    case 'dow_avoidance':
+      return `Schedule never uses ${p.day_of_week_name ?? 'this DOW'} (${p.sample_size ?? '?'} total visits sampled).`
+    case 'workday_cap':
+      return `Observed max ${p.observed_max ?? '?'} buildings/crew/day (95th percentile ${p.p95 ?? '?'}, sample ${p.sample_size ?? '?'}).`
+    case 'crew_branch_affinity':
+      return `${p.crew_name ?? 'Crew'} clusters within ${p.mean_spread_miles ?? '?'} mi of (${p.centroid_lat}, ${p.centroid_lng}) — looks home-based here.`
+    case 'pair_recurring':
+      return `Two properties scheduled together ${p.same_date_occurrences ?? '?'} times — possible co-location pairing.`
+    case 'dow_per_property':
+      return `Property always on ${p.day_of_week_name ?? '?'} (${p.occurrences ?? '?'} of ${p.total_visits ?? '?'} visits).`
+    default:
+      return JSON.stringify(p)
+  }
 }
 
 function Stat({ label, value, icon }: { label: string; value: number; icon?: React.ReactNode }) {
