@@ -47,6 +47,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   type RawRow = {
     id: string
     raw_address: string
+    raw_city: string | null
+    raw_state: string | null
+    raw_postal_code: string | null
     raw_scheduled_date: string | null
     raw_crew_name: string | null
     matched_service_location_id: string | null
@@ -57,6 +60,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           serviceable_sqft: number | null
           property: {
             address_line1: string | null
+            city: string | null
+            state: string | null
+            postal_code: string | null
             latitude: number | null
             longitude: number | null
           } | null
@@ -68,8 +74,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data } = await db
       .from('schedule_assessment_rows')
       .select(
-        'id, raw_address, raw_scheduled_date, raw_crew_name, matched_service_location_id, ' +
-          'service_locations(id, display_name, serviceable_sqft, property:properties(address_line1, latitude, longitude))'
+        'id, raw_address, raw_city, raw_state, raw_postal_code, raw_scheduled_date, raw_crew_name, matched_service_location_id, ' +
+          'service_locations(id, display_name, serviceable_sqft, property:properties(address_line1, city, state, postal_code, latitude, longitude))'
       )
       .eq('assessment_id', id)
       .in('match_status', ['auto', 'manual'])
@@ -81,12 +87,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (arr.length < PAGE) break
   }
 
+  // Skip rows whose stored date is implausible (year < 1900 or > 2200).
+  // Older parse-csv versions let strings like "1016-05-22" through and
+  // those rows would lock the calendar onto a medieval month. Count
+  // them so we can surface a warning.
+  const filteredRows: RawRow[] = []
+  let implausibleDateCount = 0
+  for (const r of rows) {
+    const d = r.raw_scheduled_date
+    if (!d) continue
+    const year = Number(d.slice(0, 4))
+    if (!Number.isFinite(year) || year < 1900 || year > 2200) {
+      implausibleDateCount++
+      continue
+    }
+    filteredRows.push(r)
+  }
+
   // Group by date.
   type DayVisit = {
     row_id: string
     sl_id: string | null
     display_name: string | null
     address: string | null
+    city: string | null
+    state: string | null
+    postal_code: string | null
     crew_name: string | null
     sqft: number | null
     lat: number | null
@@ -102,7 +128,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
   const dowNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
   const byDate = new Map<string, Day>()
-  for (const r of rows) {
+  for (const r of filteredRows) {
     const date = r.raw_scheduled_date as string
     let day = byDate.get(date)
     if (!day) {
@@ -124,6 +150,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       sl_id: r.matched_service_location_id,
       display_name: sl?.display_name ?? null,
       address: sl?.property?.address_line1 ?? r.raw_address ?? null,
+      city: sl?.property?.city ?? r.raw_city ?? null,
+      state: sl?.property?.state ?? r.raw_state ?? null,
+      postal_code: sl?.property?.postal_code ?? r.raw_postal_code ?? null,
       crew_name: r.raw_crew_name ?? null,
       sqft,
       lat: sl?.property?.latitude ?? null,
@@ -148,7 +177,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       start_date: days[0]?.date ?? null,
       end_date: days[days.length - 1]?.date ?? null,
       day_count: days.length,
-      visit_count: rows.length,
+      visit_count: filteredRows.length,
+      implausible_date_count: implausibleDateCount,
       total_sqft: totalSqft,
       max_daily_sqft: maxDailySqft,
       max_daily_visits: maxDailyVisits,

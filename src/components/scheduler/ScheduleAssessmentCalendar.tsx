@@ -17,6 +17,9 @@ export interface CalendarVisit {
   sl_id: string | null
   display_name: string | null
   address: string | null
+  city: string | null
+  state: string | null
+  postal_code: string | null
   crew_name: string | null
   sqft: number | null
   lat: number | null
@@ -35,6 +38,7 @@ export interface CalendarSummary {
   end_date: string | null
   day_count: number
   visit_count: number
+  implausible_date_count?: number
   total_sqft: number
   max_daily_sqft: number
   max_daily_visits: number
@@ -216,19 +220,27 @@ export default function ScheduleAssessmentCalendar({ days, summary }: Props) {
             </Button>
           </div>
           <ul className="divide-y divide-border">
-            {expanded.visits.map((v) => (
-              <li key={v.row_id} className="py-1.5 flex items-baseline gap-3 text-xs">
-                <span className="font-tabular text-fg-muted shrink-0 w-20 text-right">
-                  {v.sqft != null ? fmtSqft(v.sqft) + ' sqft' : '—'}
-                </span>
-                <span className="text-fg flex-1 truncate">
-                  {v.address ?? v.display_name ?? '(unnamed)'}
-                </span>
-                {v.crew_name && (
-                  <span className="text-fg-subtle shrink-0">{v.crew_name}</span>
-                )}
-              </li>
-            ))}
+            {expanded.visits.map((v) => {
+              const cityState = [v.city, v.state, v.postal_code].filter(Boolean).join(', ')
+              return (
+                <li key={v.row_id} className="py-2 flex items-start gap-3 text-xs">
+                  <span className="font-tabular text-fg-muted shrink-0 w-24 text-right pt-0.5">
+                    {v.sqft != null ? fmtSqft(v.sqft) + ' sqft' : '—'}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-fg truncate">
+                      {v.address ?? v.display_name ?? '(unnamed)'}
+                    </p>
+                    {cityState && (
+                      <p className="text-fg-muted truncate">{cityState}</p>
+                    )}
+                  </div>
+                  {v.crew_name && (
+                    <span className="text-fg-subtle shrink-0 pt-0.5">{v.crew_name}</span>
+                  )}
+                </li>
+              )
+            })}
           </ul>
         </div>
       )}

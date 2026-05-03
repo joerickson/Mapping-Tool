@@ -96,11 +96,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     if (arr.length < PAGE) break
   }
-  if (rows.length === 0) {
+  // Drop rows whose stored date isn't a plausible year. Old parse-csv
+  // versions let strings like "1016-05-22" through; those would
+  // dominate the min/max envelope.
+  const plausibleRows = rows.filter((r) => {
+    if (!r.raw_scheduled_date) return false
+    const year = Number(r.raw_scheduled_date.slice(0, 4))
+    return Number.isFinite(year) && year >= 1900 && year <= 2200
+  })
+  const implausibleDateCount = rows.length - plausibleRows.length
+  if (plausibleRows.length === 0) {
     return res.status(400).json({
-      error: 'No rows with scheduled dates yet — upload a schedule first.',
+      error: 'No rows with plausible scheduled dates yet — upload a schedule first.',
     })
   }
+  // Use plausible rows everywhere downstream.
+  rows.length = 0
+  rows.push(...plausibleRows)
   // Matched-only subset for per-property stats that need the SL join.
   const matchedRows = rows.filter((r) => r.matched_service_location_id && r.property)
 
