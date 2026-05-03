@@ -20,6 +20,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       matched_service_location_id?: string | null
       match_status?: string
       notes?: string | null
+      // Allow correcting a parse error after the fact — e.g. when the
+      // upload spreadsheet had a wrong year on a handful of rows.
+      raw_scheduled_date?: string | null
     }>
   }
   if (!Array.isArray(body.rows) || body.rows.length === 0) {
@@ -43,6 +46,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       update.match_status = r.match_status
     }
     if ('notes' in r) update.notes = r.notes ?? null
+    if ('raw_scheduled_date' in r) {
+      // Accept null (clear the date) or an ISO YYYY-MM-DD with a
+      // plausible year. Anything else gets dropped silently — the
+      // caller can re-submit with a clean value.
+      const v = r.raw_scheduled_date
+      if (v === null) {
+        update.raw_scheduled_date = null
+      } else if (typeof v === 'string') {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v.trim())
+        if (m) {
+          const y = Number(m[1])
+          if (y >= 1900 && y <= 2200) update.raw_scheduled_date = v.trim()
+        }
+      }
+    }
     if (Object.keys(update).length === 0) continue
     await db
       .from('schedule_assessment_rows')

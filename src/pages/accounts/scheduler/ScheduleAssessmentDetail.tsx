@@ -298,6 +298,33 @@ export default function ScheduleAssessmentDetailPage() {
     }
   }, [id, rows, loadCalendar])
 
+  // Edit a single row's scheduled_date — used to fix wrong-year rows
+  // (spreadsheet errors). Refresh the calendar after so the visit
+  // moves to its corrected day.
+  const editRowDate = useCallback(
+    async (rowId: string, newDate: string) => {
+      if (!id) return
+      const token = await getToken()
+      const res = await fetch(`/api/v1/schedule-assessments/${id}/rows`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          rows: [{ id: rowId, raw_scheduled_date: newDate }],
+        }),
+      })
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        throw new Error((j as any)?.error ?? `Update failed (${res.status})`)
+      }
+      // Mirror the change locally and refresh the calendar.
+      setRows((prev) =>
+        prev.map((r) => (r.id === rowId ? { ...r, raw_scheduled_date: newDate } : r))
+      )
+      await loadCalendar()
+    },
+    [id, getToken, loadCalendar]
+  )
+
   // Ask the AI coach for a narrative review of the upload. Doesn't
   // require a baseline_template_id — coach gives schedule-on-its-own
   // feedback, with optimized-cycle contrast added if available.
@@ -1519,7 +1546,11 @@ export default function ScheduleAssessmentDetailPage() {
               </p>
             )}
             {calendarDays && calendarSummary && (
-              <ScheduleAssessmentCalendar days={calendarDays} summary={calendarSummary} />
+              <ScheduleAssessmentCalendar
+                days={calendarDays}
+                summary={calendarSummary}
+                onEditDate={editRowDate}
+              />
             )}
           </Card>
         ) : null}
