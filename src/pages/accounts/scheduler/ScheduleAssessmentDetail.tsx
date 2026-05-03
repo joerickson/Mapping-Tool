@@ -7,6 +7,10 @@ import { useAuth } from '../../../hooks/useAuth'
 import AppShell from '../../../components/layout/AppShell'
 import Button from '../../../components/ui/Button'
 import { Card, CardTitle } from '../../../components/ui/Card'
+import ScheduleAssessmentCalendar, {
+  type CalendarDay,
+  type CalendarSummary,
+} from '../../../components/scheduler/ScheduleAssessmentCalendar'
 import { Badge } from '../../../components/ui/Badge'
 import { Input, FormField, Textarea } from '../../../components/ui/Input'
 import {
@@ -170,6 +174,10 @@ export default function ScheduleAssessmentDetailPage() {
   const [coachNarrative, setCoachNarrative] = useState<string | null>(null)
   const [coachLoading, setCoachLoading] = useState(false)
   const [coachError, setCoachError] = useState<string | null>(null)
+  const [calendarDays, setCalendarDays] = useState<CalendarDay[] | null>(null)
+  const [calendarSummary, setCalendarSummary] = useState<CalendarSummary | null>(null)
+  const [calendarLoading, setCalendarLoading] = useState(false)
+  const [calendarError, setCalendarError] = useState<string | null>(null)
   const [diffFilter, setDiffFilter] = useState<DiffStatus | 'all_actionable'>('all_actionable')
   const [detections, setDetections] = useState<DetectedConstraint[]>([])
   const [detecting, setDetecting] = useState(false)
@@ -256,6 +264,38 @@ export default function ScheduleAssessmentDetailPage() {
       setDiffLoading(false)
     }
   }
+
+  // Calendar view of the upload — month grid with visit counts and
+  // total sqft per day so the operator can see at a glance whether a
+  // heavy day is one big building or many small ones.
+  const loadCalendar = useCallback(async () => {
+    if (!id) return
+    setCalendarLoading(true)
+    setCalendarError(null)
+    try {
+      const token = await getToken()
+      const res = await fetch(`/api/v1/schedule-assessments/${id}/calendar`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error ?? `Calendar failed (${res.status})`)
+      setCalendarDays(j.days as CalendarDay[])
+      setCalendarSummary(j.summary as CalendarSummary)
+    } catch (err) {
+      setCalendarError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setCalendarLoading(false)
+    }
+  }, [id, getToken])
+
+  // Auto-load the calendar when matched rows are present so the operator
+  // sees the upload visualization without an extra click.
+  useEffect(() => {
+    if (!id) return
+    if (rows.some((r) => r.match_status === 'auto' || r.match_status === 'manual')) {
+      void loadCalendar()
+    }
+  }, [id, rows, loadCalendar])
 
   // Ask the AI coach for a narrative review of the upload. Doesn't
   // require a baseline_template_id — coach gives schedule-on-its-own
@@ -1449,6 +1489,31 @@ export default function ScheduleAssessmentDetailPage() {
             </Button>
           </div>
         </Card>
+
+        {/* Step 4a: Calendar view of the upload — visit counts + sqft
+            per day, so the operator can tell at a glance whether a heavy
+            day is one big building or many small ones. */}
+        {(calendarDays && calendarSummary && calendarSummary.day_count > 0) || calendarLoading ? (
+          <Card className="space-y-3">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <CardTitle>Upload calendar</CardTitle>
+                <p className="text-xs text-fg-muted mt-0.5">
+                  Each cell shows visit count and total square footage for that day.
+                  Color heat reflects sqft relative to your busiest day. Click a
+                  day to see the property list.
+                </p>
+              </div>
+              {calendarLoading && (
+                <p className="text-xs text-fg-muted italic">Loading…</p>
+              )}
+            </div>
+            {calendarError && <p className="text-sm text-danger">{calendarError}</p>}
+            {calendarDays && calendarSummary && (
+              <ScheduleAssessmentCalendar days={calendarDays} summary={calendarSummary} />
+            )}
+          </Card>
+        ) : null}
 
         {/* Step 4: Coach narrative — AI-written feedback on the upload */}
         <Card className="space-y-3">

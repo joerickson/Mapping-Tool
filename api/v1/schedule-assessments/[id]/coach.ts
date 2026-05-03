@@ -58,19 +58,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!assessment) return res.status(404).json({ error: 'Assessment not found' })
   const a = assessment as any
 
-  // Pull all matched rows + property coords.
+  // Pull ALL rows that have a scheduled date. The previous filter
+  // (match_status IN auto/manual) excluded unmatched rows, which made
+  // the coach narrate the wrong date envelope when chunks of the
+  // upload were "not in portfolio" — e.g. an upload starting in
+  // January would appear to start in late May because January's
+  // properties weren't yet in the portfolio.
+  // For per-property stats (crew/geo) we still need the SL join, so
+  // matched rows carry the property; unmatched rows just contribute
+  // their date to the daily-volume math.
   const PAGE = 1000
   const rows: Row[] = []
   for (let p = 0; p < 50; p++) {
     const { data } = await db
       .from('schedule_assessment_rows')
       .select(
-        'raw_scheduled_date, raw_crew_name, matched_service_location_id, ' +
+        'raw_scheduled_date, raw_crew_name, matched_service_location_id, match_status, ' +
           'service_locations(property:properties(latitude, longitude, address_line1))'
       )
       .eq('assessment_id', id)
-      .in('match_status', ['auto', 'manual'])
-      .not('matched_service_location_id', 'is', null)
+      .not('raw_scheduled_date', 'is', null)
       .range(p * PAGE, p * PAGE + PAGE - 1)
     const arr = (data ?? []) as any[]
     for (const r of arr) {
@@ -91,20 +98,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
   if (rows.length === 0) {
     return res.status(400).json({
-      error: 'No matched rows yet — finish geocoding/matching before asking for coaching.',
+      error: 'No rows with scheduled dates yet — upload a schedule first.',
     })
   }
+  // Matched-only subset for per-property stats that need the SL join.
+  const matchedRows = rows.filter((r) => r.matched_service_location_id && r.property)
 
   // ---- Current schedule stats ----
+  // Date envelope + daily volumes use ALL rows with a date (matched
+  // and unmatched). The user uploaded the schedule; the entire date
+  // range is the schedule, regardless of which properties are in the
+  // portfolio yet.
   const dateValues = rows.map((r) => r.raw_scheduled_date).filter((d): d is string => !!d)
   const startDate = dateValues.length > 0 ? dateValues.reduce((a, b) => (a < b ? a : b)) : null
   const endDate = dateValues.length > 0 ? dateValues.reduce((a, b) => (a > b ? a : b)) : null
   const visitCount = rows.length
-  const distinctProperties = new Set(rows.map((r) => r.matched_service_location_id)).size
+  const matchedVisitCount = matchedRows.length
+  const distinctProperties = new Set(
+    matchedRows.map((r) => r.matched_service_location_id).filter(Boolean)
+  ).size
 
-  // Crew breakdown.
+  // Crew breakdown — matched rows only since unmatched rows often
+  // share the same Unassigned default and would skew the per-crew
+  // counts unhelpfully.
   const byCrew = new Map<string, Row[]>()
-  for (const r of rows) {
+  for (const r of matchedRows) {
     const k = (r.raw_crew_name ?? 'Unassigned').trim() || 'Unassigned'
     const arr = byCrew.get(k) ?? []
     arr.push(r)
@@ -117,9 +135,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
     .sort((a, b) => b.visits - a.visits)
 
-  // Workload per (crew, day).
+  // Workload per (crew, day) — matched rows only.
   const dayLoad = new Map<string, number>() // "crew|date" → visit count
-  for (const r of rows) {
+  for (const r of matchedRows) {
     if (!r.raw_scheduled_date) continue
     const k = `${r.raw_crew_name ?? 'Unassigned'}|${r.raw_scheduled_date}`
     dayLoad.set(k, (dayLoad.get(k) ?? 0) + 1)
@@ -181,9 +199,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // Geographic cohesion: for each (crew, day) with multiple visits,
   // compute the avg pairwise distance. Lower → tighter clustering.
+  // Matched rows only (need property coords).
   const clusterMiles: number[] = []
   const cdGroups = new Map<string, Row[]>()
-  for (const r of rows) {
+  for (const r of matchedRows) {
     if (!r.raw_scheduled_date) continue
     const k = `${r.raw_crew_name ?? 'Unassigned'}|${r.raw_scheduled_date}`
     const arr = cdGroups.get(k) ?? []
@@ -274,6 +293,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       cycle_start: startDate,
       cycle_end: endDate,
       visit_count: visitCount,
+      matched_visit_count: matchedVisitCount,
+      unmatched_visit_count: visitCount - matchedVisitCount,
       distinct_properties: distinctProperties,
       workday_count: workdayCount,
       // Crew column status — coach needs to know if it should infer
