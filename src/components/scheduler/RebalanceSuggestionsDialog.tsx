@@ -215,9 +215,24 @@ export default function RebalanceSuggestionsDialog({
       advisor?.ranked_actions
         ?.map((id) => suggestions.find((s) => s.id === id))
         .filter((s): s is Suggestion => !!s) ?? suggestions
-    for (const s of queue) {
-      if (applied.has(s.id)) continue
+    // Snapshot up front. apply() may refetch and mutate `suggestions`;
+    // we work off this frozen list so we don't re-apply or skip.
+    const queueSnapshot = queue.slice()
+    let appliedSomething = false
+    for (const s of queueSnapshot) {
+      // Apply takes the suggestion object directly — it doesn't need
+      // to look up the latest `suggestions` array, so refetches between
+      // iterations don't cause issues.
       await apply(s)
+      appliedSomething = true
+    }
+    // After applying everything, push the user toward regenerate
+    // automatically — leaving the dialog in "applied but stale" state
+    // is the loop the operator was complaining about. Without this,
+    // the dialog refetches stale-validated suggestions and shows
+    // "click apply or skip" with no path forward.
+    if (appliedSomething) {
+      await regenerateAndClose()
     }
   }
 
