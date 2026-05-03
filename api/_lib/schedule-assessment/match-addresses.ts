@@ -8,8 +8,12 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-const AUTO_THRESHOLD = 0.85
-const REVIEW_THRESHOLD = 0.55 // below this we don't even suggest
+const AUTO_THRESHOLD = 0.7 // lowered from 0.85 — abbreviated addresses
+                            // ("123 Main St" vs "123 Main Street, Phoenix")
+                            // routinely scored ~0.7 and got dumped into the
+                            // review tray for no good reason.
+const REVIEW_THRESHOLD = 0.45 // below this we don't bother surfacing as a
+                              // candidate — too noisy.
 
 interface Candidate {
   sl_id: string

@@ -9,6 +9,7 @@ export interface ParsedRow {
   raw_address: string
   raw_scheduled_date: string | null // ISO YYYY-MM-DD
   raw_crew_name: string | null
+  raw_location_code: string | null
 }
 
 export interface ParseError {
@@ -32,12 +33,18 @@ export interface ColumnMapping {
   // [first_visit_col, second_visit_col, ...] or [single_date_col].
   date_columns?: string[]
   crew?: string | null
+  // Optional location_code column. When present, the matcher uses an
+  // exact lookup against service_locations.location_code BEFORE
+  // fuzzy address matching — exact-match wins are far more reliable
+  // than Jaccard scoring on abbreviated addresses.
+  location_code?: string | null
 }
 
 export interface ResolvedMapping {
   address: string
   date_columns: string[]
   crew: string | null
+  location_code: string | null
 }
 
 // Substrings that, when found in a normalized header, mark it as an
@@ -183,6 +190,7 @@ export function parseScheduleCsv(csv: string, mapping?: ColumnMapping): ParseRes
   let resolvedAddress: string | null = null
   let resolvedDateCols: string[] = []
   let resolvedCrew: string | null = null
+  let resolvedLocationCode: string | null = null
   if (mapping) {
     if (mapping.address && fields.includes(mapping.address)) {
       resolvedAddress = mapping.address
@@ -192,6 +200,9 @@ export function parseScheduleCsv(csv: string, mapping?: ColumnMapping): ParseRes
     }
     if (mapping.crew && fields.includes(mapping.crew)) {
       resolvedCrew = mapping.crew
+    }
+    if (mapping.location_code && fields.includes(mapping.location_code)) {
+      resolvedLocationCode = mapping.location_code
     }
   }
   if (!resolvedAddress || resolvedDateCols.length === 0) {
@@ -237,8 +248,11 @@ export function parseScheduleCsv(csv: string, mapping?: ColumnMapping): ParseRes
     const row = result.data[i] as Record<string, string>
     const address = addressCols.map((c) => (row[c] ?? '').toString().trim()).find(Boolean) ?? ''
     const crew = crewCols.map((c) => (row[c] ?? '').toString().trim()).find(Boolean) ?? ''
-    if (!address) {
-      errors.push({ line: i + 2, reason: 'missing address' })
+    const locationCode = resolvedLocationCode
+      ? (row[resolvedLocationCode] ?? '').toString().trim()
+      : ''
+    if (!address && !locationCode) {
+      errors.push({ line: i + 2, reason: 'missing address (and no location_code)' })
       continue
     }
     // Emit one ParsedRow per non-empty date column.
@@ -258,6 +272,7 @@ export function parseScheduleCsv(csv: string, mapping?: ColumnMapping): ParseRes
         raw_address: address,
         raw_scheduled_date: parsed,
         raw_crew_name: crew || null,
+        raw_location_code: locationCode || null,
       })
       emittedAny = true
     }
@@ -272,6 +287,7 @@ export function parseScheduleCsv(csv: string, mapping?: ColumnMapping): ParseRes
       address: resolvedAddress,
       date_columns: resolvedDateCols,
       crew: resolvedCrew,
+      location_code: resolvedLocationCode,
     },
   }
 }
@@ -303,6 +319,7 @@ export function previewCsvHeaders(csv: string, sampleRows = 5): {
       address: addressCol,
       date_columns: dateCols,
       crew: crewCol,
+      location_code: null,
     },
   }
 }

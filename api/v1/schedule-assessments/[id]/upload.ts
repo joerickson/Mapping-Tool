@@ -33,6 +33,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       address?: string
       date_columns?: string[]
       crew?: string | null
+      location_code?: string | null
     }
   }
   if (!body.csv) return res.status(400).json({ error: 'csv required' })
@@ -82,7 +83,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // Bulk-insert parsed rows. Chunk to keep payload sizes sane.
   const INSERT_CHUNK = 500
-  const insertedRows: Array<{ id: string; raw_address: string }> = []
+  const insertedRows: Array<{
+    id: string
+    raw_address: string
+    raw_location_code: string | null
+  }> = []
   for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
     const chunk = rows.slice(i, i + INSERT_CHUNK).map((r) => ({
       assessment_id: assessmentId,
@@ -90,44 +95,97 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       raw_address: r.raw_address,
       raw_scheduled_date: r.raw_scheduled_date,
       raw_crew_name: r.raw_crew_name,
+      raw_location_code: r.raw_location_code,
     }))
     const { data: inserted, error: insErr } = await db
       .from('schedule_assessment_rows')
       .insert(chunk)
-      .select('id, raw_address')
+      .select('id, raw_address, raw_location_code')
     if (insErr) {
       return res.status(500).json({ error: `rows insert: ${insErr.message}` })
     }
     if (inserted) insertedRows.push(...(inserted as any[]))
   }
 
-  // Resolve client_ids (combined → members) and run fuzzy matching.
+  // Resolve client_ids (combined → members) for SL lookups.
   const memberIds = await resolveClientIds(db, clientId)
+
+  // Step A — exact location_code matches first (no fuzzy). Build a
+  // code-keyed lookup of this client's SLs.
+  const codeMap = new Map<string, string>()
+  if (insertedRows.some((r) => r.raw_location_code)) {
+    const PAGE = 1000
+    for (let p = 0; p < 50; p++) {
+      const { data } = await db
+        .from('service_locations')
+        .select('id, location_code')
+        .in('client_id', memberIds)
+        .not('location_code', 'is', null)
+        .range(p * PAGE, p * PAGE + PAGE - 1)
+      const arr = data ?? []
+      for (const r of arr as any[]) {
+        if (r.location_code) codeMap.set(String(r.location_code).trim().toLowerCase(), r.id)
+      }
+      if (arr.length < PAGE) break
+    }
+  }
+  const codeMatched = new Map<string, string>() // row_id → sl_id
+  const remainingForFuzzy = insertedRows.filter((r) => {
+    if (!r.raw_location_code) return true
+    const slId = codeMap.get(r.raw_location_code.trim().toLowerCase())
+    if (slId) {
+      codeMatched.set(r.id, slId)
+      return false
+    }
+    return true
+  })
+
+  // Step B — fuzzy match the rest by address.
   const matches = await matchAddresses(
     db,
     memberIds,
-    insertedRows.map((r) => ({ row_id: r.id, raw_address: r.raw_address }))
+    remainingForFuzzy.map((r) => ({ row_id: r.id, raw_address: r.raw_address }))
   )
 
-  // Persist match results. Group updates by status to minimize round-trips.
-  const updates: Array<{ id: string; matched_service_location_id: string | null; match_confidence: number | null; match_status: string }> = []
+  // Persist all results. Each row gets matched_service_location_id +
+  // confidence + status + match_candidates (top 3 SL options for
+  // inline review tray rendering).
+  const updates: Array<{
+    id: string
+    matched_service_location_id: string | null
+    match_confidence: number | null
+    match_status: string
+    match_candidates: any
+  }> = []
+  for (const [rowId, slId] of codeMatched) {
+    updates.push({
+      id: rowId,
+      matched_service_location_id: slId,
+      match_confidence: 1.0,
+      match_status: 'auto',
+      match_candidates: null,
+    })
+  }
   for (const m of matches) {
     updates.push({
       id: m.row_id,
       matched_service_location_id: m.matched_sl_id,
       match_confidence: m.confidence,
-      match_status: m.match_status === 'auto' ? 'auto' : (m.match_status === 'unmatched' ? 'unmatched' : 'pending'),
+      match_status:
+        m.match_status === 'auto'
+          ? 'auto'
+          : m.match_status === 'unmatched'
+            ? 'unmatched'
+            : 'pending',
+      match_candidates: m.candidates,
     })
   }
-  // Batch the row-by-row updates. Supabase doesn't support a single
-  // bulk UPDATE without a CTE; use upsert-by-id which is fine here.
   for (let i = 0; i < updates.length; i += INSERT_CHUNK) {
     const chunk = updates.slice(i, i + INSERT_CHUNK)
     const { error: upErr } = await db
       .from('schedule_assessment_rows')
       .upsert(chunk, { onConflict: 'id' })
     if (upErr) {
-      // Non-fatal — surface but don't fail the whole upload.
       // eslint-disable-next-line no-console
       console.warn(`match update batch failed: ${upErr.message}`)
     }
@@ -143,7 +201,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const summary = {
     rows_parsed: rows.length,
-    auto_matched: matches.filter((m) => m.match_status === 'auto').length,
+    auto_matched: codeMatched.size + matches.filter((m) => m.match_status === 'auto').length,
+    code_matched: codeMatched.size,
     review_needed: matches.filter((m) => m.match_status === 'pending').length,
     unmatched: matches.filter((m) => m.match_status === 'unmatched').length,
     parse_errors: errors,
