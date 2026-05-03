@@ -30,15 +30,23 @@ interface FileRow {
   uploaded_at: string
 }
 
+interface MatchCandidate {
+  sl_id: string
+  address_line1: string
+  score: number
+}
+
 interface AssessmentRowData {
   id: string
   file_id: string
   raw_address: string
   raw_scheduled_date: string | null
   raw_crew_name: string | null
+  raw_location_code: string | null
   matched_service_location_id: string | null
   match_confidence: number | null
   match_status: string
+  match_candidates: MatchCandidate[] | null
   notes: string | null
 }
 
@@ -106,6 +114,7 @@ export default function ScheduleAssessmentDetailPage() {
   const [mapAddress, setMapAddress] = useState<string>('')
   const [mapDates, setMapDates] = useState<string[]>([])
   const [mapCrew, setMapCrew] = useState<string>('')
+  const [mapLocationCode, setMapLocationCode] = useState<string>('')
   const [uploadName, setUploadName] = useState('')
   const [uploadCycleLabel, setUploadCycleLabel] = useState('')
   const [slOptions, setSlOptions] = useState<SLOption[]>([])
@@ -350,6 +359,7 @@ export default function ScheduleAssessmentDetailPage() {
     setMapAddress('')
     setMapDates([])
     setMapCrew('')
+    setMapLocationCode('')
 
     let csv = ''
     const lower = file.name.toLowerCase()
@@ -418,6 +428,7 @@ export default function ScheduleAssessmentDetailPage() {
             address: mapAddress,
             date_columns: mapDates,
             crew: mapCrew || null,
+            location_code: mapLocationCode || null,
           },
         }),
       })
@@ -431,6 +442,7 @@ export default function ScheduleAssessmentDetailPage() {
       setMapAddress('')
       setMapDates([])
       setMapCrew('')
+      setMapLocationCode('')
       await load()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -544,7 +556,7 @@ export default function ScheduleAssessmentDetailPage() {
                 add additional visit-date columns if your spreadsheet has
                 them, then click Upload.
               </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <FormField label="Address column *">
                   <select
                     value={mapAddress}
@@ -552,6 +564,21 @@ export default function ScheduleAssessmentDetailPage() {
                     className="h-9 w-full rounded-md border border-border bg-surface px-2 text-sm"
                   >
                     <option value="">— pick column —</option>
+                    {csvHeaders.map((h) => (
+                      <option key={h} value={h}>{h}</option>
+                    ))}
+                  </select>
+                </FormField>
+                <FormField
+                  label="Location code (optional)"
+                  helper="If your spreadsheet has an SL code that matches the SL row's location_code, it skips fuzzy matching and resolves exactly."
+                >
+                  <select
+                    value={mapLocationCode}
+                    onChange={(e) => setMapLocationCode(e.target.value)}
+                    className="h-9 w-full rounded-md border border-border bg-surface px-2 text-sm"
+                  >
+                    <option value="">— none —</option>
                     {csvHeaders.map((h) => (
                       <option key={h} value={h}>{h}</option>
                     ))}
@@ -634,6 +661,7 @@ export default function ScheduleAssessmentDetailPage() {
                               <span className="ml-1 text-warning">[v{mapDates.indexOf(h) + 1}]</span>
                             )}
                             {h === mapCrew && <span className="ml-1 text-success">[crew]</span>}
+                            {h === mapLocationCode && <span className="ml-1 text-fg-subtle">[code]</span>}
                           </th>
                         ))}
                       </tr>
@@ -739,16 +767,17 @@ export default function ScheduleAssessmentDetailPage() {
         {/* Review tray */}
         {reviewRows.length > 0 && (
           <Card padding="none">
-            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-              <div>
-                <CardTitle>Review unmatched / low-confidence rows</CardTitle>
-                <p className="text-xs text-fg-muted mt-0.5">
-                  Pick the right service location, or skip rows that aren't part of this client's portfolio.
-                </p>
+            <div className="px-4 py-3 border-b border-border">
+              <CardTitle>Review unmatched / low-confidence rows</CardTitle>
+              <p className="text-xs text-fg-muted mt-0.5">
+                Each row's top 3 candidates are pre-loaded from the matcher
+                — pick one or skip. The full SL list (all { (slOptions.length || '...') } locations) is available as a fallback.
+              </p>
+              <div className="mt-2">
+                <Button size="sm" variant="ghost" onClick={loadSlOptions}>
+                  {slOptions.length > 0 ? `Full list loaded (${slOptions.length})` : 'Load full SL list (fallback)'}
+                </Button>
               </div>
-              <Button size="sm" variant="ghost" onClick={loadSlOptions}>
-                Load SL list
-              </Button>
             </div>
             <Table>
               <TableHeader>
@@ -756,22 +785,29 @@ export default function ScheduleAssessmentDetailPage() {
                   <TableHead>Raw address</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Crew</TableHead>
-                  <TableHead className="text-right">Confidence</TableHead>
+                  <TableHead className="text-right">Conf</TableHead>
                   <TableHead>Match</TableHead>
                   <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {reviewRows.slice(0, 200).map((r) => (
-                  <TableRow key={r.id}>
-                    <TableCell className="text-xs">{r.raw_address}</TableCell>
-                    <TableCell className="text-xs font-tabular">{r.raw_scheduled_date ?? '—'}</TableCell>
-                    <TableCell className="text-xs">{r.raw_crew_name ?? '—'}</TableCell>
-                    <TableCell numeric className="text-xs">
-                      {r.match_confidence != null ? `${Math.round(r.match_confidence * 100)}%` : '—'}
-                    </TableCell>
-                    <TableCell>
-                      {slOptions.length > 0 ? (
+                {reviewRows.slice(0, 200).map((r) => {
+                  const candidates = Array.isArray(r.match_candidates) ? r.match_candidates : []
+                  const usingCandidates = candidates.length > 0
+                  return (
+                    <TableRow key={r.id}>
+                      <TableCell className="text-xs">
+                        {r.raw_address}
+                        {r.raw_location_code && (
+                          <span className="ml-1 text-fg-subtle">[code: {r.raw_location_code}]</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-xs font-tabular">{r.raw_scheduled_date ?? '—'}</TableCell>
+                      <TableCell className="text-xs">{r.raw_crew_name ?? '—'}</TableCell>
+                      <TableCell numeric className="text-xs">
+                        {r.match_confidence != null ? `${Math.round(r.match_confidence * 100)}%` : '—'}
+                      </TableCell>
+                      <TableCell>
                         <select
                           value={r.matched_service_location_id ?? ''}
                           onChange={(e) =>
@@ -783,29 +819,38 @@ export default function ScheduleAssessmentDetailPage() {
                           className="h-8 max-w-xs rounded-md border border-border bg-surface px-2 text-xs"
                         >
                           <option value="">— pick SL —</option>
-                          {slOptions.map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.display_name ?? s.property?.address_line1 ?? s.id.slice(0, 8)}
-                            </option>
-                          ))}
+                          {usingCandidates && (
+                            <optgroup label="Suggested matches">
+                              {candidates.map((c) => (
+                                <option key={c.sl_id} value={c.sl_id}>
+                                  {c.address_line1} ({Math.round(c.score * 100)}%)
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                          {slOptions.length > 0 && (
+                            <optgroup label="All service locations">
+                              {slOptions.map((s) => (
+                                <option key={s.id} value={s.id}>
+                                  {s.display_name ?? s.property?.address_line1 ?? s.id.slice(0, 8)}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
                         </select>
-                      ) : (
-                        <span className="text-xs text-fg-subtle">click "Load SL list"</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() =>
-                          updateRow(r.id, { match_status: 'skipped' })
-                        }
-                      >
-                        Skip
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => updateRow(r.id, { match_status: 'skipped' })}
+                        >
+                          Skip
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
               </TableBody>
             </Table>
             {reviewRows.length > 200 && (
