@@ -37,7 +37,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     for (let p = 0; p < 50; p++) {
       const { data: batch } = await db
         .from('schedule_assessment_rows')
-        .select('id, file_id, raw_address, raw_scheduled_date, raw_crew_name, raw_location_code, matched_service_location_id, match_confidence, match_status, match_candidates, notes')
+        .select('id, file_id, raw_address, raw_scheduled_date, raw_crew_name, raw_location_code, raw_city, raw_state, raw_postal_code, geocoded_lat, geocoded_lng, geocoded_status, matched_service_location_id, match_confidence, match_distance_feet, match_status, match_candidates, notes')
         .eq('assessment_id', id)
         .order('created_at', { ascending: true })
         .range(p * PAGE, p * PAGE + PAGE - 1)
