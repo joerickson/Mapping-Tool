@@ -15,6 +15,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createAdminClient } from '../../../_lib/supabase.js'
 import { authenticateRequest } from '../../../_lib/auth.js'
+import { computeCrewUtilization } from '../../../_lib/scheduler/crew-utilization.js'
 
 type DiffStatus = 'only_current' | 'only_optimized' | 'moved_date' | 'matched_same'
 
@@ -26,8 +27,25 @@ interface DiffRow {
   current_crew: string | null
   optimized_date: string | null
   optimized_crew: string | null
+  // Hybrid key the user's per-row choice is stored under (sl_id|idx).
+  // Surfacing it lets the frontend's recommendation buttons patch
+  // multiple rows in one PATCH without re-deriving the key.
+  hybrid_key?: string
   // Per-row hybrid override choice (set by the user via the wizard).
   hybrid_choice?: 'current' | 'optimized' | 'skip' | null
+}
+
+type RecommendationKind = 'move_date' | 'add_visits' | 'remove_visits'
+interface Recommendation {
+  id: string
+  kind: RecommendationKind
+  title: string
+  description: string
+  visit_count: number
+  // hybrid keys to patch when the user accepts this recommendation.
+  affected_keys: string[]
+  // What hybrid_choice to set on the affected rows.
+  apply_choice: 'current' | 'optimized' | 'skip'
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -172,6 +190,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           current_crew: null,
           optimized_date: o.date,
           optimized_crew: o.crew,
+          hybrid_key: hybridKey,
           hybrid_choice: choice,
         })
       } else if (c && !o) {
@@ -183,6 +202,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           current_crew: c.raw_crew_name,
           optimized_date: null,
           optimized_crew: null,
+          hybrid_key: hybridKey,
           hybrid_choice: choice,
         })
       } else if (c && o) {
@@ -195,6 +215,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           current_crew: c.raw_crew_name,
           optimized_date: o.date,
           optimized_crew: o.crew,
+          hybrid_key: hybridKey,
           hybrid_choice: choice,
         })
       }
@@ -209,6 +230,104 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     matched_same: diff.filter((d) => d.status === 'matched_same').length,
   }
 
+  // Schedule health summary — three numbers the operator should see
+  // before any row-level data: how aligned is the current schedule
+  // already, and what does the optimized cycle look like overall.
+  const totalEvaluated = counts.only_current + counts.only_optimized + counts.moved_date + counts.matched_same
+  const matchRatePct = totalEvaluated > 0 ? Math.round((counts.matched_same / totalEvaluated) * 100) : 0
+
+  let optimizedTotalHours = 0
+  let optimizedUtilizationPct = 0
+  let optimizedIdleDays = 0
+  let optimizedWorkdayCount = 0
+  try {
+    const utilDays = await computeCrewUtilization(db, cycleId)
+    let usedDays = 0
+    for (const d of utilDays) {
+      optimizedTotalHours += d.work_hours_scheduled
+      if (d.state.kind === 'idle') optimizedIdleDays++
+      if (d.utilization_pct > 0) usedDays++
+    }
+    optimizedWorkdayCount = utilDays.length
+    optimizedUtilizationPct =
+      optimizedWorkdayCount > 0 ? Math.round((usedDays / optimizedWorkdayCount) * 100) : 0
+  } catch {
+    // Util compute is best-effort — diff still loads if it fails.
+  }
+
+  const health = {
+    match_rate_pct: matchRatePct,
+    visits_already_optimal: counts.matched_same,
+    visits_to_move: counts.moved_date,
+    visits_to_add: counts.only_optimized,
+    visits_to_remove: counts.only_current,
+    total_evaluated: totalEvaluated,
+    optimized_total_hours: Math.round(optimizedTotalHours * 10) / 10,
+    optimized_utilization_pct: optimizedUtilizationPct,
+    optimized_idle_days: optimizedIdleDays,
+    optimized_workday_count: optimizedWorkdayCount,
+  }
+
+  // Recommendations — the actionable summary. Group date moves by
+  // (from_date → to_date) so "move 6 visits from Mon → Thu" reads as
+  // one operation, then add catch-all entries for adds/removes.
+  const recommendations: Recommendation[] = []
+  const moveGroups = new Map<string, DiffRow[]>()
+  for (const d of diff) {
+    if (d.status !== 'moved_date') continue
+    const k = `${d.current_date ?? '?'}→${d.optimized_date ?? '?'}`
+    const arr = moveGroups.get(k) ?? []
+    arr.push(d)
+    moveGroups.set(k, arr)
+  }
+  const fmtDate = (s: string | null) => {
+    if (!s) return '?'
+    const dt = new Date(s + 'T00:00:00Z')
+    if (Number.isNaN(dt.getTime())) return s
+    const dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dt.getUTCDay()]
+    const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][dt.getUTCMonth()]
+    return `${dow} ${mon} ${dt.getUTCDate()}`
+  }
+  const sortedMoveGroups = Array.from(moveGroups.entries()).sort(
+    (a, b) => b[1].length - a[1].length
+  )
+  for (const [key, rows] of sortedMoveGroups) {
+    const [from, to] = key.split('→')
+    recommendations.push({
+      id: `move_${key}`,
+      kind: 'move_date',
+      title: `Move ${rows.length} visit${rows.length === 1 ? '' : 's'} from ${fmtDate(from)} → ${fmtDate(to)}`,
+      description: `The optimized cycle puts these properties on ${fmtDate(to)} instead of ${fmtDate(from)}. Accepting moves them to the engine's date.`,
+      visit_count: rows.length,
+      affected_keys: rows.map((r) => r.hybrid_key!).filter(Boolean),
+      apply_choice: 'optimized',
+    })
+  }
+  if (counts.only_optimized > 0) {
+    const rows = diff.filter((d) => d.status === 'only_optimized')
+    recommendations.push({
+      id: 'add_visits',
+      kind: 'add_visits',
+      title: `Add ${rows.length} visit${rows.length === 1 ? '' : 's'} the engine schedules but the upload skips`,
+      description: `These properties appear in the optimized cycle but not in the uploaded schedule. Accepting adds them to the hybrid template.`,
+      visit_count: rows.length,
+      affected_keys: rows.map((r) => r.hybrid_key!).filter(Boolean),
+      apply_choice: 'optimized',
+    })
+  }
+  if (counts.only_current > 0) {
+    const rows = diff.filter((d) => d.status === 'only_current')
+    recommendations.push({
+      id: 'remove_visits',
+      kind: 'remove_visits',
+      title: `Skip ${rows.length} visit${rows.length === 1 ? '' : 's'} the optimized cycle drops`,
+      description: `These properties are in the upload but the engine's optimized plan doesn't visit them this cycle. Accepting marks them as skipped.`,
+      visit_count: rows.length,
+      affected_keys: rows.map((r) => r.hybrid_key!).filter(Boolean),
+      apply_choice: 'skip',
+    })
+  }
+
   return res.status(200).json({
     cycle: {
       id: cycleId,
@@ -216,6 +335,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       end_date: (cycleRow as any).end_date,
     },
     counts,
+    health,
+    recommendations,
     diff,
   })
 }

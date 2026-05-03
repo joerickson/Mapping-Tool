@@ -73,11 +73,35 @@ interface DiffRow {
   current_crew: string | null
   optimized_date: string | null
   optimized_crew: string | null
+  hybrid_key?: string
   hybrid_choice?: 'current' | 'optimized' | 'skip' | null
+}
+interface DiffHealth {
+  match_rate_pct: number
+  visits_already_optimal: number
+  visits_to_move: number
+  visits_to_add: number
+  visits_to_remove: number
+  total_evaluated: number
+  optimized_total_hours: number
+  optimized_utilization_pct: number
+  optimized_idle_days: number
+  optimized_workday_count: number
+}
+interface DiffRecommendation {
+  id: string
+  kind: 'move_date' | 'add_visits' | 'remove_visits'
+  title: string
+  description: string
+  visit_count: number
+  affected_keys: string[]
+  apply_choice: 'current' | 'optimized' | 'skip'
 }
 interface DiffPayload {
   cycle: { id: string; start_date: string; end_date: string }
   counts: { only_current: number; only_optimized: number; moved_date: number; matched_same: number }
+  health?: DiffHealth
+  recommendations?: DiffRecommendation[]
   diff: DiffRow[]
 }
 interface TemplateOption {
@@ -141,6 +165,8 @@ export default function ScheduleAssessmentDetailPage() {
   const [templates, setTemplates] = useState<TemplateOption[]>([])
   const [diff, setDiff] = useState<DiffPayload | null>(null)
   const [diffLoading, setDiffLoading] = useState(false)
+  const [showAllDiffRows, setShowAllDiffRows] = useState(false)
+  const [showConstraintsList, setShowConstraintsList] = useState(false)
   const [diffFilter, setDiffFilter] = useState<DiffStatus | 'all_actionable'>('all_actionable')
   const [detections, setDetections] = useState<DetectedConstraint[]>([])
   const [detecting, setDetecting] = useState(false)
@@ -296,6 +322,36 @@ export default function ScheduleAssessmentDetailPage() {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setSavingTpl(false)
+    }
+  }
+
+  // Apply a recommendation: PATCH the hybrid endpoint with all of the
+  // recommendation's row keys at once, then optimistically update the
+  // cached diff so the UI reflects the new choices without a refetch.
+  async function applyRecommendation(rec: DiffRecommendation) {
+    if (!id || rec.affected_keys.length === 0) return
+    const choice = rec.apply_choice
+    try {
+      const token = await getToken()
+      await fetch(`/api/v1/schedule-assessments/${id}/hybrid`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          rows: rec.affected_keys.map((key) => ({ key, source: choice })),
+        }),
+      })
+      const keySet = new Set(rec.affected_keys)
+      setDiff((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          diff: prev.diff.map((r) =>
+            r.hybrid_key && keySet.has(r.hybrid_key) ? { ...r, hybrid_choice: choice } : r
+          ),
+        }
+      })
+    } catch {
+      // ignore — user can retry
     }
   }
 
@@ -1364,70 +1420,199 @@ export default function ScheduleAssessmentDetailPage() {
           </div>
         </Card>
 
-        {/* Step 4: Diff dashboard */}
-        {diff && (
-          <Card padding="none" className="overflow-hidden">
-            <div className="px-4 py-3 border-b border-border space-y-2">
-              <CardTitle>Current vs optimized</CardTitle>
+        {/* Step 4: Schedule health summary */}
+        {diff?.health && (
+          <Card className="space-y-3">
+            <div className="flex items-baseline justify-between gap-3 flex-wrap">
+              <CardTitle>Schedule health</CardTitle>
               <p className="text-xs text-fg-muted">
-                Optimized cycle: {diff.cycle.start_date} → {diff.cycle.end_date}
+                vs cycle {diff.cycle.start_date} → {diff.cycle.end_date}
               </p>
-              <div className="flex flex-wrap gap-2">
-                <FilterChip
-                  label={`All actionable (${diff.counts.only_current + diff.counts.only_optimized + diff.counts.moved_date})`}
-                  active={diffFilter === 'all_actionable'}
-                  onClick={() => setDiffFilter('all_actionable')}
-                />
-                <FilterChip
-                  label={`Only on current (${diff.counts.only_current})`}
-                  active={diffFilter === 'only_current'}
-                  onClick={() => setDiffFilter('only_current')}
-                />
-                <FilterChip
-                  label={`Only on optimized (${diff.counts.only_optimized})`}
-                  active={diffFilter === 'only_optimized'}
-                  onClick={() => setDiffFilter('only_optimized')}
-                />
-                <FilterChip
-                  label={`Moved date (${diff.counts.moved_date})`}
-                  active={diffFilter === 'moved_date'}
-                  onClick={() => setDiffFilter('moved_date')}
-                />
-                <FilterChip
-                  label={`Same (${diff.counts.matched_same})`}
-                  active={diffFilter === 'matched_same'}
-                  onClick={() => setDiffFilter('matched_same')}
-                />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="rounded-md border border-border bg-surface-subtle p-3">
+                <p className="text-xs text-fg-muted uppercase tracking-wide">
+                  Already optimal
+                </p>
+                <p className="text-3xl font-semibold text-fg font-tabular mt-1">
+                  {diff.health.match_rate_pct}%
+                </p>
+                <p className="text-xs text-fg-muted mt-1">
+                  {diff.health.visits_already_optimal} of {diff.health.total_evaluated} visits
+                  match the engine's date.
+                </p>
+              </div>
+              <div className="rounded-md border border-border bg-surface-subtle p-3">
+                <p className="text-xs text-fg-muted uppercase tracking-wide">
+                  Optimized utilization
+                </p>
+                <p className="text-3xl font-semibold text-fg font-tabular mt-1">
+                  {diff.health.optimized_utilization_pct}%
+                </p>
+                <p className="text-xs text-fg-muted mt-1">
+                  {diff.health.optimized_total_hours.toFixed(1)} work hours scheduled across{' '}
+                  {diff.health.optimized_workday_count} crew-days
+                  {diff.health.optimized_idle_days > 0
+                    ? ` (${diff.health.optimized_idle_days} idle)`
+                    : ''}
+                  .
+                </p>
+              </div>
+              <div className="rounded-md border border-border bg-surface-subtle p-3">
+                <p className="text-xs text-fg-muted uppercase tracking-wide">
+                  Changes proposed
+                </p>
+                <p className="text-3xl font-semibold text-fg font-tabular mt-1">
+                  {diff.health.visits_to_move +
+                    diff.health.visits_to_add +
+                    diff.health.visits_to_remove}
+                </p>
+                <p className="text-xs text-fg-muted mt-1">
+                  {diff.health.visits_to_move} move · {diff.health.visits_to_add} add ·{' '}
+                  {diff.health.visits_to_remove} skip
+                </p>
               </div>
             </div>
-            <DiffTable
-              rows={(() => {
-                if (diffFilter === 'all_actionable') {
-                  return diff.diff.filter((r) => r.status !== 'matched_same')
-                }
-                return diff.diff.filter((r) => r.status === diffFilter)
-              })()}
-              onChoice={setHybridChoice}
-            />
           </Card>
         )}
 
-        {/* Step 5: Detected constraints */}
-        <Card className="space-y-3">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <CardTitle>Detected constraints</CardTitle>
-            <Button size="sm" variant="secondary" onClick={runDetection} loading={detecting}>
-              {detections.length === 0 ? 'Detect constraints' : 'Re-detect'}
-            </Button>
-          </div>
-          <p className="text-sm text-fg-muted">
-            Patterns the upload reveals — day-of-week avoidance, recurring
-            pairs, crew/branch geographic affinity. Per-property patterns
-            require 2+ files for confidence (a single 6-month or annual
-            cycle has too few samples).
-          </p>
-          {detections.length > 0 ? (
+        {/* Step 4b: Recommendations — actionable, ranked, one-click apply */}
+        {diff?.recommendations && diff.recommendations.length > 0 && (
+          <Card className="space-y-3">
+            <CardTitle>Recommendations</CardTitle>
+            <p className="text-xs text-fg-muted">
+              Each entry batches a group of moves the engine wants to make.
+              "Apply" sets the per-row hybrid choice for every visit in the
+              group; you can still tweak individual rows in the detail table
+              below.
+            </p>
             <ul className="space-y-2">
+              {diff.recommendations.map((rec) => {
+                const allRowsHaveChoice = rec.affected_keys.every((key) =>
+                  diff.diff.some(
+                    (r) => r.hybrid_key === key && r.hybrid_choice === rec.apply_choice
+                  )
+                )
+                return (
+                  <li
+                    key={rec.id}
+                    className="rounded-md border border-border bg-surface p-3 flex items-start justify-between gap-3"
+                  >
+                    <div className="space-y-1 min-w-0">
+                      <p className="text-sm font-medium text-fg">{rec.title}</p>
+                      <p className="text-xs text-fg-muted">{rec.description}</p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant={allRowsHaveChoice ? 'secondary' : 'primary'}
+                      onClick={() => applyRecommendation(rec)}
+                    >
+                      {allRowsHaveChoice ? 'Applied' : 'Apply'}
+                    </Button>
+                  </li>
+                )
+              })}
+            </ul>
+          </Card>
+        )}
+
+        {/* Step 4c: Detail diff table — collapsed by default. */}
+        {diff && (
+          <Card padding="none" className="overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowAllDiffRows((v) => !v)}
+              className="w-full px-4 py-3 border-b border-border flex items-center justify-between text-left hover:bg-surface-subtle transition-colors"
+            >
+              <div>
+                <p className="font-medium text-fg">
+                  {showAllDiffRows ? 'Hide' : 'Show'} per-visit detail (
+                  {diff.counts.only_current +
+                    diff.counts.only_optimized +
+                    diff.counts.moved_date +
+                    diff.counts.matched_same}{' '}
+                  rows)
+                </p>
+                <p className="text-xs text-fg-muted mt-0.5">
+                  Edit individual visit choices instead of applying a whole
+                  recommendation.
+                </p>
+              </div>
+              <span className="text-fg-muted text-sm">{showAllDiffRows ? '▾' : '▸'}</span>
+            </button>
+            {showAllDiffRows && (
+              <>
+                <div className="px-4 py-3 border-b border-border">
+                  <div className="flex flex-wrap gap-2">
+                    <FilterChip
+                      label={`All actionable (${diff.counts.only_current + diff.counts.only_optimized + diff.counts.moved_date})`}
+                      active={diffFilter === 'all_actionable'}
+                      onClick={() => setDiffFilter('all_actionable')}
+                    />
+                    <FilterChip
+                      label={`Only on current (${diff.counts.only_current})`}
+                      active={diffFilter === 'only_current'}
+                      onClick={() => setDiffFilter('only_current')}
+                    />
+                    <FilterChip
+                      label={`Only on optimized (${diff.counts.only_optimized})`}
+                      active={diffFilter === 'only_optimized'}
+                      onClick={() => setDiffFilter('only_optimized')}
+                    />
+                    <FilterChip
+                      label={`Moved date (${diff.counts.moved_date})`}
+                      active={diffFilter === 'moved_date'}
+                      onClick={() => setDiffFilter('moved_date')}
+                    />
+                    <FilterChip
+                      label={`Same (${diff.counts.matched_same})`}
+                      active={diffFilter === 'matched_same'}
+                      onClick={() => setDiffFilter('matched_same')}
+                    />
+                  </div>
+                </div>
+                <DiffTable
+                  rows={(() => {
+                    if (diffFilter === 'all_actionable') {
+                      return diff.diff.filter((r) => r.status !== 'matched_same')
+                    }
+                    return diff.diff.filter((r) => r.status === diffFilter)
+                  })()}
+                  onChoice={setHybridChoice}
+                />
+              </>
+            )}
+          </Card>
+        )}
+
+        {/* Step 5: Detected constraints — collapsed callout */}
+        <Card className="space-y-2">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div>
+              <CardTitle>Detected constraints</CardTitle>
+              <p className="text-xs text-fg-muted mt-0.5">
+                {detections.length > 0
+                  ? `${detections.length} pattern${detections.length === 1 ? '' : 's'} detected — ${detections.filter((d) => d.status === 'accepted').length} accepted, ${detections.filter((d) => d.status === 'rejected').length} rejected, ${detections.filter((d) => d.status === 'detected' || d.status === 'edited').length} pending review.`
+                  : 'Day-of-week patterns, recurring pairs, crew/branch affinity. Click to detect.'}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="secondary" onClick={runDetection} loading={detecting}>
+                {detections.length === 0 ? 'Detect' : 'Re-detect'}
+              </Button>
+              {detections.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setShowConstraintsList((v) => !v)}
+                >
+                  {showConstraintsList ? 'Hide' : 'Review'}
+                </Button>
+              )}
+            </div>
+          </div>
+          {showConstraintsList && detections.length > 0 && (
+            <ul className="space-y-2 pt-1">
               {detections.map((d) => (
                 <li
                   key={d.id}
@@ -1467,11 +1652,6 @@ export default function ScheduleAssessmentDetailPage() {
                 </li>
               ))}
             </ul>
-          ) : (
-            <p className="text-xs text-fg-subtle italic">
-              No detections yet. Click "Detect constraints" once your matches
-              are resolved.
-            </p>
           )}
         </Card>
 
