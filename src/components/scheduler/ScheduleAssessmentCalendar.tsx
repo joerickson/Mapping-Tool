@@ -64,6 +64,10 @@ interface Props {
   // view's data.
   proposedDays?: CalendarDay[] | null
   proposedSummary?: CalendarSummary | null
+  // When the proposed view isn't available, the parent supplies a
+  // human-readable reason so the toggle can render disabled with
+  // an inline explanation instead of silently hiding.
+  proposedDisabledReason?: string | null
 }
 
 const MONTH_NAMES = [
@@ -84,6 +88,7 @@ export default function ScheduleAssessmentCalendar({
   onEditDate,
   proposedDays,
   proposedSummary,
+  proposedDisabledReason,
 }: Props) {
   const [mode, setMode] = useState<ViewMode>('current')
   const [editingRowId, setEditingRowId] = useState<string | null>(null)
@@ -157,49 +162,61 @@ export default function ScheduleAssessmentCalendar({
 
   return (
     <div className="space-y-3">
-      {hasProposed && (
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="inline-flex rounded-md border border-border bg-surface overflow-hidden text-xs">
-            <button
-              type="button"
-              onClick={() => {
-                setMode('current')
-                setExpandedDate(null)
-                setMonthIndex(0)
-              }}
-              className={cn(
-                'px-3 py-1.5 transition-colors',
-                mode === 'current'
-                  ? 'bg-accent/15 text-fg font-medium'
-                  : 'text-fg-muted hover:bg-surface-muted'
-              )}
-            >
-              Current (your upload)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setMode('proposed')
-                setExpandedDate(null)
-                setMonthIndex(0)
-              }}
-              className={cn(
-                'px-3 py-1.5 border-l border-border transition-colors',
-                mode === 'proposed'
-                  ? 'bg-accent/15 text-fg font-medium'
-                  : 'text-fg-muted hover:bg-surface-muted'
-              )}
-            >
-              Proposed (engine)
-            </button>
-          </div>
-          {dragEnabled && (
-            <p className="text-xs text-fg-muted italic">
-              Tip: drag a property between days in Current view to reschedule it.
-            </p>
-          )}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="inline-flex rounded-md border border-border bg-surface overflow-hidden text-xs">
+          <button
+            type="button"
+            onClick={() => {
+              setMode('current')
+              setExpandedDate(null)
+              setMonthIndex(0)
+            }}
+            className={cn(
+              'px-3 py-1.5 transition-colors',
+              mode === 'current'
+                ? 'bg-accent/15 text-fg font-medium'
+                : 'text-fg-muted hover:bg-surface-muted'
+            )}
+          >
+            Current (your upload)
+          </button>
+          <button
+            type="button"
+            disabled={!hasProposed}
+            title={
+              !hasProposed
+                ? proposedDisabledReason ??
+                  'Link a baseline template (and generate a cycle on it) to enable the Proposed view.'
+                : undefined
+            }
+            onClick={() => {
+              if (!hasProposed) return
+              setMode('proposed')
+              setExpandedDate(null)
+              setMonthIndex(0)
+            }}
+            className={cn(
+              'px-3 py-1.5 border-l border-border transition-colors',
+              mode === 'proposed' && hasProposed
+                ? 'bg-accent/15 text-fg font-medium'
+                : 'text-fg-muted hover:bg-surface-muted',
+              !hasProposed && 'opacity-50 cursor-not-allowed hover:bg-transparent'
+            )}
+          >
+            Proposed (engine)
+          </button>
         </div>
-      )}
+        {!hasProposed && proposedDisabledReason && (
+          <p className="text-xs text-fg-muted italic">
+            {proposedDisabledReason}
+          </p>
+        )}
+        {hasProposed && dragEnabled && (
+          <p className="text-xs text-fg-muted italic">
+            Tip: drag a property between days in Current view to reschedule it.
+          </p>
+        )}
+      </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
         <div className="rounded-md border border-border bg-surface-subtle px-3 py-2">
           <p className="text-fg-muted uppercase tracking-wide">Workdays</p>
