@@ -678,6 +678,7 @@ export default function ScheduleAssessmentDetailPage() {
                   <TableHead>Cycle label</TableHead>
                   <TableHead className="text-right">Rows</TableHead>
                   <TableHead>Uploaded</TableHead>
+                  <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -688,6 +689,31 @@ export default function ScheduleAssessmentDetailPage() {
                     <TableCell numeric>{f.row_count.toLocaleString()}</TableCell>
                     <TableCell className="text-xs text-fg-muted">
                       {new Date(f.uploaded_at).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={async () => {
+                          if (!confirm(`Delete "${f.filename}" and all ${f.row_count} parsed rows?`)) return
+                          try {
+                            const token = await getToken()
+                            const res = await fetch(
+                              `/api/v1/schedule-assessments/${id}/files/${f.id}`,
+                              { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }
+                            )
+                            if (!res.ok) {
+                              const j = await res.json().catch(() => ({}))
+                              throw new Error(j.error ?? `Delete failed (${res.status})`)
+                            }
+                            await load()
+                          } catch (err) {
+                            setError(err instanceof Error ? err.message : String(err))
+                          }
+                        }}
+                      >
+                        Delete
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
