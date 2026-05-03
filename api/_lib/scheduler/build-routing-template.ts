@@ -879,8 +879,12 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
     const branchCounters = new Map<number, number>()
     for (const crew of crews) {
       const homeIdx = crew.home_branch_index
-      const branchName =
-        input.branches[homeIdx]?.name ?? `Branch ${homeIdx + 1}`
+      // Use || (not ??) so empty / whitespace-only branch names fall
+      // through to the "Branch N" placeholder. Without this, branches
+      // ingested with empty names produced bare "Crew 1" labels for
+      // crews homed there.
+      const rawName = (input.branches[homeIdx]?.name ?? '').trim()
+      const branchName = rawName || `Branch ${homeIdx + 1}`
       const counter = (branchCounters.get(homeIdx) ?? 0) + 1
       branchCounters.set(homeIdx, counter)
       crew.label = `${branchName} Crew ${counter}`

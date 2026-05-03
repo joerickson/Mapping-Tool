@@ -74,12 +74,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const allClientIds = combinedClientIds && combinedClientIds.length > 1
     ? combinedClientIds
     : [clientId]
-  const crewCount = body.crew_count ?? tpl.crew_count ?? 1
   const customCycleDays = body.custom_cycle_length_days !== undefined
     ? body.custom_cycle_length_days ?? undefined
     : (tpl.is_custom_cycle_length ? tpl.cycle_length_days : undefined)
 
   const constraints = await loadConstraints(db, accountId, clientId)
+
+  // crew_count source-of-truth priority:
+  //   1. body.crew_count if explicitly passed in this regen request
+  //   2. sum(crew_count_per_branch_override) — this reflects the
+  //      operator's most recent staging intent (e.g. via the
+  //      Calibration card's "Apply N crews" button or the staging_
+  //      rebalance suggestion). Without this, regen used tpl.crew_count
+  //      (snapshot at template creation) and ignored later changes.
+  //   3. tpl.crew_count fallback for templates without an override.
+  const overrideMap = (constraints.crew_count_per_branch_override ?? null) as
+    | Record<string, number>
+    | null
+  let overrideSum = 0
+  if (overrideMap) {
+    for (const [k, v] of Object.entries(overrideMap)) {
+      if (k === '__roving') continue
+      const n = Math.floor(Number(v) || 0)
+      if (n > 0) overrideSum += n
+    }
+  }
+  const crewCount =
+    (body.crew_count as number | undefined) ??
+    (overrideSum > 0 ? overrideSum : (tpl.crew_count ?? 1))
   const branches = (tpl.branches ?? []) as Array<{ name: string; lat: number; lng: number }>
   if (branches.length === 0) {
     return res.status(400).json({ error: 'Template has no branches snapshot' })
