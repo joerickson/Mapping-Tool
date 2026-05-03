@@ -24,7 +24,13 @@ import { haversineMiles } from '../../../_lib/analysis/haversine.js'
 export const config = { maxDuration: 60 }
 
 const COACH_MODEL = 'claude-sonnet-4-5'
-const MAX_TOKENS = 1500
+const MAX_TOKENS = 3000
+
+// Typical commercial-cleaning rule of thumb: a crew can comfortably
+// handle ~5-7 small/medium properties in a workday including travel.
+// We use 6 as the midpoint to derive an implied baseline crew count
+// from daily visit volume when the upload doesn't carry crew names.
+const VISITS_PER_CREW_PER_DAY = 6
 
 type Row = {
   raw_scheduled_date: string | null
@@ -127,6 +133,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
   heavyDays.sort((a, b) => b.visits - a.visits)
 
+  // Visits per workday (across all crews). This is the signal the
+  // coach uses to infer how many crews the schedule actually demands
+  // when the upload doesn't carry crew names.
+  const visitsByDate = new Map<string, number>()
+  for (const r of rows) {
+    if (!r.raw_scheduled_date) continue
+    visitsByDate.set(r.raw_scheduled_date, (visitsByDate.get(r.raw_scheduled_date) ?? 0) + 1)
+  }
+  const dailyVolumes = Array.from(visitsByDate.entries())
+    .map(([date, count]) => {
+      const dt = new Date(date + 'T00:00:00Z')
+      const dow = !Number.isNaN(dt.getTime())
+        ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dt.getUTCDay()]
+        : '?'
+      return { date, dow, visits: count }
+    })
+    .sort((a, b) => a.date.localeCompare(b.date))
+  const sortedCounts = dailyVolumes.map((d) => d.visits).sort((a, b) => a - b)
+  const median = sortedCounts.length > 0 ? sortedCounts[Math.floor(sortedCounts.length / 2)] : 0
+  const p75 =
+    sortedCounts.length > 0 ? sortedCounts[Math.floor(sortedCounts.length * 0.75)] : 0
+  const p90 =
+    sortedCounts.length > 0 ? sortedCounts[Math.floor(sortedCounts.length * 0.9)] : 0
+  const peak = sortedCounts.length > 0 ? sortedCounts[sortedCounts.length - 1] : 0
+  // Implied crew counts at typical and surge volume.
+  const baselineCrews = Math.max(1, Math.round(median / VISITS_PER_CREW_PER_DAY))
+  const surgeCrews = Math.max(1, Math.ceil(peak / VISITS_PER_CREW_PER_DAY))
+  // Surge days = days where volume materially exceeds baseline crew capacity.
+  const baselineCapacity = baselineCrews * VISITS_PER_CREW_PER_DAY
+  const surgeDays = dailyVolumes
+    .filter((d) => d.visits > baselineCapacity)
+    .map((d) => ({
+      ...d,
+      extra_crews_needed: Math.ceil((d.visits - baselineCapacity) / VISITS_PER_CREW_PER_DAY),
+    }))
+    .sort((a, b) => b.visits - a.visits)
+    .slice(0, 15)
+
   // Day-of-week distribution.
   const dowCounts = [0, 0, 0, 0, 0, 0, 0]
   for (const d of dateValues) {
@@ -214,6 +258,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 
+  // Detect whether crew names were uploaded at all. If every row's
+  // "crew" is "Unassigned" / blank, the upload doesn't carry crew
+  // assignments — the coach must NOT conclude that crews aren't
+  // really assigned in the field.
+  const realCrewNames = Array.from(byCrew.keys()).filter(
+    (k) => k && k.toLowerCase() !== 'unassigned'
+  )
+  const crewNamesUploaded = realCrewNames.length > 0
+  const workdayCount = dailyVolumes.length
+
   const stats = {
     current: {
       assessment_name: a.name,
@@ -221,11 +275,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       cycle_end: endDate,
       visit_count: visitCount,
       distinct_properties: distinctProperties,
-      crew_count: byCrew.size,
-      crew_summary: crewSummary.slice(0, 12),
+      workday_count: workdayCount,
+      // Crew column status — coach needs to know if it should infer
+      // crew count from volume vs trust the column directly.
+      crew_names_uploaded: crewNamesUploaded,
+      crew_count_in_upload: crewNamesUploaded ? realCrewNames.length : null,
+      crew_summary: crewNamesUploaded ? crewSummary.slice(0, 12) : null,
+      // Daily volume — the primary signal for "how many crews does
+      // this schedule actually demand."
+      daily_volume_stats: {
+        median_visits_per_workday: median,
+        p75_visits_per_workday: p75,
+        p90_visits_per_workday: p90,
+        peak_visits_per_workday: peak,
+        visits_per_crew_per_day_assumption: VISITS_PER_CREW_PER_DAY,
+        implied_baseline_crews: baselineCrews,
+        implied_surge_crews: surgeCrews,
+      },
+      // Sample of daily volumes (cap at 60 to keep prompt size sane).
+      daily_volumes_sample: dailyVolumes.slice(0, 60),
+      surge_days: surgeDays,
       heavy_days: heavyDays.slice(0, 10),
       dow_distribution: dowNames.map((name, i) => ({ day: name, visits: dowCounts[i] })),
-      avg_cluster_miles_per_route: avgClusterMiles != null ? Math.round(avgClusterMiles * 10) / 10 : null,
+      avg_cluster_miles_per_route:
+        avgClusterMiles != null ? Math.round(avgClusterMiles * 10) / 10 : null,
     },
     optimized,
   }
@@ -259,24 +332,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 function buildSystemPrompt(): string {
-  return `You are a scheduling coach for a commercial cleaning operations team. Your job is to read the operator's uploaded schedule and give them coaching feedback — like a senior dispatcher reviewing a junior dispatcher's plan.
+  return `You are a scheduling coach for a commercial cleaning operations team. You're reviewing an operator's uploaded schedule like a senior dispatcher mentoring a junior dispatcher — but the dispatcher can't reply, so every point you make has to land on its own.
 
 VOICE
 - Warm, direct, specific. Use "you" and "your schedule." Cite real numbers from the stats.
-- Coach, don't grade. The schedule isn't being scored against the engine; the engine is one possible plan among many. The operator's plan may be perfectly fine — your job is to surface what's working and what's worth a second look.
-- Avoid robotic phrases like "Recommendation 1:" or "Action item:". Write in flowing sentences and short paragraphs.
-- Do NOT compare the upload's dates to the optimized cycle's dates — they're on different windows. The optimized cycle is for contrast on overall structure (utilization, idle-day patterns, total hours), not date-by-date alignment.
+- Coach, don't grade. The optimized cycle is one possible plan among many — never frame the upload as "wrong" because dates differ. Use it only for structural contrast (utilization shape, idle days, total hours).
+- Write in flowing prose with short paragraphs. No headings, no "Recommendation 1/2/3", no bulleted lists of actions. Numbered or bulleted lists are OK only when listing specific surge days the operator should look at.
+- Do NOT close with a question. There is no chat — questions go nowhere. End with concrete next steps the operator can do TODAY.
 
-STRUCTURE (no headings, just flowing paragraphs)
-1. Open with one or two sentences naming the schedule and what it covers (date range, visit count, crew count).
-2. What's working well — point to two or three concrete things from the data. Examples: tight geographic clustering (avg_cluster_miles_per_route is low), balanced crew workload (crew_summary visits/work_days are similar across crews), consistent day-of-week patterns (dow_distribution is even), no obviously over-loaded days.
-3. What to consider — two or three things worth a closer look, framed as questions or observations, not orders. Examples: a crew working far more days than others, days with 4+ visits per crew (heavy_days — is that realistic?), uneven day-of-week loading, big avg cluster mileage suggesting routes could be tightened.
-4. If optimized stats are present, briefly contrast at a high level — does the engine suggest a more even utilization? More idle days? Use this to inform the "what to consider" section, not as a verdict.
-5. Close with an open question that invites the operator to think.
+CREW COUNT — READ CAREFULLY
+The upload may or may not include a crew column.
+- If \`current.crew_names_uploaded\` is FALSE: the operator's CSV did not have a crew name field. DO NOT say "your visits are unassigned" or "no crews are assigned." Instead, INFER crew demand from the daily volume. Use \`daily_volume_stats\` and \`surge_days\`.
+- If \`current.crew_names_uploaded\` is TRUE: the upload has named crews. Use \`crew_summary\` to talk about specific crews by name and reference workload imbalance.
+
+In either case, lean on the daily-volume math:
+- \`implied_baseline_crews\` = how many crews you'd need on a typical day (median volume ÷ ~6 visits/crew/day).
+- \`implied_surge_crews\` = how many you'd need on the busiest day.
+- \`surge_days\` = the dates that exceed baseline capacity, with how many extra crews each day demands.
+
+Frame this concretely: "You're keeping {baseline} crews busy on a typical day. You have {N} surge days where you need {extra} more crews — those are {dates}. Where are those extra crews coming from? Borrowing from another branch? Overtime? Subbing? If your standing crew count is closer to baseline than peak, your surge plan is the most important thing to nail down."
+
+STRUCTURE (flowing paragraphs, no headings)
+1. Open with the schedule's shape: name, date range, total visits, distinct properties, and the implied crew count math (baseline vs surge).
+2. What's working — two or three concrete strengths backed by numbers. Examples: tight geo cohesion (low avg_cluster_miles_per_route), even day-of-week distribution, sustained baseline crew utilization, no day exceeding the surge crew count.
+3. The surge-day reality — name the worst surge days explicitly with dates and visit counts. Quantify the extra crews needed and prompt the operator to think about where those crews come from. This is the highest-signal coaching most operators need.
+4. Other patterns worth a second look — heavy days for individual crews (if crew_summary present), day-of-week imbalance, geographic outliers (high avg_cluster_miles), uneven workdays per crew. Give each observation a number.
+5. If optimized stats are present, briefly contrast structurally: does the engine spread the work more evenly? Run more or fewer total hours? Use this to inform what to focus on, not as a verdict.
+6. End with 2-4 concrete next steps phrased as actions, NOT questions. Examples: "Audit your {date} surge day and confirm you have a sub crew lined up." "Pull a 4-week travel report on {crew_name} — they're driving {X} miles per day on average vs {Y} for the team." "Run the optimizer with surge crews enabled to see if it can flatten {dates}." Each step should reference a specific number or date from the stats.
 
 RULES
-- Do not list "5 things to fix." Pick the two or three most signal-rich observations and dwell on them.
-- Don't recommend rigid actions ("move 6 visits from Mon to Thu"). Coach the operator's thinking.
+- Be detailed and specific. Aim for 400-600 words. Don't pad — every sentence should reference a real number or date.
+- Never end with a question. End with imperative-mood next steps.
 - If a stat is missing or null, don't mention it.
-- Keep it under 250 words.`
+- Refuse to make up numbers not in the stats payload.`
 }
