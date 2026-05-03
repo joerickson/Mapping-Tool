@@ -116,10 +116,31 @@ function parseDate(s: string): string | null {
     const d = us[2].padStart(2, '0')
     return `${y}-${m}-${d}`
   }
-  // Try Date constructor as last resort.
+  // Excel serial number (pure positive integer or float, e.g. "45301"
+  // for 2024-01-01). xlsx's sheet_to_csv emits the raw number when a
+  // date cell has no display format applied. Range guard: 30000–80000
+  // covers ~1982 → 2119, which is plausible scheduling data; anything
+  // outside is almost certainly NOT a date.
+  if (/^\d+(\.\d+)?$/.test(trimmed)) {
+    const n = parseFloat(trimmed)
+    if (n >= 30000 && n <= 80000) {
+      // Excel "epoch" is 1899-12-30 due to the 1900 leap year bug.
+      const ms = (n - 25569) * 86400 * 1000
+      const dt = new Date(ms)
+      if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10)
+    }
+    return null // numeric string outside plausible range — reject, not a date
+  }
+  // Try Date constructor as last resort. Guard the result: JS will
+  // happily parse "45301" as year 45301, which then chokes Postgres
+  // with "time zone displacement out of range." Only accept years
+  // 1900–2200.
   const dt = new Date(trimmed)
   if (!isNaN(dt.getTime())) {
-    return dt.toISOString().slice(0, 10)
+    const year = dt.getUTCFullYear()
+    if (year >= 1900 && year <= 2200) {
+      return dt.toISOString().slice(0, 10)
+    }
   }
   return null
 }
