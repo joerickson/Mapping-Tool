@@ -1,0 +1,401 @@
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useParams } from 'react-router-dom'
+import { Upload, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { useAuth } from '../../../hooks/useAuth'
+import AppShell from '../../../components/layout/AppShell'
+import Button from '../../../components/ui/Button'
+import { Card, CardTitle } from '../../../components/ui/Card'
+import { Badge } from '../../../components/ui/Badge'
+import { Input, FormField, Textarea } from '../../../components/ui/Input'
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from '../../../components/ui/Table'
+
+interface Assessment {
+  id: string
+  name: string
+  status: string
+  baseline_template_id: string | null
+  client_id: string
+  account_id: string
+}
+
+interface FileRow {
+  id: string
+  filename: string
+  cycle_label: string | null
+  row_count: number
+  uploaded_at: string
+}
+
+interface AssessmentRowData {
+  id: string
+  file_id: string
+  raw_address: string
+  raw_scheduled_date: string | null
+  raw_crew_name: string | null
+  matched_service_location_id: string | null
+  match_confidence: number | null
+  match_status: string
+  notes: string | null
+}
+
+interface SLOption {
+  id: string
+  display_name: string | null
+  property: { address_line1: string | null } | null
+}
+
+const STATUS_VARIANT: Record<string, 'outline' | 'accent' | 'success' | 'warning' | 'danger'> = {
+  auto: 'success',
+  manual: 'success',
+  pending: 'warning',
+  unmatched: 'danger',
+  skipped: 'outline',
+}
+
+export default function ScheduleAssessmentDetailPage() {
+  const { accountId, clientId, id } = useParams<{ accountId: string; clientId: string; id: string }>()
+  const { getToken } = useAuth()
+  const [assessment, setAssessment] = useState<Assessment | null>(null)
+  const [files, setFiles] = useState<FileRow[]>([])
+  const [rows, setRows] = useState<AssessmentRowData[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [uploadCsv, setUploadCsv] = useState('')
+  const [uploadName, setUploadName] = useState('')
+  const [uploadCycleLabel, setUploadCycleLabel] = useState('')
+  const [slOptions, setSlOptions] = useState<SLOption[]>([])
+
+  const load = useCallback(async () => {
+    if (!id) return
+    setLoading(true)
+    try {
+      const token = await getToken()
+      const res = await fetch(`/api/v1/schedule-assessments/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error ?? `Load failed (${res.status})`)
+      setAssessment(j.assessment)
+      setFiles(j.files ?? [])
+      setRows(j.rows ?? [])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [id, getToken])
+
+  useEffect(() => { load() }, [load])
+
+  // Lazy-load SL options for the manual-match dropdowns when the
+  // operator opens the review tray.
+  const loadSlOptions = useCallback(async () => {
+    if (slOptions.length > 0 || !clientId) return
+    try {
+      const token = await getToken()
+      const res = await fetch(`/api/v1/service-locations?client_id=${clientId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        const arr = (await res.json()) as Array<{ id: string; display_name: string | null; property: any }>
+        setSlOptions(arr.map((s) => ({ id: s.id, display_name: s.display_name, property: s.property })))
+      }
+    } catch {
+      // non-fatal
+    }
+  }, [clientId, slOptions.length, getToken])
+
+  async function handleFileUpload(file: File) {
+    if (!id) return
+    const text = await file.text()
+    setUploadCsv(text)
+    setUploadName(file.name)
+  }
+
+  async function submitUpload() {
+    if (!uploadCsv || !id) return
+    setUploading(true)
+    setError(null)
+    try {
+      const token = await getToken()
+      const res = await fetch(`/api/v1/schedule-assessments/${id}/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          filename: uploadName || 'upload.csv',
+          cycle_label: uploadCycleLabel || null,
+          csv: uploadCsv,
+        }),
+      })
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error ?? `Upload failed (${res.status})`)
+      setUploadCsv('')
+      setUploadName('')
+      setUploadCycleLabel('')
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  async function updateRow(rowId: string, patch: Partial<AssessmentRowData>) {
+    if (!id) return
+    try {
+      const token = await getToken()
+      await fetch(`/api/v1/schedule-assessments/${id}/rows`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          rows: [{ id: rowId, ...patch }],
+        }),
+      })
+      // Optimistic local update so the user doesn't wait for a re-fetch.
+      setRows((prev) => prev.map((r) => (r.id === rowId ? { ...r, ...patch } as AssessmentRowData : r)))
+    } catch {
+      // ignore — user can re-try
+    }
+  }
+
+  const counts = useMemo(() => {
+    let auto = 0, pending = 0, unmatched = 0, skipped = 0, manual = 0
+    for (const r of rows) {
+      if (r.match_status === 'auto') auto++
+      else if (r.match_status === 'manual') manual++
+      else if (r.match_status === 'pending') pending++
+      else if (r.match_status === 'unmatched') unmatched++
+      else if (r.match_status === 'skipped') skipped++
+    }
+    return { auto, manual, pending, unmatched, skipped, total: rows.length }
+  }, [rows])
+
+  const reviewRows = useMemo(
+    () => rows.filter((r) => r.match_status === 'pending' || r.match_status === 'unmatched'),
+    [rows]
+  )
+
+  if (loading) {
+    return (
+      <AppShell><div className="p-10 text-fg-muted">Loading…</div></AppShell>
+    )
+  }
+  if (!assessment) {
+    return (
+      <AppShell><div className="p-10 text-danger">Assessment not found.</div></AppShell>
+    )
+  }
+
+  return (
+    <AppShell
+      breadcrumb={[
+        { label: 'Accounts', to: '/accounts' },
+        { label: 'Smart Analysis', to: `/accounts/${accountId}/clients/${clientId}/analysis` },
+        { label: 'Schedule Assessment', to: `/accounts/${accountId}/clients/${clientId}/schedule-assessment` },
+        { label: assessment.name },
+      ]}
+    >
+      <div className="mx-auto max-w-5xl px-6 py-10 space-y-6">
+        <header>
+          <h1 className="text-2xl font-semibold tracking-tight text-fg">{assessment.name}</h1>
+          <p className="text-sm text-fg-muted">Status: <Badge variant="outline">{assessment.status}</Badge></p>
+        </header>
+
+        {error && <p className="text-sm text-danger">{error}</p>}
+
+        {/* Step 1: Upload */}
+        <Card className="space-y-3">
+          <CardTitle>Upload schedule files</CardTitle>
+          <p className="text-sm text-fg-muted">
+            CSV with columns <code>address</code>, <code>scheduled_date</code>, optional <code>crew_name</code>.
+            Upload one file per historical cycle to enable per-property pattern detection (PR3).
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <FormField label="Cycle label (optional)">
+              <Input
+                value={uploadCycleLabel}
+                onChange={(e) => setUploadCycleLabel(e.target.value)}
+                placeholder='e.g. "2024 cycle"'
+              />
+            </FormField>
+            <FormField label="CSV file">
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (f) handleFileUpload(f)
+                }}
+                className="text-sm text-fg"
+              />
+            </FormField>
+          </div>
+          {uploadCsv && (
+            <FormField label="Preview (first 200 chars)">
+              <Textarea
+                rows={3}
+                readOnly
+                value={uploadCsv.slice(0, 200) + (uploadCsv.length > 200 ? '…' : '')}
+              />
+            </FormField>
+          )}
+          <div>
+            <Button onClick={submitUpload} disabled={!uploadCsv || uploading} loading={uploading}>
+              <Upload className="h-4 w-4" />
+              Upload
+            </Button>
+          </div>
+        </Card>
+
+        {files.length > 0 && (
+          <Card padding="none">
+            <div className="px-4 py-3 border-b border-border">
+              <CardTitle>Uploaded files</CardTitle>
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Filename</TableHead>
+                  <TableHead>Cycle label</TableHead>
+                  <TableHead className="text-right">Rows</TableHead>
+                  <TableHead>Uploaded</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {files.map((f) => (
+                  <TableRow key={f.id}>
+                    <TableCell className="font-mono text-xs">{f.filename}</TableCell>
+                    <TableCell className="text-xs">{f.cycle_label ?? '—'}</TableCell>
+                    <TableCell numeric>{f.row_count.toLocaleString()}</TableCell>
+                    <TableCell className="text-xs text-fg-muted">
+                      {new Date(f.uploaded_at).toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+        )}
+
+        {/* Step 2: Match summary */}
+        {rows.length > 0 && (
+          <Card className="space-y-3">
+            <CardTitle>Address match summary</CardTitle>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              <Stat label="Auto-matched" value={counts.auto + counts.manual} icon={<CheckCircle2 className="h-3 w-3 text-success" />} />
+              <Stat label="Needs review" value={counts.pending} icon={<AlertCircle className="h-3 w-3 text-warning" />} />
+              <Stat label="Unmatched" value={counts.unmatched} icon={<AlertCircle className="h-3 w-3 text-danger" />} />
+              <Stat label="Skipped" value={counts.skipped} />
+              <Stat label="Total" value={counts.total} />
+            </div>
+          </Card>
+        )}
+
+        {/* Review tray */}
+        {reviewRows.length > 0 && (
+          <Card padding="none">
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+              <div>
+                <CardTitle>Review unmatched / low-confidence rows</CardTitle>
+                <p className="text-xs text-fg-muted mt-0.5">
+                  Pick the right service location, or skip rows that aren't part of this client's portfolio.
+                </p>
+              </div>
+              <Button size="sm" variant="ghost" onClick={loadSlOptions}>
+                Load SL list
+              </Button>
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Raw address</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Crew</TableHead>
+                  <TableHead className="text-right">Confidence</TableHead>
+                  <TableHead>Match</TableHead>
+                  <TableHead />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {reviewRows.slice(0, 200).map((r) => (
+                  <TableRow key={r.id}>
+                    <TableCell className="text-xs">{r.raw_address}</TableCell>
+                    <TableCell className="text-xs font-tabular">{r.raw_scheduled_date ?? '—'}</TableCell>
+                    <TableCell className="text-xs">{r.raw_crew_name ?? '—'}</TableCell>
+                    <TableCell numeric className="text-xs">
+                      {r.match_confidence != null ? `${Math.round(r.match_confidence * 100)}%` : '—'}
+                    </TableCell>
+                    <TableCell>
+                      {slOptions.length > 0 ? (
+                        <select
+                          value={r.matched_service_location_id ?? ''}
+                          onChange={(e) =>
+                            updateRow(r.id, {
+                              matched_service_location_id: e.target.value || null,
+                              match_status: e.target.value ? 'manual' : 'unmatched',
+                            })
+                          }
+                          className="h-8 max-w-xs rounded-md border border-border bg-surface px-2 text-xs"
+                        >
+                          <option value="">— pick SL —</option>
+                          {slOptions.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.display_name ?? s.property?.address_line1 ?? s.id.slice(0, 8)}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="text-xs text-fg-subtle">click "Load SL list"</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() =>
+                          updateRow(r.id, { match_status: 'skipped' })
+                        }
+                      >
+                        Skip
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {reviewRows.length > 200 && (
+              <p className="px-4 py-2 text-xs text-fg-subtle border-t border-border">
+                Showing 200 of {reviewRows.length} — resolve a batch and refresh.
+              </p>
+            )}
+          </Card>
+        )}
+
+        {/* Placeholder for next-PR work */}
+        <Card>
+          <CardTitle>Next steps (PR2 / PR3)</CardTitle>
+          <p className="text-sm text-fg-muted mt-2">
+            Once your matches are resolved, the next iteration ships the
+            optimized baseline + diff dashboard (PR2) and constraint
+            detection (PR3). For now, the upload + match flow is live.
+          </p>
+        </Card>
+      </div>
+    </AppShell>
+  )
+}
+
+function Stat({ label, value, icon }: { label: string; value: number; icon?: React.ReactNode }) {
+  return (
+    <div className="rounded-md border border-border bg-surface-subtle/40 px-3 py-2">
+      <p className="text-[10px] uppercase tracking-wide text-fg-subtle flex items-center gap-1">
+        {icon}
+        {label}
+      </p>
+      <p className="font-mono text-lg font-semibold text-fg tabular-nums">{value}</p>
+    </div>
+  )
+}

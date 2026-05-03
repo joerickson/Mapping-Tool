@@ -1364,6 +1364,12 @@ function AnalysisSidebar({
         >
           Travel & trips
         </SidebarItem>
+        <SidebarItem
+          icon={Sparkles}
+          to={`/accounts/${accountId}/clients/${clientId}/schedule-assessment`}
+        >
+          Schedule Assessment
+        </SidebarItem>
       </SidebarSection>
 
       <SidebarSection title="Settings">

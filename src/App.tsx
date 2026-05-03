@@ -39,6 +39,8 @@ import TemplateDetailPage from './pages/accounts/scheduler/TemplateDetail'
 import CycleComparePage from './pages/accounts/scheduler/CycleCompare'
 import CycleDetailPage from './pages/accounts/scheduler/CycleDetail'
 import CombinedSchedulesPage from './pages/accounts/scheduler/CombinedSchedules'
+import ScheduleAssessmentListPage from './pages/accounts/scheduler/ScheduleAssessmentList'
+import ScheduleAssessmentDetailPage from './pages/accounts/scheduler/ScheduleAssessmentDetail'
 import TravelPlannerPage from './pages/accounts/TravelPlanner'
 import CustomFieldsAdminPage from './pages/accounts/CustomFieldsAdmin'
 import NewAccountClientPage from './pages/accounts/NewAccountClient'
@@ -177,6 +179,14 @@ export default function App() {
           <Route
             path="/accounts/:accountId/combined-schedules"
             element={<AuthGuard><CombinedSchedulesPage /></AuthGuard>}
+          />
+          <Route
+            path="/accounts/:accountId/clients/:clientId/schedule-assessment"
+            element={<AuthGuard><ScheduleAssessmentListPage /></AuthGuard>}
+          />
+          <Route
+            path="/accounts/:accountId/clients/:clientId/schedule-assessment/:id"
+            element={<AuthGuard><ScheduleAssessmentDetailPage /></AuthGuard>}
           />
           <Route
             path="/accounts/:accountId/clients/:clientId/travel"
