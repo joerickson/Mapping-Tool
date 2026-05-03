@@ -47,6 +47,11 @@ export interface CalendarSummary {
 interface Props {
   days: CalendarDay[]
   summary: CalendarSummary
+  // Save a corrected date on a single row. Parent wires this to the
+  // rows PATCH endpoint; the component handles UI state. Returns
+  // whatever the server returned so the caller can decide whether to
+  // refetch the calendar.
+  onEditDate?: (rowId: string, newDate: string) => Promise<void>
 }
 
 const MONTH_NAMES = [
@@ -61,7 +66,11 @@ function fmtSqft(n: number): string {
   return `${n}`
 }
 
-export default function ScheduleAssessmentCalendar({ days, summary }: Props) {
+export default function ScheduleAssessmentCalendar({ days, summary, onEditDate }: Props) {
+  const [editingRowId, setEditingRowId] = useState<string | null>(null)
+  const [editingDate, setEditingDate] = useState<string>('')
+  const [savingDate, setSavingDate] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
   const dayByDate = useMemo(() => {
     const m = new Map<string, CalendarDay>()
     for (const d of days) m.set(d.date, d)
@@ -222,6 +231,7 @@ export default function ScheduleAssessmentCalendar({ days, summary }: Props) {
           <ul className="divide-y divide-border">
             {expanded.visits.map((v) => {
               const cityState = [v.city, v.state, v.postal_code].filter(Boolean).join(', ')
+              const isEditing = editingRowId === v.row_id
               return (
                 <li key={v.row_id} className="py-2 flex items-start gap-3 text-xs">
                   <span className="font-tabular text-fg-muted shrink-0 w-24 text-right pt-0.5">
@@ -234,9 +244,66 @@ export default function ScheduleAssessmentCalendar({ days, summary }: Props) {
                     {cityState && (
                       <p className="text-fg-muted truncate">{cityState}</p>
                     )}
+                    {isEditing && (
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <input
+                          type="date"
+                          value={editingDate}
+                          onChange={(e) => setEditingDate(e.target.value)}
+                          className="h-7 rounded border border-border bg-surface px-2 text-xs"
+                          autoFocus
+                        />
+                        <Button
+                          size="sm"
+                          loading={savingDate}
+                          disabled={!editingDate || savingDate}
+                          onClick={async () => {
+                            if (!onEditDate) return
+                            setEditError(null)
+                            setSavingDate(true)
+                            try {
+                              await onEditDate(v.row_id, editingDate)
+                              setEditingRowId(null)
+                            } catch (e) {
+                              setEditError(e instanceof Error ? e.message : String(e))
+                            } finally {
+                              setSavingDate(false)
+                            }
+                          }}
+                        >
+                          Save
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={savingDate}
+                          onClick={() => {
+                            setEditingRowId(null)
+                            setEditError(null)
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                        {editError && <span className="text-danger">{editError}</span>}
+                      </div>
+                    )}
                   </div>
-                  {v.crew_name && (
+                  {v.crew_name && !isEditing && (
                     <span className="text-fg-subtle shrink-0 pt-0.5">{v.crew_name}</span>
+                  )}
+                  {onEditDate && !isEditing && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setEditingRowId(v.row_id)
+                        setEditingDate(expanded.date)
+                        setEditError(null)
+                      }}
+                      className="shrink-0"
+                    >
+                      Edit date
+                    </Button>
                   )}
                 </li>
               )
