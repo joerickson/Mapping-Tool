@@ -409,8 +409,12 @@ export default function ScheduleAssessmentDetailPage() {
         <Card className="space-y-3">
           <CardTitle>Upload schedule files</CardTitle>
           <p className="text-sm text-fg-muted">
-            CSV with columns <code>address</code>, <code>scheduled_date</code>, optional <code>crew_name</code>.
-            Upload one file per historical cycle to enable per-property pattern detection (PR3).
+            CSV with columns <code>address</code>, plus one or more visit-date
+            columns (<code>scheduled_date</code>, or <code>first_visit_date</code> /{' '}
+            <code>second_visit_date</code> / etc. for multi-visit-per-cycle
+            schedules). Optional <code>crew_name</code>. Each non-empty date
+            column emits its own row, so a property with both first + second
+            visit dates becomes two rows automatically.
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <FormField label="Cycle label (optional)">
