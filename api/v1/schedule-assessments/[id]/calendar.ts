@@ -87,18 +87,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (arr.length < PAGE) break
   }
 
-  // Skip rows whose stored date is implausible (year < 1900 or > 2200).
-  // Older parse-csv versions let strings like "1016-05-22" through and
-  // those rows would lock the calendar onto a medieval month. Count
-  // them so we can surface a warning.
+  // Split rows into plausible (calendar-renderable) and implausible
+  // (year outside 1900-2200). Implausible rows get returned in their
+  // own list so the UI can show them inline with an inline date
+  // editor — almost always a per-row data-entry error, not a column-
+  // mapping mistake.
   const filteredRows: RawRow[] = []
-  let implausibleDateCount = 0
+  type ImplausibleRow = {
+    row_id: string
+    raw_scheduled_date: string | null
+    address: string | null
+    city: string | null
+    state: string | null
+    postal_code: string | null
+    sqft: number | null
+    crew_name: string | null
+  }
+  const implausibleRows: ImplausibleRow[] = []
   for (const r of rows) {
     const d = r.raw_scheduled_date
     if (!d) continue
     const year = Number(d.slice(0, 4))
     if (!Number.isFinite(year) || year < 1900 || year > 2200) {
-      implausibleDateCount++
+      const sl = r.service_locations
+      implausibleRows.push({
+        row_id: r.id,
+        raw_scheduled_date: d,
+        address: sl?.property?.address_line1 ?? r.raw_address ?? null,
+        city: sl?.property?.city ?? r.raw_city ?? null,
+        state: sl?.property?.state ?? r.raw_state ?? null,
+        postal_code: sl?.property?.postal_code ?? r.raw_postal_code ?? null,
+        sqft: sl?.serviceable_sqft ?? null,
+        crew_name: r.raw_crew_name ?? null,
+      })
       continue
     }
     filteredRows.push(r)
@@ -178,11 +199,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       end_date: days[days.length - 1]?.date ?? null,
       day_count: days.length,
       visit_count: filteredRows.length,
-      implausible_date_count: implausibleDateCount,
+      implausible_date_count: implausibleRows.length,
       total_sqft: totalSqft,
       max_daily_sqft: maxDailySqft,
       max_daily_visits: maxDailyVisits,
     },
     days,
+    implausible_rows: implausibleRows,
   })
 }
