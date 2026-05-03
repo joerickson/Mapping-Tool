@@ -158,13 +158,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Build labels from the now-complete homeByCrewIdx. Sequential per
   // home (Lindon Crew 1, Lindon Crew 2, …) by ascending crew_index for
   // stable numbering across regenerates.
+  // Use || (not ??) so empty-string branch names fall through to the
+  // "Branch N" placeholder. Also strip leading/trailing whitespace —
+  // some legacy branch entries had names like " " that produced labels
+  // such as "  Crew 1" (Frisco-style ghost entries).
   const crewLabelByIdx = new Map<number, string>()
   {
     const counter = new Map<number, number>()
     const indices = Array.from(homeByCrewIdx.keys()).sort((a, b) => a - b)
     for (const idx of indices) {
       const home = homeByCrewIdx.get(idx)!
-      const branchName = branches[home]?.name ?? `Branch ${home + 1}`
+      const rawName = (branches[home]?.name ?? '').trim()
+      const branchName = rawName || `Branch ${home + 1}`
       const n = (counter.get(home) ?? 0) + 1
       counter.set(home, n)
       crewLabelByIdx.set(idx, `${branchName} Crew ${n}`)
@@ -189,7 +194,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       a.scheduled_date.localeCompare(b.scheduled_date)
     )
     const homeIdx = homeByCrewIdx.get(crewIdx) ?? null
-    const homeName = homeIdx != null ? (branches[homeIdx]?.name ?? null) : null
+    // Use trimmed-truthy fallback — empty / whitespace-only branch
+    // names should resolve to "Branch N", not produce a bare "Crew K".
+    const rawHomeName = homeIdx != null ? (branches[homeIdx]?.name ?? '').trim() : ''
+    const homeName = homeIdx != null ? (rawHomeName || `Branch ${homeIdx + 1}`) : null
 
     const streaks: IdleStreak[] = []
     let cur: { start: string; end: string; length: number } | null = null

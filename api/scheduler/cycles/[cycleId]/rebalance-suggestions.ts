@@ -159,12 +159,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!b) continue
     const counter = (branchCounters.get(home) ?? 0) + 1
     branchCounters.set(home, counter)
+    // Empty / whitespace-only branch names fall back to "Branch N".
+    const branchName = (b.name ?? '').trim() || `Branch ${home + 1}`
     crewBranch.set(idx, {
       idx: home,
-      name: b.name,
+      name: branchName,
       lat: b.lat,
       lng: b.lng,
-      label: `${b.name} Crew ${counter}`,
+      label: `${branchName} Crew ${counter}`,
     })
   }
   // Fallback for any crew without a template assignment row.
