@@ -181,6 +181,8 @@ export default function ScheduleAssessmentDetailPage() {
   const [calendarError, setCalendarError] = useState<string | null>(null)
   const [proposedDays, setProposedDays] = useState<CalendarDay[] | null>(null)
   const [proposedSummary, setProposedSummary] = useState<CalendarSummary | null>(null)
+  const [proposedReason, setProposedReason] = useState<string | null>(null)
+  const [adoptingEnginePlan, setAdoptingEnginePlan] = useState(false)
   type ImplausibleRow = {
     row_id: string
     raw_scheduled_date: string | null
@@ -312,10 +314,14 @@ export default function ScheduleAssessmentDetailPage() {
         const prop = await propRes.json()
         setProposedDays(prop.days as CalendarDay[])
         setProposedSummary(prop.summary as CalendarSummary)
+        setProposedReason(null)
       } else {
-        // 400/404 just means no baseline yet — clear any stale data.
+        // Capture the reason so the UI can tell the operator what's
+        // missing rather than silently hiding the toggle.
+        const j = await propRes.json().catch(() => ({}))
         setProposedDays(null)
         setProposedSummary(null)
+        setProposedReason((j as any)?.error ?? `Proposed view unavailable (${propRes.status})`)
       }
     } catch (err) {
       setCalendarError(err instanceof Error ? err.message : String(err))
@@ -332,6 +338,75 @@ export default function ScheduleAssessmentDetailPage() {
       void loadCalendar()
     }
   }, [id, rows, loadCalendar])
+
+  // Adopt the engine's plan in one click: set hybrid_choice='optimized'
+  // for every moved_date + only_optimized row, and 'skip' for every
+  // only_current row. Loads the diff first if it isn't loaded yet.
+  // After the PATCH lands, the operator can use the existing "Save as
+  // routing template" card below to materialize the choices.
+  async function adoptEnginePlan() {
+    if (!id) return
+    if (!confirm('Adopt the engine\'s proposed plan? This sets every difference row to use the optimized choice (move date / add visit) or skip (when the engine drops a visit). You can still review and tweak per-row choices before saving as a template.')) {
+      return
+    }
+    setAdoptingEnginePlan(true)
+    setError(null)
+    try {
+      const token = await getToken()
+      // Make sure we have the diff payload.
+      let diffPayload = diff
+      if (!diffPayload) {
+        const dRes = await fetch(`/api/v1/schedule-assessments/${id}/diff`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        const dj = await dRes.json()
+        if (!dRes.ok) throw new Error(dj.error ?? `Diff failed (${dRes.status})`)
+        diffPayload = dj as DiffPayload
+        setDiff(diffPayload)
+      }
+      // Build the bulk PATCH.
+      const updates: Array<{ key: string; source: 'optimized' | 'skip' }> = []
+      for (const r of diffPayload.diff) {
+        if (!r.hybrid_key) continue
+        if (r.status === 'moved_date' || r.status === 'only_optimized') {
+          updates.push({ key: r.hybrid_key, source: 'optimized' })
+        } else if (r.status === 'only_current') {
+          updates.push({ key: r.hybrid_key, source: 'skip' })
+        }
+      }
+      if (updates.length === 0) {
+        setError('No actionable differences — nothing to adopt.')
+        return
+      }
+      const res = await fetch(`/api/v1/schedule-assessments/${id}/hybrid`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ rows: updates }),
+      })
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        throw new Error((j as any)?.error ?? `Adopt failed (${res.status})`)
+      }
+      // Optimistically reflect the choices on the cached diff.
+      const keySet = new Set(updates.map((u) => u.key))
+      setDiff((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          diff: prev.diff.map((r) => {
+            if (!r.hybrid_key || !keySet.has(r.hybrid_key)) return r
+            const choice =
+              r.status === 'only_current' ? 'skip' : 'optimized'
+            return { ...r, hybrid_choice: choice }
+          }),
+        }
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setAdoptingEnginePlan(false)
+    }
+  }
 
   // Edit a single row's scheduled_date — used to fix wrong-year rows
   // (spreadsheet errors). Refresh the calendar after so the visit
@@ -1560,18 +1635,37 @@ export default function ScheduleAssessmentDetailPage() {
         {(calendarDays && calendarSummary && calendarSummary.day_count > 0) || calendarLoading ? (
           <Card className="space-y-3">
             <div className="flex items-start justify-between gap-3 flex-wrap">
-              <div>
-                <CardTitle>Upload calendar</CardTitle>
+              <div className="flex-1 min-w-0">
+                <CardTitle>Schedule calendar</CardTitle>
                 <p className="text-xs text-fg-muted mt-0.5">
-                  Each cell shows visit count and total square footage for that day.
-                  Color heat reflects sqft relative to your busiest day. Click a
-                  day to see the property list.
+                  Toggle Current vs Proposed below to compare your upload to
+                  the engine's optimized cycle. In Current view, drag any
+                  visit to a different day to reschedule it; click any day for
+                  the property list.
                 </p>
               </div>
-              {calendarLoading && (
-                <p className="text-xs text-fg-muted italic">Loading…</p>
-              )}
+              <div className="flex items-center gap-2 shrink-0">
+                {calendarLoading && (
+                  <p className="text-xs text-fg-muted italic">Loading…</p>
+                )}
+                {assessment?.baseline_template_id && proposedSummary && proposedSummary.day_count > 0 && (
+                  <Button
+                    size="sm"
+                    onClick={adoptEnginePlan}
+                    loading={adoptingEnginePlan}
+                  >
+                    Adopt engine plan
+                  </Button>
+                )}
+              </div>
             </div>
+            {assessment?.baseline_template_id && proposedSummary && proposedSummary.day_count > 0 && (
+              <p className="text-xs text-fg-muted">
+                "Adopt engine plan" sets every difference row to use the engine's
+                date (or skip when the engine drops a visit). Tweak per-row
+                choices in the diff section below before saving as a template.
+              </p>
+            )}
             {calendarError && <p className="text-sm text-danger">{calendarError}</p>}
             {implausibleRows.length > 0 && (
               <div className="rounded-md border border-warning/40 bg-warning-subtle/30 p-3 space-y-2">
@@ -1674,6 +1768,12 @@ export default function ScheduleAssessmentDetailPage() {
                 onEditDate={editRowDate}
                 proposedDays={proposedDays}
                 proposedSummary={proposedSummary}
+                proposedDisabledReason={
+                  proposedReason ??
+                  (assessment?.baseline_template_id
+                    ? null
+                    : 'Link a baseline template below to enable the Proposed view.')
+                }
               />
             )}
           </Card>
