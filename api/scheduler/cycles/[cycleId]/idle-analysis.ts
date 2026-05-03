@@ -116,16 +116,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // overnight_continuation, fully_utilized are all workday categories).
   const workdays = days.filter((d) => d.is_workday)
 
-  // Defensive fallback: any crew without a snapshot home_branch_index,
-  // resolve via crew_day_routes start_location → nearest branch by
-  // haversine. Necessary for templates generated before the audit fix.
-  if (homeByCrewIdx.size < crewCount && branches.length > 0) {
+  // Defensive fallback (always runs): any crew not already mapped to a
+  // home_branch_index, resolve via crew_day_routes start_location →
+  // nearest branch by haversine. Then any STILL-unmapped crew (idle
+  // crews with zero crew_day_routes rows) anchors to branch 0.
+  // This is unconditional because trusting the snapshot alone has
+  // burned us — older templates / partial writes / engine bugs have
+  // all produced "ghost crews" with no home, which then surface in the
+  // UI as "Crew 6" with no branch context.
+  if (branches.length > 0) {
     const { data: cdRows } = await db
       .from('crew_day_routes')
       .select('crew_index, start_location')
       .eq('cycle_instance_id', cycleId)
       .not('start_location', 'is', null)
-      .limit(crewCount * 5) // a few rows per crew is enough
+      .limit(crewCount * 5)
     const seen = new Set<number>()
     for (const r of (cdRows ?? []) as any[]) {
       if (seen.has(r.crew_index)) continue
@@ -142,7 +147,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       seen.add(r.crew_index)
     }
-    // Final fallback: any still-unmapped crew → branch 0.
+    // Final fallback for any still-unmapped crew → branch 0. Without
+    // this, idle crews (no crew_day_routes at all) would never get a
+    // home and would show as bare "Crew N" in the UI.
     for (let i = 0; i < crewCount; i++) {
       if (!homeByCrewIdx.has(i)) homeByCrewIdx.set(i, 0)
     }

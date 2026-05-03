@@ -208,17 +208,17 @@ export default function CycleDetailPage() {
     }
   }, [cycle?.template_id, cycle?.start_date, cycle?.cycle_number, getToken, load])
 
-  // Regenerate the parent template in-place. The cycle reads its
-  // unplaced_visits from the template, so when engine code changes
-  // (e.g. a recent fix to surface ungeocoded properties) the template
-  // must be rebuilt for the cycle UI to reflect the new logic.
+  // Regenerate the parent template AND re-derive this cycle from the
+  // new template in one shot. This is the "apply changes" button on
+  // the Cycle Detail header — the user just changed staging /
+  // calibration / rebalance and wants to see the result.
   const regenerateTemplate = useCallback(async () => {
     if (!cycle?.template_id) return
     setRegeneratingTemplate(true)
     setError(null)
     try {
       const token = await getToken()
-      const res = await fetch(
+      const tplRes = await fetch(
         `/api/scheduler/templates/${cycle.template_id}/regenerate`,
         {
           method: 'POST',
@@ -226,9 +226,29 @@ export default function CycleDetailPage() {
           body: JSON.stringify({}),
         }
       )
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}))
-        throw new Error((j as any).error ?? `HTTP ${res.status}`)
+      if (!tplRes.ok) {
+        const j = await tplRes.json().catch(() => ({}))
+        throw new Error((j as any).error ?? `Template regen HTTP ${tplRes.status}`)
+      }
+      // Also re-derive THIS cycle so the Cycle Detail page reflects
+      // the new template — without this, the user keeps seeing stale
+      // crew assignments + idle days even after the template has been
+      // rebuilt with new staging.
+      const cycleRes = await fetch(
+        `/api/scheduler/templates/${cycle.template_id}/generate-cycle`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            start_date: cycle.start_date,
+            cycle_number: cycle.cycle_number,
+            apply_template_changes: true,
+          }),
+        }
+      )
+      if (!cycleRes.ok) {
+        const j = await cycleRes.json().catch(() => ({}))
+        throw new Error((j as any).error ?? `Cycle regen HTTP ${cycleRes.status}`)
       }
       await load()
     } catch (err) {
@@ -236,7 +256,7 @@ export default function CycleDetailPage() {
     } finally {
       setRegeneratingTemplate(false)
     }
-  }, [cycle?.template_id, getToken, load])
+  }, [cycle?.template_id, cycle?.start_date, cycle?.cycle_number, getToken, load])
 
   const placedVisits = visits.filter((v) => v.status === 'placed')
   const unplacedVisits = visits.filter((v) => v.status === 'unplaced')
@@ -520,20 +540,31 @@ export default function CycleDetailPage() {
             </div>
             <div className="flex items-center gap-2">
               {cycle?.template_id && (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => setRebalanceOpen(true)}
-                  title={
-                    unplacedVisits.length > 0
-                      ? `${unplacedVisits.length} unplaced — get rebalance suggestions`
-                      : 'Open the rebalance analyzer (also surfaces severely-idle crews)'
-                  }
-                >
-                  {unplacedVisits.length > 0
-                    ? `Suggest rebalance (${unplacedVisits.length})`
-                    : 'Suggest rebalance'}
-                </Button>
+                <>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => setRebalanceOpen(true)}
+                    title={
+                      unplacedVisits.length > 0
+                        ? `${unplacedVisits.length} unplaced — get rebalance suggestions`
+                        : 'Open the rebalance analyzer (also surfaces severely-idle crews)'
+                    }
+                  >
+                    {unplacedVisits.length > 0
+                      ? `Suggest rebalance (${unplacedVisits.length})`
+                      : 'Suggest rebalance'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={regenerateTemplate}
+                    loading={regeneratingTemplate}
+                    title="Re-run the template build with current constraints, then refresh this cycle from the new template. Use after applying staging/calibration/rebalance changes."
+                  >
+                    Regenerate
+                  </Button>
+                </>
               )}
               <CycleChatDrawer
                 cycleId={cycleId!}
