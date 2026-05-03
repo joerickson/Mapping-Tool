@@ -46,6 +46,28 @@ interface SLOption {
   property: { address_line1: string | null } | null
 }
 
+type DiffStatus = 'only_current' | 'only_optimized' | 'moved_date' | 'matched_same'
+interface DiffRow {
+  status: DiffStatus
+  service_location_id: string | null
+  display_name: string | null
+  current_date: string | null
+  current_crew: string | null
+  optimized_date: string | null
+  optimized_crew: string | null
+  hybrid_choice?: 'current' | 'optimized' | 'skip' | null
+}
+interface DiffPayload {
+  cycle: { id: string; start_date: string; end_date: string }
+  counts: { only_current: number; only_optimized: number; moved_date: number; matched_same: number }
+  diff: DiffRow[]
+}
+interface TemplateOption {
+  id: string
+  name: string
+  status: string
+}
+
 const STATUS_VARIANT: Record<string, 'outline' | 'accent' | 'success' | 'warning' | 'danger'> = {
   auto: 'success',
   manual: 'success',
@@ -67,6 +89,10 @@ export default function ScheduleAssessmentDetailPage() {
   const [uploadName, setUploadName] = useState('')
   const [uploadCycleLabel, setUploadCycleLabel] = useState('')
   const [slOptions, setSlOptions] = useState<SLOption[]>([])
+  const [templates, setTemplates] = useState<TemplateOption[]>([])
+  const [diff, setDiff] = useState<DiffPayload | null>(null)
+  const [diffLoading, setDiffLoading] = useState(false)
+  const [diffFilter, setDiffFilter] = useState<DiffStatus | 'all_actionable'>('all_actionable')
 
   const load = useCallback(async () => {
     if (!id) return
@@ -89,6 +115,89 @@ export default function ScheduleAssessmentDetailPage() {
   }, [id, getToken])
 
   useEffect(() => { load() }, [load])
+
+  // Load this client's available templates so the user can pick a
+  // baseline. Combined-aware via the existing GET endpoint.
+  useEffect(() => {
+    if (!accountId || !clientId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const token = await getToken()
+        const res = await fetch(
+          `/api/scheduler/templates?account_id=${accountId}&client_id=${clientId}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        )
+        if (res.ok) {
+          const j = await res.json()
+          if (!cancelled) setTemplates((j.templates ?? []).filter((t: any) => t.status !== 'archived'))
+        }
+      } catch {
+        // non-fatal
+      }
+    })()
+    return () => { cancelled = true }
+  }, [accountId, clientId, getToken])
+
+  async function setBaselineTemplate(templateId: string | null) {
+    if (!id) return
+    const token = await getToken()
+    await fetch(`/api/v1/schedule-assessments/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ baseline_template_id: templateId }),
+    })
+    setAssessment((prev) => (prev ? { ...prev, baseline_template_id: templateId } : prev))
+    setDiff(null) // stale
+  }
+
+  async function loadDiff() {
+    if (!id) return
+    setDiffLoading(true)
+    setError(null)
+    try {
+      const token = await getToken()
+      const res = await fetch(`/api/v1/schedule-assessments/${id}/diff`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error ?? `Diff failed (${res.status})`)
+      setDiff(j as DiffPayload)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setDiffLoading(false)
+    }
+  }
+
+  async function setHybridChoice(slId: string | null, indexAtSl: number, source: 'current' | 'optimized' | 'skip' | null) {
+    if (!id || !slId) return
+    const key = `${slId}|${indexAtSl}`
+    try {
+      const token = await getToken()
+      await fetch(`/api/v1/schedule-assessments/${id}/hybrid`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ rows: [{ key, source }] }),
+      })
+      // Optimistically patch the diff in state.
+      setDiff((prev) => {
+        if (!prev) return prev
+        const next = { ...prev, diff: prev.diff.map((r) => r) }
+        // Update each matching row by sl_id + position. Simple linear.
+        let seen = 0
+        next.diff = next.diff.map((r) => {
+          if (r.service_location_id !== slId) return r
+          const isMatch = seen === indexAtSl
+          seen++
+          return isMatch ? { ...r, hybrid_choice: source } : r
+        })
+        return next
+      })
+    } catch {
+      // ignore
+    }
+  }
 
   // Lazy-load SL options for the manual-match dropdowns when the
   // operator opens the review tray.
@@ -374,15 +483,83 @@ export default function ScheduleAssessmentDetailPage() {
           </Card>
         )}
 
-        {/* Placeholder for next-PR work */}
-        <Card>
-          <CardTitle>Next steps (PR2 / PR3)</CardTitle>
-          <p className="text-sm text-fg-muted mt-2">
-            Once your matches are resolved, the next iteration ships the
-            optimized baseline + diff dashboard (PR2) and constraint
-            detection (PR3). For now, the upload + match flow is live.
+        {/* Step 3: Baseline picker — required before diff */}
+        <Card className="space-y-3">
+          <CardTitle>Baseline routing template</CardTitle>
+          <p className="text-sm text-fg-muted">
+            Pick a routing template to compare against. The diff uses that
+            template's most recent generated cycle as the "optimized" side.
           </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <select
+              value={assessment.baseline_template_id ?? ''}
+              onChange={(e) => setBaselineTemplate(e.target.value || null)}
+              className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-fg max-w-md"
+            >
+              <option value="">— pick template —</option>
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} ({t.status})
+                </option>
+              ))}
+            </select>
+            <Button
+              onClick={loadDiff}
+              disabled={!assessment.baseline_template_id || diffLoading}
+              loading={diffLoading}
+            >
+              Compare against optimized
+            </Button>
+          </div>
         </Card>
+
+        {/* Step 4: Diff dashboard */}
+        {diff && (
+          <Card padding="none" className="overflow-hidden">
+            <div className="px-4 py-3 border-b border-border space-y-2">
+              <CardTitle>Current vs optimized</CardTitle>
+              <p className="text-xs text-fg-muted">
+                Optimized cycle: {diff.cycle.start_date} → {diff.cycle.end_date}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <FilterChip
+                  label={`All actionable (${diff.counts.only_current + diff.counts.only_optimized + diff.counts.moved_date})`}
+                  active={diffFilter === 'all_actionable'}
+                  onClick={() => setDiffFilter('all_actionable')}
+                />
+                <FilterChip
+                  label={`Only on current (${diff.counts.only_current})`}
+                  active={diffFilter === 'only_current'}
+                  onClick={() => setDiffFilter('only_current')}
+                />
+                <FilterChip
+                  label={`Only on optimized (${diff.counts.only_optimized})`}
+                  active={diffFilter === 'only_optimized'}
+                  onClick={() => setDiffFilter('only_optimized')}
+                />
+                <FilterChip
+                  label={`Moved date (${diff.counts.moved_date})`}
+                  active={diffFilter === 'moved_date'}
+                  onClick={() => setDiffFilter('moved_date')}
+                />
+                <FilterChip
+                  label={`Same (${diff.counts.matched_same})`}
+                  active={diffFilter === 'matched_same'}
+                  onClick={() => setDiffFilter('matched_same')}
+                />
+              </div>
+            </div>
+            <DiffTable
+              rows={(() => {
+                if (diffFilter === 'all_actionable') {
+                  return diff.diff.filter((r) => r.status !== 'matched_same')
+                }
+                return diff.diff.filter((r) => r.status === diffFilter)
+              })()}
+              onChoice={setHybridChoice}
+            />
+          </Card>
+        )}
       </div>
     </AppShell>
   )
@@ -396,6 +573,123 @@ function Stat({ label, value, icon }: { label: string; value: number; icon?: Rea
         {label}
       </p>
       <p className="font-mono text-lg font-semibold text-fg tabular-nums">{value}</p>
+    </div>
+  )
+}
+
+function FilterChip({
+  label,
+  active,
+  onClick,
+}: {
+  label: string
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        'rounded-md border px-2 py-0.5 text-[11px] transition-colors ' +
+        (active
+          ? 'border-accent bg-accent/10 text-accent'
+          : 'border-border bg-surface text-fg-muted hover:text-fg')
+      }
+    >
+      {label}
+    </button>
+  )
+}
+
+const STATUS_BADGE: Record<DiffStatus, { label: string; variant: 'outline' | 'accent' | 'success' | 'warning' | 'danger' }> = {
+  only_current: { label: 'Only current', variant: 'danger' },
+  only_optimized: { label: 'Only optimized', variant: 'accent' },
+  moved_date: { label: 'Moved', variant: 'warning' },
+  matched_same: { label: 'Same', variant: 'success' },
+}
+
+function DiffTable({
+  rows,
+  onChoice,
+}: {
+  rows: DiffRow[]
+  onChoice: (slId: string | null, indexAtSl: number, source: 'current' | 'optimized' | 'skip' | null) => void
+}) {
+  // Track per-(sl_id) running index so the click handler can identify
+  // which slot a row represents (multiple visits per SL are paired by
+  // chronological position in the diff endpoint).
+  const slCounts = new Map<string, number>()
+  return (
+    <div className="max-h-[600px] overflow-y-auto">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Status</TableHead>
+            <TableHead>Property</TableHead>
+            <TableHead>Current</TableHead>
+            <TableHead>Optimized</TableHead>
+            <TableHead>Choice</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={5} className="text-fg-subtle text-xs italic">
+                Nothing in this category.
+              </TableCell>
+            </TableRow>
+          ) : (
+            rows.map((r, i) => {
+              const slKey = r.service_location_id ?? `_unmatched_${i}`
+              const idxAtSl = slCounts.get(slKey) ?? 0
+              slCounts.set(slKey, idxAtSl + 1)
+              const meta = STATUS_BADGE[r.status]
+              return (
+                <TableRow key={`${slKey}-${idxAtSl}`}>
+                  <TableCell>
+                    <Badge variant={meta.variant} className="text-[10px]">
+                      {meta.label}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-xs max-w-xs truncate">{r.display_name ?? '—'}</TableCell>
+                  <TableCell className="text-xs font-tabular">
+                    {r.current_date ?? '—'}
+                    {r.current_crew && (
+                      <p className="text-[10px] text-fg-subtle">{r.current_crew}</p>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-xs font-tabular">
+                    {r.optimized_date ?? '—'}
+                    {r.optimized_crew && (
+                      <p className="text-[10px] text-fg-subtle">{r.optimized_crew}</p>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <select
+                      value={r.hybrid_choice ?? ''}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        onChoice(
+                          r.service_location_id,
+                          idxAtSl,
+                          v === '' ? null : (v as 'current' | 'optimized' | 'skip')
+                        )
+                      }}
+                      className="h-7 rounded-md border border-border bg-surface px-2 text-xs"
+                    >
+                      <option value="">—</option>
+                      {r.current_date && <option value="current">Keep current</option>}
+                      {r.optimized_date && <option value="optimized">Use optimized</option>}
+                      <option value="skip">Skip</option>
+                    </select>
+                  </TableCell>
+                </TableRow>
+              )
+            })
+          )}
+        </TableBody>
+      </Table>
     </div>
   )
 }
