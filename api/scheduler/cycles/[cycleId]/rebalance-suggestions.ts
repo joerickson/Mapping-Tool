@@ -30,7 +30,7 @@ const ADVISOR_MAX_TOKENS = 1200
 // reduction suggestions get generated for it.
 const SEVERELY_IDLE_THRESHOLD = 0.4
 
-type SuggestionType = 'property_move' | 'crew_relocate' | 'crew_reduce'
+type SuggestionType = 'property_move' | 'staging_rebalance'
 
 interface BaseSuggestion {
   id: string
@@ -53,25 +53,22 @@ interface PropertyMoveSuggestion extends BaseSuggestion {
   drive_delta_miles: number
 }
 
-interface CrewRelocateSuggestion extends BaseSuggestion {
-  type: 'crew_relocate'
-  crew_index: number
-  crew_label: string
-  from_branch_name: string
-  to_branch_name: string
-  idle_days_freed: number
-  expected_absorbed_count: number
+// Single global re-staging proposal. Replaces the previous per-crew
+// crew_relocate / crew_reduce suggestions, which oscillated: each
+// individual move locally optimized but globally swung the system to
+// the opposite imbalance (Lindon→Vegas → Vegas→Lindon → Lindon→Phoenix
+// → loop forever). This proposes the entire optimal distribution
+// computed from where the cycle actually placed work, applied in one
+// shot. One PATCH, one regenerate, converged.
+interface StagingRebalanceSuggestion extends BaseSuggestion {
+  type: 'staging_rebalance'
+  current_per_branch: Record<string, number>
+  proposed_per_branch: Record<string, number>
+  delta_summary: Array<{ branch_name: string; from: number; to: number; change: number }>
+  total_crews: number
 }
 
-interface CrewReduceSuggestion extends BaseSuggestion {
-  type: 'crew_reduce'
-  branch_name: string
-  current_count: number
-  proposed_count: number
-  idle_days_freed: number
-}
-
-type Suggestion = PropertyMoveSuggestion | CrewRelocateSuggestion | CrewReduceSuggestion
+type Suggestion = PropertyMoveSuggestion | StagingRebalanceSuggestion
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
@@ -333,91 +330,130 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
   }
 
-  // ── 2. Crew relocation — severely-idle crew → branch w/ unserved demand ─
-  for (const [crewIdx, home] of crewBranch.entries()) {
-    const total = workdays.length
-    const idle = idleByCrew.get(crewIdx) ?? 0
-    const utilization = total > 0 ? (total - idle) / total : 0
-    if (utilization >= SEVERELY_IDLE_THRESHOLD) continue
-
-    // Find the branch with the most "unserved demand" defined as either:
-    //   (a) sum of nearby unplaced visits, or
-    //   (b) high idle-days / property-count ratio (saturated)
-    // Skip branches the crew is already homed at.
-    type BranchScore = { branchIdx: number; branchName: string; score: number; reason: string }
-    const scores: BranchScore[] = []
-    for (let bi = 0; bi < branches.length; bi++) {
-      if (bi === home.idx) continue
-      const b = branches[bi]
-      // Unplaced visits within 2× cluster radius of this branch.
-      let nearby = 0
-      for (const u of unplaced) {
-        const lat = u.service_locations?.property?.latitude
-        const lng = u.service_locations?.property?.longitude
-        if (typeof lat !== 'number' || typeof lng !== 'number') continue
-        const d = haversineMiles({ lat, lng }, b)
-        if (d <= clusterRadius * 2) nearby++
+  // ── 2. Single global staging rebalance ──────────────────────────
+  // Compute the optimal per-branch crew distribution from where the
+  // cycle actually placed work (proximity-weighted by placed visits).
+  // Compare to current staging; if different enough to matter, emit
+  // ONE suggestion that proposes the whole new distribution. One
+  // apply, one regenerate, convergence — no oscillation.
+  {
+    // Pull placed visits with coords. Walk each one, tally to its
+    // nearest branch.
+    const placedNearby = new Array(branches.length).fill(0)
+    let totalPlacedWithCoords = 0
+    for (const v of visits) {
+      if (v.status === 'unplaced') continue
+      const lat = v.service_locations?.property?.latitude
+      const lng = v.service_locations?.property?.longitude
+      if (typeof lat !== 'number' || typeof lng !== 'number') continue
+      let bestIdx = 0
+      let best = Number.POSITIVE_INFINITY
+      for (let i = 0; i < branches.length; i++) {
+        const d = haversineMiles({ lat, lng }, branches[i])
+        if (d < best) { best = d; bestIdx = i }
       }
-      if (nearby > 0) {
-        scores.push({
-          branchIdx: bi,
-          branchName: b.name,
-          score: nearby,
-          reason: `${nearby} unplaced visit${nearby === 1 ? '' : 's'} within ${Math.round(clusterRadius * 2)}mi of ${b.name}`,
-        })
-      }
+      placedNearby[bestIdx]++
+      totalPlacedWithCoords++
     }
-    scores.sort((a, b) => b.score - a.score)
-    if (scores.length === 0) continue
-    const target = scores[0]
+    // Also tally unplaced near each branch — that's demand the next
+    // regen can absorb if we shift staging there.
+    const unplacedNearby = new Array(branches.length).fill(0)
+    let totalUnplaced = 0
+    for (const u of unplaced) {
+      const lat = u.service_locations?.property?.latitude
+      const lng = u.service_locations?.property?.longitude
+      if (typeof lat !== 'number' || typeof lng !== 'number') continue
+      let bestIdx = 0
+      let best = Number.POSITIVE_INFINITY
+      for (let i = 0; i < branches.length; i++) {
+        const d = haversineMiles({ lat, lng }, branches[i])
+        if (d < best) { best = d; bestIdx = i }
+      }
+      unplacedNearby[bestIdx]++
+      totalUnplaced++
+    }
+    const demand = branches.map((_, i) => placedNearby[i] + unplacedNearby[i])
+    const demandTotal = demand.reduce((s, x) => s + x, 0)
 
-    suggestions.push({
-      id: `cr-${suggestionId++}`,
-      type: 'crew_relocate',
-      priority: 200 + idle, // higher than property-moves
-      title: `Restage ${home.label} from ${home.name} → ${target.branchName}`,
-      summary:
-        `${home.label} is ${Math.round(utilization * 100)}% utilized at ${home.name} ` +
-        `(${idle} idle workdays). ${target.reason} — restaging this crew there ` +
-        `would free their idle capacity for absorbable work.`,
-      crew_index: crewIdx,
-      crew_label: home.label,
-      from_branch_name: home.name,
-      to_branch_name: target.branchName,
-      idle_days_freed: idle,
-      expected_absorbed_count: target.score,
-    })
-  }
+    // Proportional allocation across branches with largest-remainder.
+    // Floors any branch with demand > 0 at 1 crew so we don't strand
+    // properties.
+    const proposedCounts = new Array(branches.length).fill(0)
+    if (demandTotal > 0 && crewCount > 0 && totalPlacedWithCoords + totalUnplaced > 0) {
+      const real = demand.map((d) => (d / demandTotal) * crewCount)
+      const floors = real.map((r) => Math.floor(r))
+      const remainders = real.map((r, i) => ({ idx: i, frac: r - floors[i] }))
+      let allocated = floors.reduce((s, n) => s + n, 0)
+      remainders.sort((a, b) => b.frac - a.frac)
+      let r = 0
+      while (allocated < crewCount && r < remainders.length) {
+        floors[remainders[r].idx]++
+        allocated++
+        r++
+      }
+      // Floor branches with any demand at 1 (pull from largest holder).
+      for (let i = 0; i < branches.length; i++) {
+        if (demand[i] > 0 && floors[i] === 0) {
+          let largestIdx = 0
+          for (let j = 1; j < branches.length; j++) {
+            if (floors[j] > floors[largestIdx]) largestIdx = j
+          }
+          if (largestIdx !== i && floors[largestIdx] > 1) {
+            floors[largestIdx]--
+            floors[i]++
+          }
+        }
+      }
+      for (let i = 0; i < branches.length; i++) proposedCounts[i] = floors[i]
+    }
 
-  // ── 3. Crew reduction — branch is overstaffed and no relocation helps ─
-  // Trigger when a branch's idle-days > cycle-length × 0.6 per crew there
-  // AND we haven't already proposed relocating any crew from that branch.
-  const hasRelocateFrom = new Set(
-    suggestions
-      .filter((s): s is CrewRelocateSuggestion => s.type === 'crew_relocate')
-      .map((s) => s.from_branch_name)
-  )
-  for (const [branchIdx, idleDays] of idleByBranch.entries()) {
-    const branchName = branches[branchIdx]?.name
-    if (!branchName) continue
-    if (hasRelocateFrom.has(branchName)) continue
-    const crews = crewsByBranch.get(branchIdx) ?? 0
-    if (crews <= 1) continue
-    const idlePerCrew = idleDays / crews
-    if (idlePerCrew >= workdays.length * 0.6) {
+    // Build current vs proposed maps + delta. Skip suggestion if no
+    // change of magnitude — small jitters aren't worth a regen.
+    const currentPerBranch: Record<string, number> = {}
+    const proposedPerBranch: Record<string, number> = {}
+    for (let i = 0; i < branches.length; i++) {
+      const cur = crewsByBranch.get(i) ?? 0
+      const next = proposedCounts[i]
+      if (cur > 0) currentPerBranch[branches[i].name] = cur
+      if (next > 0) proposedPerBranch[branches[i].name] = next
+    }
+    const deltaSummary: Array<{ branch_name: string; from: number; to: number; change: number }> = []
+    let totalChanges = 0
+    for (let i = 0; i < branches.length; i++) {
+      const cur = crewsByBranch.get(i) ?? 0
+      const next = proposedCounts[i]
+      if (cur === next) continue
+      deltaSummary.push({
+        branch_name: branches[i].name,
+        from: cur,
+        to: next,
+        change: next - cur,
+      })
+      totalChanges += Math.abs(next - cur)
+    }
+
+    if (totalChanges >= 2 && deltaSummary.length > 0) {
+      const moves = deltaSummary
+        .map((d) =>
+          d.change > 0
+            ? `${d.branch_name} ${d.from}→${d.to} (+${d.change})`
+            : `${d.branch_name} ${d.from}→${d.to} (${d.change})`
+        )
+        .join(', ')
       suggestions.push({
-        id: `cd-${suggestionId++}`,
-        type: 'crew_reduce',
-        priority: 150 + Math.round(idleDays / 10),
-        title: `Reduce crews at ${branchName}: ${crews} → ${crews - 1}`,
+        id: `sr-${suggestionId++}`,
+        type: 'staging_rebalance',
+        priority: 500 + totalChanges, // higher than property moves
+        title: `Restage ${crewCount} crews to match actual demand`,
         summary:
-          `${branchName} has ${crews} crews averaging ${Math.round(idlePerCrew)} idle workdays ` +
-          `each (${Math.round((idlePerCrew / workdays.length) * 100)}% idle). ` +
-          `Removing one crew saves the FTE labor cost without dropping any placed work.`,
-        branch_name: branchName,
-        current_count: crews,
-        proposed_count: crews - 1,
-        idle_days_freed: Math.round(idlePerCrew),
+          `Cycle placed ${totalPlacedWithCoords} visits` +
+          (totalUnplaced > 0 ? ` (and ${totalUnplaced} unplaced)` : '') +
+          `. Optimal staging by proximity: ${moves}. ` +
+          `One apply rewrites the per-branch override; the next regenerate converges in one pass.`,
+        current_per_branch: currentPerBranch,
+        proposed_per_branch: proposedPerBranch,
+        delta_summary: deltaSummary,
+        total_crews: crewCount,
       })
     }
   }
@@ -472,14 +508,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
   const beforeFilter = filtered.length
   filtered = filtered.filter((s) => {
-    if (s.type === 'crew_relocate') {
-      const v = lookupOverride(s.from_branch_name)
-      // Filter ONLY when the user has explicitly zeroed this branch.
-      return v == null ? true : v >= 1
-    }
-    if (s.type === 'crew_reduce') {
-      const v = lookupOverride(s.branch_name)
-      return v == null ? true : v >= 2
+    if (s.type === 'staging_rebalance') {
+      // Compare proposed_per_branch to live override. If they already
+      // match (operator already applied this exact distribution and
+      // hasn't regenerated), suppress the duplicate.
+      if (Object.keys(liveStaging).length === 0) return true
+      const matches = Object.keys(s.proposed_per_branch).every(
+        (k) => liveStaging[k] === s.proposed_per_branch[k]
+      ) && Object.keys(liveStaging).every(
+        (k) => s.proposed_per_branch[k] === liveStaging[k]
+      )
+      return !matches
     }
     return true
   })
