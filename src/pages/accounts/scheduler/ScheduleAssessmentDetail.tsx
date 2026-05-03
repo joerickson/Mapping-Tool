@@ -34,6 +34,7 @@ interface MatchCandidate {
   sl_id: string
   address_line1: string
   score: number
+  distance_feet?: number
 }
 
 interface AssessmentRowData {
@@ -43,8 +44,15 @@ interface AssessmentRowData {
   raw_scheduled_date: string | null
   raw_crew_name: string | null
   raw_location_code: string | null
+  raw_city: string | null
+  raw_state: string | null
+  raw_postal_code: string | null
+  geocoded_lat: number | null
+  geocoded_lng: number | null
+  geocoded_status: string | null
   matched_service_location_id: string | null
   match_confidence: number | null
+  match_distance_feet: number | null
   match_status: string
   match_candidates: MatchCandidate[] | null
   notes: string | null
@@ -115,6 +123,18 @@ export default function ScheduleAssessmentDetailPage() {
   const [mapDates, setMapDates] = useState<string[]>([])
   const [mapCrew, setMapCrew] = useState<string>('')
   const [mapLocationCode, setMapLocationCode] = useState<string>('')
+  const [mapCity, setMapCity] = useState<string>('')
+  const [mapState, setMapState] = useState<string>('')
+  const [mapPostal, setMapPostal] = useState<string>('')
+  const [geocoding, setGeocoding] = useState(false)
+  const [geocodeResult, setGeocodeResult] = useState<{
+    processed: number
+    geocoded: number
+    geocode_failed: number
+    auto_matched: number
+    near_matched: number
+    not_in_portfolio: number
+  } | null>(null)
   const [uploadName, setUploadName] = useState('')
   const [uploadCycleLabel, setUploadCycleLabel] = useState('')
   const [slOptions, setSlOptions] = useState<SLOption[]>([])
@@ -401,6 +421,12 @@ export default function ScheduleAssessmentDetailPage() {
     setMapAddress(addressGuess)
     setMapCrew(crewGuess)
     setMapDates(dateGuesses)
+    // Auto-detect common standalone columns for geocoding context.
+    const norm = (h: string) =>
+      h.replace(/^﻿/, '').trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
+    setMapCity(headers.find((h) => norm(h) === 'city') ?? '')
+    setMapState(headers.find((h) => ['state', 'st', 'province'].includes(norm(h))) ?? '')
+    setMapPostal(headers.find((h) => ['postal_code', 'zip', 'zip_code', 'postcode'].includes(norm(h))) ?? '')
   }
 
   async function submitUpload() {
@@ -429,6 +455,9 @@ export default function ScheduleAssessmentDetailPage() {
             date_columns: mapDates,
             crew: mapCrew || null,
             location_code: mapLocationCode || null,
+            city: mapCity || null,
+            state: mapState || null,
+            postal_code: mapPostal || null,
           },
         }),
       })
@@ -448,6 +477,35 @@ export default function ScheduleAssessmentDetailPage() {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setUploading(false)
+    }
+  }
+
+  async function runGeocodeMatch() {
+    if (!id) return
+    setGeocoding(true)
+    setError(null)
+    setGeocodeResult(null)
+    try {
+      const token = await getToken()
+      const res = await fetch(`/api/v1/schedule-assessments/${id}/geocode-match`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error ?? `Geocode failed (${res.status})`)
+      setGeocodeResult({
+        processed: j.processed,
+        geocoded: j.geocoded,
+        geocode_failed: j.geocode_failed,
+        auto_matched: j.auto_matched,
+        near_matched: j.near_matched,
+        not_in_portfolio: j.not_in_portfolio,
+      })
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setGeocoding(false)
     }
   }
 
@@ -606,6 +664,44 @@ export default function ScheduleAssessmentDetailPage() {
                   </select>
                 </FormField>
               </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <FormField label="City (for geocoding)">
+                  <select
+                    value={mapCity}
+                    onChange={(e) => setMapCity(e.target.value)}
+                    className="h-9 w-full rounded-md border border-border bg-surface px-2 text-sm"
+                  >
+                    <option value="">— none —</option>
+                    {csvHeaders.map((h) => (
+                      <option key={h} value={h}>{h}</option>
+                    ))}
+                  </select>
+                </FormField>
+                <FormField label="State (for geocoding)">
+                  <select
+                    value={mapState}
+                    onChange={(e) => setMapState(e.target.value)}
+                    className="h-9 w-full rounded-md border border-border bg-surface px-2 text-sm"
+                  >
+                    <option value="">— none —</option>
+                    {csvHeaders.map((h) => (
+                      <option key={h} value={h}>{h}</option>
+                    ))}
+                  </select>
+                </FormField>
+                <FormField label="Postal code (for geocoding)">
+                  <select
+                    value={mapPostal}
+                    onChange={(e) => setMapPostal(e.target.value)}
+                    className="h-9 w-full rounded-md border border-border bg-surface px-2 text-sm"
+                  >
+                    <option value="">— none —</option>
+                    {csvHeaders.map((h) => (
+                      <option key={h} value={h}>{h}</option>
+                    ))}
+                  </select>
+                </FormField>
+              </div>
               <div>
                 <p className="text-xs font-medium text-fg mb-1.5">Visit-date columns *</p>
                 <p className="text-[11px] text-fg-subtle mb-2">
@@ -671,6 +767,9 @@ export default function ScheduleAssessmentDetailPage() {
                             )}
                             {h === mapCrew && <span className="ml-1 text-success">[crew]</span>}
                             {h === mapLocationCode && <span className="ml-1 text-fg-subtle">[code]</span>}
+                            {h === mapCity && <span className="ml-1 text-fg-subtle">[city]</span>}
+                            {h === mapState && <span className="ml-1 text-fg-subtle">[state]</span>}
+                            {h === mapPostal && <span className="ml-1 text-fg-subtle">[zip]</span>}
                           </th>
                         ))}
                       </tr>
@@ -759,7 +858,39 @@ export default function ScheduleAssessmentDetailPage() {
           </Card>
         )}
 
-        {/* Step 2: Match summary */}
+        {/* Step 2a: Geocode & match — primary resolver */}
+        {rows.length > 0 && (
+          <Card className="space-y-3">
+            <CardTitle>Geocode &amp; match by location</CardTitle>
+            <p className="text-sm text-fg-muted">
+              The reliable way to resolve uploaded rows: geocode each
+              address via Google, then match each row to the nearest
+              service location by lat/lng. Within 50ft → auto-match.
+              50–500ft → review (likely multi-SL building). Beyond →
+              flagged as not in this client's portfolio (you can add
+              them in a follow-up step).
+            </p>
+            {geocodeResult && (
+              <div className="rounded-md border border-success/30 bg-success-subtle/40 p-3 text-sm space-y-1">
+                <p className="font-semibold text-fg">Geocode &amp; match complete</p>
+                <p className="text-fg-muted">
+                  Processed {geocodeResult.processed} ({geocodeResult.geocoded} geocoded fresh,
+                  {' '}{geocodeResult.geocode_failed} failed) →{' '}
+                  <span className="text-success font-tabular">{geocodeResult.auto_matched} auto-matched</span>,{' '}
+                  <span className="text-warning font-tabular">{geocodeResult.near_matched} near-matches</span>,{' '}
+                  <span className="text-fg-subtle font-tabular">{geocodeResult.not_in_portfolio} not in portfolio</span>.
+                </p>
+              </div>
+            )}
+            <div>
+              <Button onClick={runGeocodeMatch} loading={geocoding}>
+                {geocodeResult ? 'Re-run geocode &amp; match' : 'Geocode & match'}
+              </Button>
+            </div>
+          </Card>
+        )}
+
+        {/* Step 2b: Match summary */}
         {rows.length > 0 && (
           <Card className="space-y-3">
             <CardTitle>Address match summary</CardTitle>
