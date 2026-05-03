@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { Upload, AlertCircle, CheckCircle2 } from 'lucide-react'
 import * as XLSX from 'xlsx'
+import Papa from 'papaparse'
 import { useAuth } from '../../../hooks/useAuth'
 import AppShell from '../../../components/layout/AppShell'
 import Button from '../../../components/ui/Button'
@@ -97,6 +98,14 @@ export default function ScheduleAssessmentDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadCsv, setUploadCsv] = useState('')
+  // Column-mapping preview state. After file selection, we parse just
+  // the headers + a few sample rows in the browser, show a mapping
+  // table the operator can adjust, then submit on confirm.
+  const [csvHeaders, setCsvHeaders] = useState<string[]>([])
+  const [csvSample, setCsvSample] = useState<Array<Record<string, string>>>([])
+  const [mapAddress, setMapAddress] = useState<string>('')
+  const [mapDates, setMapDates] = useState<string[]>([])
+  const [mapCrew, setMapCrew] = useState<string>('')
   const [uploadName, setUploadName] = useState('')
   const [uploadCycleLabel, setUploadCycleLabel] = useState('')
   const [slOptions, setSlOptions] = useState<SLOption[]>([])
@@ -308,39 +317,92 @@ export default function ScheduleAssessmentDetailPage() {
     }
   }, [clientId, slOptions.length, getToken])
 
+  function autoClassify(header: string): 'address' | 'date' | 'crew' | null {
+    const k = header
+      .replace(/^﻿/, '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '_')
+      .replace(/[^a-z0-9_]/g, '')
+    if (!k) return null
+    if (
+      ['address', 'property', 'building', 'location'].some((s) => k.includes(s)) ||
+      k.includes('site_name') || k.includes('site_address') || k === 'site'
+    ) return 'address'
+    if (['date', 'visit', 'scheduled', 'service'].some((s) => k.includes(s))) return 'date'
+    if (['crew', 'team', 'tech', 'worker'].some((s) => k.includes(s))) return 'crew'
+    return null
+  }
+
+  function visitIndexFromHeader(header: string): number {
+    const k = header.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
+    const ords: Record<string, number> = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5 }
+    for (const [w, i] of Object.entries(ords)) if (k.startsWith(w)) return i
+    const num = k.match(/(?:^|_)(\d+)(?:st|nd|rd|th)?(?:_|$)/)?.[1]
+    return num ? parseInt(num, 10) : 0
+  }
+
   async function handleFileUpload(file: File) {
     if (!id) return
     setError(null)
+    setCsvHeaders([])
+    setCsvSample([])
+    setMapAddress('')
+    setMapDates([])
+    setMapCrew('')
+
+    let csv = ''
     const lower = file.name.toLowerCase()
     if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
-      // Parse xlsx in the browser, convert the first sheet to CSV,
-      // and feed the existing CSV pipeline. xlsx is already a
-      // dependency for the upload-review flow elsewhere in the app.
       try {
         const buf = await file.arrayBuffer()
         const wb = XLSX.read(buf, { type: 'array' })
         const sheetName = wb.SheetNames[0]
         if (!sheetName) throw new Error('Workbook has no sheets.')
         const sheet = wb.Sheets[sheetName]
-        // raw: false formats values (dates as strings); we still re-parse
-        // dates server-side for normalization. blankrows: false drops
-        // empty rows the spreadsheet may have at the bottom.
-        const csv = XLSX.utils.sheet_to_csv(sheet, { blankrows: false })
-        setUploadCsv(csv)
-        setUploadName(file.name)
+        csv = XLSX.utils.sheet_to_csv(sheet, { blankrows: false })
       } catch (e) {
         setError(e instanceof Error ? `xlsx parse failed: ${e.message}` : String(e))
+        return
       }
-      return
+    } else {
+      csv = await file.text()
     }
-    // CSV: read as text directly.
-    const text = await file.text()
-    setUploadCsv(text)
+    setUploadCsv(csv)
     setUploadName(file.name)
+
+    // Parse just the headers + a few sample rows for the mapping wizard.
+    const parsed = Papa.parse<Record<string, string>>(csv, {
+      header: true,
+      skipEmptyLines: 'greedy',
+      preview: 6,
+    })
+    const headers = parsed.meta.fields ?? []
+    setCsvHeaders(headers)
+    setCsvSample(((parsed.data ?? []) as Record<string, string>[]).slice(0, 5))
+
+    // Pre-fill mapping via the same heuristics the server uses, so the
+    // common case is one click. The user can override anything.
+    const addressGuess = headers.find((h) => autoClassify(h) === 'address') ?? ''
+    const crewGuess = headers.find((h) => autoClassify(h) === 'crew') ?? ''
+    const dateGuesses = headers
+      .filter((h) => autoClassify(h) === 'date')
+      .sort((a, b) => visitIndexFromHeader(a) - visitIndexFromHeader(b))
+    setMapAddress(addressGuess)
+    setMapCrew(crewGuess)
+    setMapDates(dateGuesses)
   }
 
   async function submitUpload() {
     if (!uploadCsv || !id) return
+    if (!mapAddress) {
+      setError('Pick an Address column before uploading.')
+      return
+    }
+    if (mapDates.length === 0) {
+      setError('Pick at least one Visit-date column before uploading.')
+      return
+    }
     setUploading(true)
     setError(null)
     try {
@@ -352,6 +414,11 @@ export default function ScheduleAssessmentDetailPage() {
           filename: uploadName || 'upload.csv',
           cycle_label: uploadCycleLabel || null,
           csv: uploadCsv,
+          column_mapping: {
+            address: mapAddress,
+            date_columns: mapDates,
+            crew: mapCrew || null,
+          },
         }),
       })
       const j = await res.json()
@@ -359,6 +426,11 @@ export default function ScheduleAssessmentDetailPage() {
       setUploadCsv('')
       setUploadName('')
       setUploadCycleLabel('')
+      setCsvHeaders([])
+      setCsvSample([])
+      setMapAddress('')
+      setMapDates([])
+      setMapCrew('')
       await load()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -462,17 +534,132 @@ export default function ScheduleAssessmentDetailPage() {
               />
             </FormField>
           </div>
-          {uploadCsv && (
-            <FormField label="Preview (first 200 chars)">
-              <Textarea
-                rows={3}
-                readOnly
-                value={uploadCsv.slice(0, 200) + (uploadCsv.length > 200 ? '…' : '')}
-              />
-            </FormField>
+          {csvHeaders.length > 0 && (
+            <div className="space-y-3 rounded-md border border-border bg-surface-subtle/40 p-3">
+              <p className="text-[10px] uppercase tracking-wide text-fg-subtle">
+                Map columns
+              </p>
+              <p className="text-xs text-fg-muted">
+                Auto-detected best guesses below. Adjust any that are wrong,
+                add additional visit-date columns if your spreadsheet has
+                them, then click Upload.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <FormField label="Address column *">
+                  <select
+                    value={mapAddress}
+                    onChange={(e) => setMapAddress(e.target.value)}
+                    className="h-9 w-full rounded-md border border-border bg-surface px-2 text-sm"
+                  >
+                    <option value="">— pick column —</option>
+                    {csvHeaders.map((h) => (
+                      <option key={h} value={h}>{h}</option>
+                    ))}
+                  </select>
+                </FormField>
+                <FormField label="Crew column (optional)">
+                  <select
+                    value={mapCrew}
+                    onChange={(e) => setMapCrew(e.target.value)}
+                    className="h-9 w-full rounded-md border border-border bg-surface px-2 text-sm"
+                  >
+                    <option value="">— none —</option>
+                    {csvHeaders.map((h) => (
+                      <option key={h} value={h}>{h}</option>
+                    ))}
+                  </select>
+                </FormField>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-fg mb-1.5">Visit-date columns *</p>
+                <p className="text-[11px] text-fg-subtle mb-2">
+                  Each non-empty cell in these columns becomes one visit row.
+                  Order matters (visit 1 first, visit 2 second, etc.).
+                </p>
+                <div className="space-y-1.5">
+                  {mapDates.map((col, i) => (
+                    <div key={`${col}-${i}`} className="flex items-center gap-2">
+                      <span className="text-[11px] text-fg-subtle w-12 shrink-0">Visit {i + 1}</span>
+                      <select
+                        value={col}
+                        onChange={(e) => {
+                          const v = e.target.value
+                          setMapDates((prev) => {
+                            if (!v) return prev.filter((_, j) => j !== i)
+                            const next = [...prev]
+                            next[i] = v
+                            return next
+                          })
+                        }}
+                        className="h-8 flex-1 rounded-md border border-border bg-surface px-2 text-xs"
+                      >
+                        <option value="">— remove —</option>
+                        {csvHeaders.map((h) => (
+                          <option key={h} value={h}>{h}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-fg-subtle w-12 shrink-0">Visit {mapDates.length + 1}</span>
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        const v = e.target.value
+                        if (v) setMapDates((prev) => [...prev, v])
+                      }}
+                      className="h-8 flex-1 rounded-md border border-border bg-surface px-2 text-xs"
+                    >
+                      <option value="">— add column —</option>
+                      {csvHeaders
+                        .filter((h) => !mapDates.includes(h))
+                        .map((h) => (
+                          <option key={h} value={h}>{h}</option>
+                        ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+              {csvSample.length > 0 && (
+                <div className="overflow-x-auto">
+                  <p className="text-[11px] text-fg-subtle mb-1">Sample rows:</p>
+                  <table className="text-[11px] border-collapse">
+                    <thead>
+                      <tr>
+                        {csvHeaders.map((h) => (
+                          <th key={h} className="border border-border px-1.5 py-0.5 bg-surface text-left whitespace-nowrap">
+                            {h}
+                            {h === mapAddress && <span className="ml-1 text-accent">[addr]</span>}
+                            {mapDates.includes(h) && (
+                              <span className="ml-1 text-warning">[v{mapDates.indexOf(h) + 1}]</span>
+                            )}
+                            {h === mapCrew && <span className="ml-1 text-success">[crew]</span>}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {csvSample.map((r, i) => (
+                        <tr key={i}>
+                          {csvHeaders.map((h) => (
+                            <td key={h} className="border border-border px-1.5 py-0.5 text-fg-muted whitespace-nowrap">
+                              {r[h] ?? ''}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           )}
           <div>
-            <Button onClick={submitUpload} disabled={!uploadCsv || uploading} loading={uploading}>
+            <Button
+              onClick={submitUpload}
+              disabled={!uploadCsv || !mapAddress || mapDates.length === 0 || uploading}
+              loading={uploading}
+            >
               <Upload className="h-4 w-4" />
               Upload
             </Button>

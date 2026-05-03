@@ -19,6 +19,25 @@ export interface ParseError {
 export interface ParseResult {
   rows: ParsedRow[]
   errors: ParseError[]
+  // Echoed for debugging / UI display.
+  resolved_mapping?: ResolvedMapping
+}
+
+// Operator-supplied explicit mapping. When passed, overrides the
+// header auto-classifier entirely. Each mapping field references a
+// raw column header from the CSV.
+export interface ColumnMapping {
+  address?: string
+  // Visit-date columns in order (each emits one row per non-empty cell).
+  // [first_visit_col, second_visit_col, ...] or [single_date_col].
+  date_columns?: string[]
+  crew?: string | null
+}
+
+export interface ResolvedMapping {
+  address: string
+  date_columns: string[]
+  crew: string | null
 }
 
 // Substrings that, when found in a normalized header, mark it as an
@@ -145,7 +164,7 @@ function parseDate(s: string): string | null {
   return null
 }
 
-export function parseScheduleCsv(csv: string): ParseResult {
+export function parseScheduleCsv(csv: string, mapping?: ColumnMapping): ParseResult {
   const result = Papa.parse<Record<string, string>>(csv, {
     header: true,
     skipEmptyLines: 'greedy',
@@ -157,26 +176,40 @@ export function parseScheduleCsv(csv: string): ParseResult {
       errors.push({ line: (e.row ?? 0) + 2, reason: e.message })
     }
   }
-  // Classify every column.
   const fields = result.meta.fields ?? []
-  const headers = fields.map((f) => normalizeHeader(f))
 
-  // Single-date columns and per-visit-index date columns.
-  const addressCols = headers.filter((h) => h.semantic === 'address').map((h) => h.raw)
-  const crewCols = headers.filter((h) => h.semantic === 'crew').map((h) => h.raw)
-  const dateCols = headers.filter((h) => h.semantic === 'date')
-  // Sort numbered visit dates by visit_index so visit 1 comes before
-  // visit 2 in the output.
-  const orderedDateCols = [...dateCols].sort((a, b) => {
-    const ai = a.visit_index ?? 0
-    const bi = b.visit_index ?? 0
-    if (ai !== bi) return ai - bi
-    return 0
-  })
+  // Resolve mapping. Explicit mapping (operator-provided) takes
+  // precedence. Otherwise auto-detect via the header classifier.
+  let resolvedAddress: string | null = null
+  let resolvedDateCols: string[] = []
+  let resolvedCrew: string | null = null
+  if (mapping) {
+    if (mapping.address && fields.includes(mapping.address)) {
+      resolvedAddress = mapping.address
+    }
+    if (Array.isArray(mapping.date_columns)) {
+      resolvedDateCols = mapping.date_columns.filter((c) => fields.includes(c))
+    }
+    if (mapping.crew && fields.includes(mapping.crew)) {
+      resolvedCrew = mapping.crew
+    }
+  }
+  if (!resolvedAddress || resolvedDateCols.length === 0) {
+    const headers = fields.map((f) => normalizeHeader(f))
+    const addressCols = headers.filter((h) => h.semantic === 'address').map((h) => h.raw)
+    const crewCols = headers.filter((h) => h.semantic === 'crew').map((h) => h.raw)
+    const dateCols = headers.filter((h) => h.semantic === 'date')
+    // Sort numbered visit dates by visit_index so visit 1 < visit 2.
+    const orderedDateCols = [...dateCols]
+      .sort((a, b) => (a.visit_index ?? 0) - (b.visit_index ?? 0))
+      .map((h) => h.raw)
+    if (!resolvedAddress) resolvedAddress = addressCols[0] ?? null
+    if (resolvedDateCols.length === 0) resolvedDateCols = orderedDateCols
+    if (!resolvedCrew) resolvedCrew = crewCols[0] ?? null
+  }
 
-  if (addressCols.length === 0 || orderedDateCols.length === 0) {
-    // Build a per-header diagnostic so the operator can see what we
-    // classified each column as (and why it didn't match).
+  if (!resolvedAddress || resolvedDateCols.length === 0) {
+    const headers = fields.map((f) => normalizeHeader(f))
     const classified = headers
       .map(
         (h) =>
@@ -191,11 +224,14 @@ export function parseScheduleCsv(csv: string): ParseResult {
           reason:
             'CSV must include an "address"-like column AND at least one date column ' +
             '(scheduled_date, first_visit_date, second_visit_date, etc.). ' +
-            `Headers seen: ${classified}.`,
+            `Headers seen: ${classified}. Tip: pass an explicit column_mapping to skip auto-detection.`,
         },
       ],
     }
   }
+  const orderedDateCols: Array<{ raw: string }> = resolvedDateCols.map((raw) => ({ raw }))
+  const addressCols = [resolvedAddress]
+  const crewCols = resolvedCrew ? [resolvedCrew] : []
 
   for (let i = 0; i < (result.data ?? []).length; i++) {
     const row = result.data[i] as Record<string, string>
@@ -229,5 +265,44 @@ export function parseScheduleCsv(csv: string): ParseResult {
       errors.push({ line: i + 2, reason: 'no scheduled date columns populated' })
     }
   }
-  return { rows, errors }
+  return {
+    rows,
+    errors,
+    resolved_mapping: {
+      address: resolvedAddress,
+      date_columns: resolvedDateCols,
+      crew: resolvedCrew,
+    },
+  }
+}
+
+// Lightweight header preview — used by the upload wizard to populate
+// the column-mapping dropdowns without parsing every row first.
+export function previewCsvHeaders(csv: string, sampleRows = 5): {
+  headers: string[]
+  sample: Array<Record<string, string>>
+  auto_mapping: ResolvedMapping
+} {
+  const result = Papa.parse<Record<string, string>>(csv, {
+    header: true,
+    skipEmptyLines: 'greedy',
+    preview: sampleRows + 1,
+  })
+  const fields = result.meta.fields ?? []
+  const headers = fields.map((f) => normalizeHeader(f))
+  const addressCol = headers.find((h) => h.semantic === 'address')?.raw ?? ''
+  const dateCols = headers
+    .filter((h) => h.semantic === 'date')
+    .sort((a, b) => (a.visit_index ?? 0) - (b.visit_index ?? 0))
+    .map((h) => h.raw)
+  const crewCol = headers.find((h) => h.semantic === 'crew')?.raw ?? null
+  return {
+    headers: fields,
+    sample: (result.data ?? []).slice(0, sampleRows) as Array<Record<string, string>>,
+    auto_mapping: {
+      address: addressCol,
+      date_columns: dateCols,
+      crew: crewCol,
+    },
+  }
 }
