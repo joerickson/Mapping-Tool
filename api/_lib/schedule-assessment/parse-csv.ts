@@ -10,6 +10,9 @@ export interface ParsedRow {
   raw_scheduled_date: string | null // ISO YYYY-MM-DD
   raw_crew_name: string | null
   raw_location_code: string | null
+  raw_city: string | null
+  raw_state: string | null
+  raw_postal_code: string | null
 }
 
 export interface ParseError {
@@ -33,11 +36,12 @@ export interface ColumnMapping {
   // [first_visit_col, second_visit_col, ...] or [single_date_col].
   date_columns?: string[]
   crew?: string | null
-  // Optional location_code column. When present, the matcher uses an
-  // exact lookup against service_locations.location_code BEFORE
-  // fuzzy address matching — exact-match wins are far more reliable
-  // than Jaccard scoring on abbreviated addresses.
   location_code?: string | null
+  // Geocoding disambiguators. When mapped, get persisted on each row
+  // and used to build the geocoder query (street + city + state + zip).
+  city?: string | null
+  state?: string | null
+  postal_code?: string | null
 }
 
 export interface ResolvedMapping {
@@ -45,6 +49,9 @@ export interface ResolvedMapping {
   date_columns: string[]
   crew: string | null
   location_code: string | null
+  city: string | null
+  state: string | null
+  postal_code: string | null
 }
 
 // Substrings that, when found in a normalized header, mark it as an
@@ -205,6 +212,24 @@ export function parseScheduleCsv(csv: string, mapping?: ColumnMapping): ParseRes
       resolvedLocationCode = mapping.location_code
     }
   }
+  let resolvedCity: string | null = null
+  let resolvedState: string | null = null
+  let resolvedPostal: string | null = null
+  if (mapping) {
+    if (mapping.city && fields.includes(mapping.city)) resolvedCity = mapping.city
+    if (mapping.state && fields.includes(mapping.state)) resolvedState = mapping.state
+    if (mapping.postal_code && fields.includes(mapping.postal_code)) {
+      resolvedPostal = mapping.postal_code
+    }
+  }
+  // Auto-detect city / state / postal even when not explicitly mapped —
+  // these are common standalone columns and the geocoder needs them.
+  for (const f of fields) {
+    const k = f.replace(/^﻿/, '').trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
+    if (!resolvedCity && k === 'city') resolvedCity = f
+    if (!resolvedState && (k === 'state' || k === 'st' || k === 'province')) resolvedState = f
+    if (!resolvedPostal && (k === 'postal_code' || k === 'zip' || k === 'zip_code' || k === 'postcode')) resolvedPostal = f
+  }
   if (!resolvedAddress || resolvedDateCols.length === 0) {
     const headers = fields.map((f) => normalizeHeader(f))
     const addressCols = headers.filter((h) => h.semantic === 'address').map((h) => h.raw)
@@ -251,6 +276,9 @@ export function parseScheduleCsv(csv: string, mapping?: ColumnMapping): ParseRes
     const locationCode = resolvedLocationCode
       ? (row[resolvedLocationCode] ?? '').toString().trim()
       : ''
+    const city = resolvedCity ? (row[resolvedCity] ?? '').toString().trim() : ''
+    const state = resolvedState ? (row[resolvedState] ?? '').toString().trim() : ''
+    const postal = resolvedPostal ? (row[resolvedPostal] ?? '').toString().trim() : ''
     if (!address && !locationCode) {
       errors.push({ line: i + 2, reason: 'missing address (and no location_code)' })
       continue
@@ -273,6 +301,9 @@ export function parseScheduleCsv(csv: string, mapping?: ColumnMapping): ParseRes
         raw_scheduled_date: parsed,
         raw_crew_name: crew || null,
         raw_location_code: locationCode || null,
+        raw_city: city || null,
+        raw_state: state || null,
+        raw_postal_code: postal || null,
       })
       emittedAny = true
     }
@@ -288,6 +319,9 @@ export function parseScheduleCsv(csv: string, mapping?: ColumnMapping): ParseRes
       date_columns: resolvedDateCols,
       crew: resolvedCrew,
       location_code: resolvedLocationCode,
+      city: resolvedCity,
+      state: resolvedState,
+      postal_code: resolvedPostal,
     },
   }
 }
@@ -320,6 +354,9 @@ export function previewCsvHeaders(csv: string, sampleRows = 5): {
       date_columns: dateCols,
       crew: crewCol,
       location_code: null,
+      city: null,
+      state: null,
+      postal_code: null,
     },
   }
 }

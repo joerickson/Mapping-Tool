@@ -1,17 +1,14 @@
 // POST /api/v1/schedule-assessments/[id]/upload
 //
-// Body: { filename, cycle_label?, csv } where csv is the raw CSV
-// content as a string. Parses it, persists a file row + N parsed
-// rows in 'pending' state, then runs fuzzy matching against the
-// client's service_locations and updates each row's match status.
-//
-// Returns the file id, parse errors, and a summary of match
-// outcomes.
+// Parses + persists raw CSV rows. Resolves obvious matches via
+// location_code exact lookup (free, no API calls) but defers the
+// real address resolution to /geocode-match — that step geocodes
+// each unique address via Google and matches to nearby SLs by
+// lat/lng, which is dramatically more reliable than string fuzzy.
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createAdminClient } from '../../../_lib/supabase.js'
 import { authenticateRequest } from '../../../_lib/auth.js'
 import { parseScheduleCsv } from '../../../_lib/schedule-assessment/parse-csv.js'
-import { matchAddresses } from '../../../_lib/schedule-assessment/match-addresses.js'
 import { resolveClientIds } from '../../../_lib/clients/resolve-client-ids.js'
 
 export const config = {
@@ -34,6 +31,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       date_columns?: string[]
       crew?: string | null
       location_code?: string | null
+      city?: string | null
+      state?: string | null
+      postal_code?: string | null
     }
   }
   if (!body.csv) return res.status(400).json({ error: 'csv required' })
@@ -96,6 +96,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       raw_scheduled_date: r.raw_scheduled_date,
       raw_crew_name: r.raw_crew_name,
       raw_location_code: r.raw_location_code,
+      raw_city: r.raw_city,
+      raw_state: r.raw_state,
+      raw_postal_code: r.raw_postal_code,
     }))
     const { data: inserted, error: insErr } = await db
       .from('schedule_assessment_rows')
@@ -110,7 +113,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Resolve client_ids (combined → members) for SL lookups.
   const memberIds = await resolveClientIds(db, clientId)
 
-  // Step A — exact location_code matches first (no fuzzy). Build a
+  // Step A — exact location_code matches (free, no API calls). Build a
   // code-keyed lookup of this client's SLs.
   const codeMap = new Map<string, string>()
   if (insertedRows.some((r) => r.raw_location_code)) {
@@ -129,55 +132,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (arr.length < PAGE) break
     }
   }
-  const codeMatched = new Map<string, string>() // row_id → sl_id
-  const remainingForFuzzy = insertedRows.filter((r) => {
-    if (!r.raw_location_code) return true
-    const slId = codeMap.get(r.raw_location_code.trim().toLowerCase())
-    if (slId) {
-      codeMatched.set(r.id, slId)
-      return false
-    }
-    return true
-  })
-
-  // Step B — fuzzy match the rest by address.
-  const matches = await matchAddresses(
-    db,
-    memberIds,
-    remainingForFuzzy.map((r) => ({ row_id: r.id, raw_address: r.raw_address }))
-  )
-
-  // Persist all results. Each row gets matched_service_location_id +
-  // confidence + status + match_candidates (top 3 SL options for
-  // inline review tray rendering).
   const updates: Array<{
     id: string
     matched_service_location_id: string | null
     match_confidence: number | null
     match_status: string
-    match_candidates: any
   }> = []
-  for (const [rowId, slId] of codeMatched) {
+  let codeMatchedCount = 0
+  for (const r of insertedRows) {
+    if (r.raw_location_code) {
+      const slId = codeMap.get(r.raw_location_code.trim().toLowerCase())
+      if (slId) {
+        updates.push({
+          id: r.id,
+          matched_service_location_id: slId,
+          match_confidence: 1.0,
+          match_status: 'auto',
+        })
+        codeMatchedCount++
+        continue
+      }
+    }
+    // Defer everything else to the geocode-match step. Mark as
+    // 'pending' so the operator sees it needs the geocode pass.
     updates.push({
-      id: rowId,
-      matched_service_location_id: slId,
-      match_confidence: 1.0,
-      match_status: 'auto',
-      match_candidates: null,
-    })
-  }
-  for (const m of matches) {
-    updates.push({
-      id: m.row_id,
-      matched_service_location_id: m.matched_sl_id,
-      match_confidence: m.confidence,
-      match_status:
-        m.match_status === 'auto'
-          ? 'auto'
-          : m.match_status === 'unmatched'
-            ? 'unmatched'
-            : 'pending',
-      match_candidates: m.candidates,
+      id: r.id,
+      matched_service_location_id: null,
+      match_confidence: null,
+      match_status: 'pending',
     })
   }
   for (let i = 0; i < updates.length; i += INSERT_CHUNK) {
@@ -191,8 +173,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 
-  // Bump assessment status to 'matched' if anything matched; otherwise leave 'draft'.
-  if (matches.some((m) => m.match_status === 'auto')) {
+  if (codeMatchedCount > 0) {
     await db
       .from('schedule_assessments')
       .update({ status: 'matched', updated_at: new Date().toISOString() })
@@ -201,11 +182,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const summary = {
     rows_parsed: rows.length,
-    auto_matched: codeMatched.size + matches.filter((m) => m.match_status === 'auto').length,
-    code_matched: codeMatched.size,
-    review_needed: matches.filter((m) => m.match_status === 'pending').length,
-    unmatched: matches.filter((m) => m.match_status === 'unmatched').length,
+    code_matched: codeMatchedCount,
+    needs_geocode: insertedRows.length - codeMatchedCount,
     parse_errors: errors,
+    note:
+      insertedRows.length - codeMatchedCount > 0
+        ? `Click "Geocode & match" next to resolve the remaining ${insertedRows.length - codeMatchedCount} rows by address → lat/lng → nearest SL.`
+        : 'All rows matched via location_code.',
   }
   return res.status(201).json({ file_id: fileId, summary })
 }
