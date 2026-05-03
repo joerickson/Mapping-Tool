@@ -432,6 +432,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // before the user regenerates — the cycle still shows the old staging,
   // so without this check we'd offer stale suggestions like "relocate a
   // crew from Lindon" after Lindon's count was already zeroed.
+  //
+  // IMPORTANT: the override is PARTIAL. A branch missing from it doesn't
+  // mean 0 crews — it just means the user hasn't explicitly staged
+  // that branch (the engine fills with defaults / heuristics). So we
+  // only treat a branch as "stale-zeroed" when it appears in the
+  // override with a value < the threshold, never when it's absent.
   const { data: conRow } = await db
     .from('account_operational_constraints')
     .select('crew_count_per_branch_override')
@@ -446,22 +452,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     for (const [k, v] of Object.entries(overrideSrc)) {
       if (k === '__roving') continue
       const n = Math.floor(Number(v) || 0)
-      if (n > 0) liveStaging[k] = n
+      // Track even zero entries — a 0 means "explicitly emptied" (relevant)
+      // and skip the negative-rebalance fast-path. Both cases need the key
+      // present so the lookup can distinguish "absent" from "explicitly 0".
+      if (Number.isFinite(n)) liveStaging[k] = n
     }
   }
-  // Lookup is case-insensitive on branch names.
-  const liveLookup = (name: string): number => {
-    if (Object.keys(liveStaging).length === 0) return Number.POSITIVE_INFINITY
+  const lookupOverride = (name: string): number | null => {
+    if (Object.keys(liveStaging).length === 0) return null
     if (liveStaging[name] != null) return liveStaging[name]
     const ci = Object.entries(liveStaging).find(
       ([k]) => k.toLowerCase() === name.toLowerCase()
     )
-    return ci ? ci[1] : 0
+    return ci ? ci[1] : null // null = not in override (trust engine)
   }
   const beforeFilter = filtered.length
   filtered = filtered.filter((s) => {
-    if (s.type === 'crew_relocate') return liveLookup(s.from_branch_name) >= 1
-    if (s.type === 'crew_reduce') return liveLookup(s.branch_name) >= 2
+    if (s.type === 'crew_relocate') {
+      const v = lookupOverride(s.from_branch_name)
+      // Filter ONLY when the user has explicitly zeroed this branch.
+      return v == null ? true : v >= 1
+    }
+    if (s.type === 'crew_reduce') {
+      const v = lookupOverride(s.branch_name)
+      return v == null ? true : v >= 2
+    }
     return true
   })
   const stalenessSkipped = beforeFilter - filtered.length
