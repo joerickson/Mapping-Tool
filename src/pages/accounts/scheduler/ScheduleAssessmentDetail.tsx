@@ -622,6 +622,48 @@ export default function ScheduleAssessmentDetailPage() {
       ),
     [rows]
   )
+  // Multi-visit uploads emit one row per visit, so the same building
+  // shows up N times. Group by address so the operator sees one entry
+  // per distinct property with a visit count, and so the bulk "Add"
+  // creates one SL per address (server-side dedup also enforces this).
+  const notInPortfolioGroups = useMemo(() => {
+    const norm = (s: string | null) => (s ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+    const m = new Map<
+      string,
+      {
+        key: string
+        address: string
+        city: string | null
+        state: string | null
+        zip: string | null
+        lat: number
+        lng: number
+        dates: string[]
+        rowIds: string[]
+      }
+    >()
+    for (const r of notInPortfolioRows) {
+      const key = `${norm(r.raw_address)}|${norm(r.raw_city)}|${norm(r.raw_state)}|${norm(r.raw_postal_code)}`
+      const existing = m.get(key)
+      if (existing) {
+        existing.rowIds.push(r.id)
+        if (r.raw_scheduled_date) existing.dates.push(r.raw_scheduled_date)
+      } else {
+        m.set(key, {
+          key,
+          address: r.raw_address,
+          city: r.raw_city,
+          state: r.raw_state,
+          zip: r.raw_postal_code,
+          lat: r.geocoded_lat as number,
+          lng: r.geocoded_lng as number,
+          dates: r.raw_scheduled_date ? [r.raw_scheduled_date] : [],
+          rowIds: [r.id],
+        })
+      }
+    }
+    return Array.from(m.values()).sort((a, b) => a.address.localeCompare(b.address))
+  }, [notInPortfolioRows])
   // Rows that couldn't be geocoded at all — bad address data.
   const ungeocodableRows = useMemo(
     () =>
@@ -1174,17 +1216,26 @@ export default function ScheduleAssessmentDetailPage() {
           </Card>
         )}
 
-        {/* Not in portfolio: rows that geocoded fine but no SL was nearby. */}
-        {notInPortfolioRows.length > 0 && (
+        {/* Not in portfolio: rows that geocoded fine but no SL was nearby.
+            Grouped by address so multi-visit duplicates collapse into one row. */}
+        {notInPortfolioGroups.length > 0 && (
           <Card padding="none">
             <div className="px-4 py-3 border-b border-border space-y-2">
-              <CardTitle>Not in portfolio ({notInPortfolioRows.length})</CardTitle>
+              <CardTitle>
+                Not in portfolio ({notInPortfolioGroups.length} address
+                {notInPortfolioGroups.length === 1 ? '' : 'es'}
+                {notInPortfolioRows.length !== notInPortfolioGroups.length
+                  ? ` · ${notInPortfolioRows.length} visits`
+                  : ''}
+                )
+              </CardTitle>
               <p className="text-xs text-fg-muted">
                 Google geocoded these addresses successfully, but no existing
                 service location is within 500ft. These look like real
-                properties not yet in your portfolio. Add them in one click —
-                we'll create the property + service location with the
-                already-resolved coordinates.
+                properties not yet in your portfolio. Multi-visit schedules
+                show one row per address with a visit count — adding will
+                create one property + service location for each distinct
+                address and link every visit row to it.
               </p>
               <div className="flex items-center gap-2 flex-wrap">
                 {memberClients.length > 0 && (
@@ -1202,11 +1253,13 @@ export default function ScheduleAssessmentDetailPage() {
                 )}
                 <Button
                   size="sm"
-                  onClick={() => addToPortfolio(notInPortfolioRows.map((r) => r.id))}
+                  onClick={() =>
+                    addToPortfolio(notInPortfolioGroups.flatMap((g) => g.rowIds))
+                  }
                   loading={addingToPortfolio}
                   disabled={!targetClientId}
                 >
-                  Add all {notInPortfolioRows.length} to portfolio
+                  Add all {notInPortfolioGroups.length} to portfolio
                 </Button>
               </div>
             </div>
@@ -1215,27 +1268,29 @@ export default function ScheduleAssessmentDetailPage() {
                 <TableRow>
                   <TableHead>Raw address</TableHead>
                   <TableHead>City / state / zip</TableHead>
-                  <TableHead>Date</TableHead>
+                  <TableHead className="text-right">Visits</TableHead>
                   <TableHead className="text-right">Lat / lng</TableHead>
                   <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {notInPortfolioRows.slice(0, 200).map((r) => (
-                  <TableRow key={r.id}>
-                    <TableCell className="text-xs">{r.raw_address}</TableCell>
+                {notInPortfolioGroups.slice(0, 200).map((g) => (
+                  <TableRow key={g.key}>
+                    <TableCell className="text-xs">{g.address}</TableCell>
                     <TableCell className="text-xs text-fg-muted">
-                      {[r.raw_city, r.raw_state, r.raw_postal_code].filter(Boolean).join(', ') || '—'}
+                      {[g.city, g.state, g.zip].filter(Boolean).join(', ') || '—'}
                     </TableCell>
-                    <TableCell className="text-xs font-tabular">{r.raw_scheduled_date ?? '—'}</TableCell>
+                    <TableCell numeric className="text-xs font-tabular">
+                      {g.rowIds.length}
+                    </TableCell>
                     <TableCell numeric className="text-xs font-tabular text-fg-muted">
-                      {r.geocoded_lat?.toFixed(4)}, {r.geocoded_lng?.toFixed(4)}
+                      {g.lat.toFixed(4)}, {g.lng.toFixed(4)}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
                         <Button
                           size="sm"
-                          onClick={() => addToPortfolio([r.id])}
+                          onClick={() => addToPortfolio(g.rowIds)}
                           loading={addingToPortfolio}
                           disabled={!targetClientId}
                         >
@@ -1244,7 +1299,11 @@ export default function ScheduleAssessmentDetailPage() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          onClick={() => updateRow(r.id, { match_status: 'skipped' })}
+                          onClick={() =>
+                            Promise.all(
+                              g.rowIds.map((id) => updateRow(id, { match_status: 'skipped' }))
+                            )
+                          }
                         >
                           Skip
                         </Button>
@@ -1254,9 +1313,9 @@ export default function ScheduleAssessmentDetailPage() {
                 ))}
               </TableBody>
             </Table>
-            {notInPortfolioRows.length > 200 && (
+            {notInPortfolioGroups.length > 200 && (
               <p className="px-4 py-2 text-xs text-fg-subtle border-t border-border">
-                Showing 200 of {notInPortfolioRows.length} — resolve a batch and refresh.
+                Showing 200 of {notInPortfolioGroups.length} — resolve a batch and refresh.
               </p>
             )}
           </Card>

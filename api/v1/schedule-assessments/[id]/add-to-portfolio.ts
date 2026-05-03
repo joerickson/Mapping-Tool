@@ -144,23 +144,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       propertyId = (newProp as any).id
     }
 
-    // Create the SL tying this property to the target client.
-    const { data: newSl, error: slErr } = await db
+    // Dedup the SL too — if a service_location already exists for
+    // (this property, this client), reuse it instead of creating a
+    // duplicate. Multi-visit uploads have one row per visit, so the
+    // same address shows up N times; without this dedup we'd create
+    // N SLs for the same building.
+    let slId: string
+    let reusedSl = false
+    const { data: existingSl } = await db
       .from('service_locations')
-      .insert({
-        property_id: propertyId,
-        client_id: targetClientId,
-        account_id: targetAccountId,
-        display_name: street,
-        status: 'active',
-      })
       .select('id')
-      .single()
-    if (slErr || !newSl) {
-      skipped.push({ row_id: row.id, reason: `service_location insert failed: ${slErr?.message ?? 'unknown'}` })
-      continue
+      .eq('property_id', propertyId)
+      .eq('client_id', targetClientId)
+      .maybeSingle()
+    if (existingSl) {
+      slId = (existingSl as any).id
+      reusedSl = true
+    } else {
+      const { data: newSl, error: slErr } = await db
+        .from('service_locations')
+        .insert({
+          property_id: propertyId,
+          client_id: targetClientId,
+          account_id: targetAccountId,
+          display_name: street,
+          status: 'active',
+        })
+        .select('id')
+        .single()
+      if (slErr || !newSl) {
+        skipped.push({ row_id: row.id, reason: `service_location insert failed: ${slErr?.message ?? 'unknown'}` })
+        continue
+      }
+      slId = (newSl as any).id
     }
-    const slId = (newSl as any).id
+    void reusedSl
 
     // Update the assessment row to point at the new SL.
     await db
