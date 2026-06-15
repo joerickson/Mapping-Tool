@@ -70,9 +70,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ? { ...(row.service_location_data as Record<string, unknown>), ...service_location_data }
       : (row.service_location_data as Record<string, unknown>)
 
+  // Editing invalidates any prior existing-property match, so clear it and let
+  // commit re-evaluate the (possibly new) address fresh — otherwise commit.ts
+  // would trust a stale existing_property_id and misroute the row.
   const { error: updErr } = await db
     .from('upload_staged_rows')
-    .update({ property_data: newPropertyData, service_location_data: newServiceLocationData, dedupe_hash })
+    .update({
+      property_data: newPropertyData,
+      service_location_data: newServiceLocationData,
+      dedupe_hash,
+      existing_property_id: null,
+    })
     .eq('id', row_id)
 
   if (updErr) return res.status(500).json({ error: updErr.message })
