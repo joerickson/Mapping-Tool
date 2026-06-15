@@ -236,14 +236,22 @@ export function buildRoutingTemplate(input: BuildTemplateInput): TemplateBuildRe
   const cycleDays = cycleResult.cycle_length_days
 
   // ── 2. Build visit specs (with addon attachment) ──────────────────
+  // A user-supplied custom cycle is a one-time planning window ("finish
+  // every property within N days"), not a recurring period. In that mode
+  // every property gets at least one visit placed in the window. The
+  // auto cycle, by contrast, is a recurring period sized to the shortest
+  // visit interval, so properties that visit LESS often than the cycle
+  // are deferred to alternating cycles (skipped here) to avoid
+  // over-servicing them.
+  const isCustomWindow = !!input.custom_cycle_length_days && input.custom_cycle_length_days > 0
   const visitSpecs: VisitSpec[] = []
   let totalRequired = 0
   for (const p of input.routed_properties) {
     if (p.parent_visit_interval_years <= 0) continue
     const intervalDays = p.parent_visit_interval_years * DAYS_PER_YEAR
-    if (intervalDays > cycleDays) {
-      // Property visits less often than the cycle — skipped in this builder.
-      // Cycle generator handles the parity case.
+    if (intervalDays > cycleDays && !isCustomWindow) {
+      // Auto recurring cycle: property visits less often than the cycle —
+      // deferred to alternating cycles, not scheduled this cycle.
       continue
     }
     const visitsPerCycle = Math.max(1, Math.round(cycleDays / intervalDays))
