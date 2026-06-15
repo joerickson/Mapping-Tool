@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import AppShell from '../components/layout/AppShell'
+import FailedRowsEditor from '../components/upload/FailedRowsEditor'
 import type { UploadSummaryStats } from '../types'
 
 interface SummaryData {
@@ -86,6 +87,22 @@ export default function UploadSummaryPage() {
       setError(err instanceof Error ? err.message : 'Retry failed')
     } finally {
       setRetrying(false)
+    }
+  }
+
+  async function reloadStatus() {
+    if (!batchId) return
+    const token = await getToken()
+    const statusRes = await fetch(`/api/uploads/${batchId}/status`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (statusRes.ok) {
+      const statusData = await statusRes.json()
+      setData((prev) =>
+        prev
+          ? { ...prev, status: statusData.status, summary_stats: statusData.summary_stats ?? prev.summary_stats }
+          : prev
+      )
     }
   }
 
@@ -216,21 +233,11 @@ export default function UploadSummaryPage() {
                         in last time. Already-committed rows are skipped automatically
                         — you won't get duplicates.
                       </p>
-                      {data.summary_stats?.commit_failures &&
-                        data.summary_stats.commit_failures.length > 0 && (
-                          <details className="mt-2 text-xs text-amber-900">
-                            <summary className="cursor-pointer">
-                              Show recent failure reasons
-                            </summary>
-                            <ul className="mt-1 list-disc pl-5 space-y-0.5">
-                              {data.summary_stats.commit_failures.slice(0, 10).map((f, i) => (
-                                <li key={i} className="font-mono break-all">
-                                  {f.reason}
-                                </li>
-                              ))}
-                            </ul>
-                          </details>
-                        )}
+                      <FailedRowsEditor
+                        batchId={batchId!}
+                        getToken={getToken}
+                        onRecommitted={reloadStatus}
+                      />
                       {retryMsg && (
                         <p className="text-xs text-green-700 font-medium mt-1">{retryMsg}</p>
                       )}
