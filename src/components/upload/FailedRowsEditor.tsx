@@ -156,6 +156,7 @@ export default function FailedRowsEditor({
                         {PROP_FIELDS.map((f) => (
                           <td key={f.key} className="px-1 py-1">
                             <input
+                              aria-label={f.label}
                               className="w-28 rounded border border-gray-200 px-1 py-0.5"
                               value={String(r.property_data[f.key] ?? '')}
                               onChange={(e) => editProp(r.id, f.key, e.target.value)}
@@ -165,6 +166,7 @@ export default function FailedRowsEditor({
                         {SL_FIELDS.map((f) => (
                           <td key={f.key} className="px-1 py-1">
                             <input
+                              aria-label={f.label}
                               className="w-24 rounded border border-gray-200 px-1 py-0.5"
                               value={String(r.service_location_data[f.key] ?? '')}
                               onChange={(e) => editSl(r.id, f.key, e.target.value)}
