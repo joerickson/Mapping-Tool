@@ -1,13 +1,15 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createAdminClient } from '../../_lib/supabase.js'
 import { authenticateRequest } from '../../_lib/auth.js'
+import { getAppUser } from '../../_lib/auth-roles.js'
 import { resolveClientIds } from '../../_lib/clients/resolve-client-ids.js'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end()
 
+  let ctx: Awaited<ReturnType<typeof authenticateRequest>>
   try {
-    await authenticateRequest(req)
+    ctx = await authenticateRequest(req)
   } catch (err: any) {
     return res.status(err.statusCode ?? 401).json({ error: err.message ?? 'Unauthorized' })
   }
@@ -42,8 +44,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const totalSqft = (sqftRes.data ?? []).reduce((sum: number, r: any) => sum + (r.serviceable_sqft ?? 0), 0)
 
+    // share_token mints a public, no-login map link, so it is an admin-only
+    // capability. Strip it (and its expiry) from the payload for everyone
+    // except admins, so a non-admin viewer can't reconstruct the link.
+    const isAdmin =
+      ctx.mode === 'user' && !!ctx.userId && (await getAppUser(ctx.userId))?.role === 'admin'
+    const clientOut = { ...(client as Record<string, unknown>) }
+    if (!isAdmin) {
+      delete clientOut.share_token
+      delete clientOut.share_expires_at
+    }
+
     return res.status(200).json({
-      ...client,
+      ...clientOut,
       account: (accountRes as any).data ?? null,
       is_configured: (templateRes as any).data?.is_configured ?? false,
       stats: {

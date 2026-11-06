@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { ArrowRight, ArrowRightLeft, MapPin, Pencil, Settings, Trash2 } from 'lucide-react'
+import { ArrowRight, ArrowRightLeft, MapPin, Share2, Pencil, Settings, Trash2 } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import AppShell from '../../components/layout/AppShell'
 import Button from '../../components/ui/Button'
@@ -14,12 +14,14 @@ import {
 } from '../../components/ui/Dialog'
 import { Input, Textarea, FormField } from '../../components/ui/Input'
 import MoveClientDialog from '../../components/client/MoveClientDialog'
+import ClientShareModal from '../../components/client/ClientShareModal'
 import { useClient } from '../../context/ClientContext'
 import type { Client } from '../../types'
 
 interface ClientDetail extends Client {
   account?: { id: string; name: string; display_name?: string | null; account_type: string } | null
   is_configured?: boolean
+  share_token?: string | null
   recent_uploads: { upload_batch_id: string; filename: string; created_at: string; status: string; row_count: number }[]
 }
 
@@ -39,6 +41,7 @@ export default function ClientDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
   const [moveOpen, setMoveOpen] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
 
   const [editName, setEditName] = useState('')
   const [editDisplayName, setEditDisplayName] = useState('')
@@ -244,6 +247,12 @@ export default function ClientDetailPage() {
                   <Settings className="h-3.5 w-3.5" />
                   Setup
                 </Link>
+              </Button>
+            )}
+            {isAdmin && client.account && (
+              <Button variant="ghost" onClick={() => setShareOpen(true)}>
+                <Share2 className="h-3.5 w-3.5" />
+                Share map
               </Button>
             )}
             {isAdmin && client.account && (
@@ -498,6 +507,15 @@ export default function ClientDetailPage() {
             await loadClient()
             await reloadClients()
           }}
+        />
+      )}
+
+      {/* Share map link (admin only) */}
+      {isAdmin && client.account && (
+        <ClientShareModal
+          open={shareOpen}
+          onClose={() => setShareOpen(false)}
+          client={{ id: client.id, name: client.name, share_token: client.share_token }}
         />
       )}
 
