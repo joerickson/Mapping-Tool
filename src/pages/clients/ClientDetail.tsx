@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { ArrowRight, MapPin, Pencil, Settings, Trash2 } from 'lucide-react'
+import { ArrowRight, ArrowRightLeft, MapPin, Pencil, Settings, Trash2 } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import AppShell from '../../components/layout/AppShell'
 import Button from '../../components/ui/Button'
@@ -13,6 +13,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from '../../components/ui/Dialog'
 import { Input, Textarea, FormField } from '../../components/ui/Input'
+import MoveClientDialog from '../../components/client/MoveClientDialog'
 import { useClient } from '../../context/ClientContext'
 import type { Client } from '../../types'
 
@@ -36,6 +37,8 @@ export default function ClientDetailPage() {
   const [archiving, setArchiving] = useState(false)
   const [confirmArchiveOpen, setConfirmArchiveOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [moveOpen, setMoveOpen] = useState(false)
 
   const [editName, setEditName] = useState('')
   const [editDisplayName, setEditDisplayName] = useState('')
@@ -85,6 +88,23 @@ export default function ClientDetailPage() {
   }, [id, getToken])
 
   useEffect(() => { if (id) loadClient() }, [id, loadClient])
+
+  // Admin gate for the Move action.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const token = await getToken()
+        const res = await fetch('/api/v1/me', { headers: { Authorization: `Bearer ${token}` } })
+        if (!res.ok) return
+        const me = await res.json()
+        if (!cancelled) setIsAdmin(me?.app_user?.role === 'admin')
+      } catch {
+        if (!cancelled) setIsAdmin(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [getToken])
 
   async function handleSave() {
     setSaving(true)
@@ -224,6 +244,12 @@ export default function ClientDetailPage() {
                   <Settings className="h-3.5 w-3.5" />
                   Setup
                 </Link>
+              </Button>
+            )}
+            {isAdmin && !client.is_combined && client.account && (
+              <Button variant="ghost" onClick={() => setMoveOpen(true)}>
+                <ArrowRightLeft className="h-3.5 w-3.5" />
+                Move to another account
               </Button>
             )}
             <Button onClick={() => setEditing(true)}>
@@ -461,6 +487,19 @@ export default function ClientDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Move to another account (admin only) */}
+      {isAdmin && client.account && (
+        <MoveClientDialog
+          open={moveOpen}
+          onClose={() => setMoveOpen(false)}
+          client={{ id: client.id, name: client.name, account_id: client.account.id }}
+          onMoved={async () => {
+            await loadClient()
+            await reloadClients()
+          }}
+        />
+      )}
 
       {/* Archive confirmation */}
       <Dialog open={confirmArchiveOpen} onOpenChange={(o) => !o && setConfirmArchiveOpen(false)}>
