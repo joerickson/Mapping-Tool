@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS client_account_moves (
   row_counts jsonb
 );
 
+ALTER TABLE public.client_account_moves ENABLE ROW LEVEL SECURITY;
+
 CREATE INDEX IF NOT EXISTS client_account_moves_client_id_idx
   ON client_account_moves (client_id, moved_at DESC);
 
@@ -40,6 +42,8 @@ DECLARE
     'addon_cohort_assignments', 'upload_batches', 'schedule_assessments'
   ];
 BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended(p_client_id::text, 0));
+
   SELECT account_id, name INTO v_from, v_old_name
     FROM clients WHERE id = p_client_id;
   IF NOT FOUND THEN
@@ -60,9 +64,7 @@ BEGIN
     );
   END IF;
 
-  PERFORM pg_advisory_xact_lock(hashtextextended(p_client_id::text, 0));
-
-  v_final_name := coalesce(p_new_name, v_old_name);
+  v_final_name := coalesce(nullif(btrim(p_new_name), ''), v_old_name);
   IF EXISTS (
     SELECT 1 FROM clients
      WHERE account_id = p_target_account_id
@@ -96,3 +98,6 @@ BEGIN
   );
 END;
 $$;
+
+REVOKE EXECUTE ON FUNCTION move_client_to_account(uuid, uuid, text, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION move_client_to_account(uuid, uuid, text, uuid) TO service_role;
