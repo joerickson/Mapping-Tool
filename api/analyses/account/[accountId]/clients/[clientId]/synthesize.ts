@@ -23,7 +23,10 @@ import {
 } from '../../../../../_lib/analysis/load-all-modules.js'
 import { loadConstraints } from '../../../../../_lib/analysis/operational-constraints.js'
 
-export const config = { maxDuration: 60 }
+// Synthesis makes a non-streaming Claude call (up to 4096 tokens) over all
+// module outputs; 60s was too tight for large portfolios and returned 504s.
+// 300s is the platform max this project already uses for heavy endpoints.
+export const config = { maxDuration: 300 }
 
 const SYNTHESIZER_MODEL = 'claude-sonnet-4-5'
 
