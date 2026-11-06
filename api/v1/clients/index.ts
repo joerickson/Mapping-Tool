@@ -30,7 +30,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data, error } = await query
     if (error) return res.status(500).json({ error: error.message })
 
-    return res.status(200).json(data ?? [])
+    // share_token mints a public, no-login map link (admin-only capability);
+    // never expose it in the list payload.
+    const sanitized = (data ?? []).map((c: any) => {
+      const { share_token, share_expires_at, ...rest } = c
+      return rest
+    })
+    return res.status(200).json(sanitized)
   }
 
   // ── POST /api/v1/clients ──────────────────────────────────────────────────
