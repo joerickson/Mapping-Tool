@@ -48,7 +48,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
 
     bb.on('file', (_fieldname, stream, info) => {
-      filename = info.filename
+      filename = info.filename ?? ''
       mimetype = info.mimeType
       const chunks: Buffer[] = []
       stream.on('data', (chunk: Buffer) => chunks.push(chunk))
