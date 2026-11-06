@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import crypto from 'crypto'
 import { createAdminClient } from '../../_lib/supabase.js'
 import { authenticateRequest } from '../../_lib/auth.js'
+import { resolveClientIdsList } from '../../_lib/clients/resolve-client-ids.js'
 import { fireWebhook } from '../../_lib/webhooks.js'
 
 function hashAddress(addr: string, city: string, state: string, zip: string): string {
@@ -81,6 +82,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const cleanIds = (csv: string) =>
         csv.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
 
+      // Resolve combined clients to their member client_ids. A combined
+      // client owns no service_locations of its own, so filtering by its
+      // own id returns nothing (the "combined client → empty map" bug).
+      // resolveClientIdsList is a pass-through for normal client ids.
+      let resolvedClientIds: string[] | null = null
+      if (hasClientFilter) {
+        const raw = cleanIds(String(client_id))
+        resolvedClientIds = raw.length ? await resolveClientIdsList(db, raw) : []
+      }
+
       // PostgREST silently caps responses at ~1000 rows; for accounts
       // with thousands of service_locations we MUST paginate, otherwise
       // the property-id slice we feed into the next query is incomplete
@@ -101,9 +112,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .select(slSelect)
           .range(slOffset, slOffset + SL_PAGE - 1)
         if (hasClientFilter) {
-          const ids = cleanIds(String(client_id))
-          if (ids.length === 0) break
-          slQuery = slQuery.in('client_id', ids)
+          if (!resolvedClientIds || resolvedClientIds.length === 0) break
+          slQuery = slQuery.in('client_id', resolvedClientIds)
         }
         if (hasStatusFilter) {
           const statuses = cleanIds(String(status))
