@@ -27,7 +27,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .from('clients')
       .update({ share_token: null, share_expires_at: null })
       .eq('id', id)
-    if (error) return res.status(500).json({ error: error.message })
+      .select('share_token')
+      .single()
+    if (error) {
+      if (error.code === 'PGRST116') return res.status(404).json({ error: 'client_not_found' })
+      return res.status(500).json({ error: error.message })
+    }
     return res.status(200).json({ share_token: null })
   }
 
@@ -36,6 +41,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const d = typeof body.expires_at === 'string' ? new Date(body.expires_at) : null
     if (!d || Number.isNaN(d.getTime())) {
       return res.status(400).json({ error: 'expires_at must be a valid ISO date string' })
+    }
+    if (d.getTime() <= Date.now()) {
+      return res.status(400).json({ error: 'expires_at must be in the future' })
     }
     expiresAt = d.toISOString()
   }

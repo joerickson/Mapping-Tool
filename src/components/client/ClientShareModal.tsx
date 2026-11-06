@@ -1,7 +1,7 @@
 // Admin-only dialog to generate/copy/regenerate a public, read-only share link
 // for a client's map. Calls POST /api/v1/clients/:id/share. Link format:
 // ${VITE_APP_URL}/client-map/<token>.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 import {
   Dialog,
@@ -26,6 +26,13 @@ export default function ClientShareModal({ open, onClose, client }: Props) {
   const [generating, setGenerating] = useState(false)
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (copyTimer.current) clearTimeout(copyTimer.current)
+    }
+  }, [])
 
   // Re-sync only when the client (or its persisted token) changes; the modal
   // stays mounted, so a token generated here survives close/reopen even though
@@ -49,6 +56,9 @@ export default function ClientShareModal({ open, onClose, client }: Props) {
       })
       if (!res.ok) throw new Error(`Request failed (${res.status})`)
       const data = await res.json()
+      if (typeof data?.share_token !== 'string' || !data.share_token) {
+        throw new Error('Server did not return a share link')
+      }
       setToken(data.share_token)
       setCopied(false)
     } catch (e) {
@@ -63,7 +73,8 @@ export default function ClientShareModal({ open, onClose, client }: Props) {
     try {
       await navigator.clipboard.writeText(shareUrl)
       setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      if (copyTimer.current) clearTimeout(copyTimer.current)
+      copyTimer.current = setTimeout(() => setCopied(false), 2000)
     } catch {
       setError('Could not copy to clipboard')
     }
@@ -91,7 +102,7 @@ export default function ClientShareModal({ open, onClose, client }: Props) {
             <Button variant="ghost" onClick={generate} loading={generating}>
               Regenerate link
             </Button>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-fg-muted">
               Regenerating invalidates the previous link.
             </p>
           </div>

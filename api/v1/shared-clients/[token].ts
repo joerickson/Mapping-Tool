@@ -6,6 +6,7 @@ import { resolveClientIdsList } from '../../_lib/clients/resolve-client-ids.js'
 // SECURITY: returns ONLY name/brand + lat/lng points + branch lat/lng.
 // Never select or return cost/price/mcv/contract/revenue/risk columns.
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  res.setHeader('Cache-Control', 'no-store')
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
 
@@ -76,7 +77,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     .maybeSingle()
   if (ocErr) return res.status(500).json({ error: 'internal_error' })
   const sel = Array.isArray((oc as any)?.selected_branches) ? (oc as any).selected_branches : []
-  const branches = sel.map((b: any) => ({ name: b.name, lat: b.lat, lng: b.lng }))
+  const branches = sel
+    .filter((b: any) => b && b.lat != null && b.lng != null)
+    .map((b: any) => ({ name: b.name, lat: b.lat, lng: b.lng }))
 
   return res.status(200).json({
     client: { name: client.name, display_name: client.display_name, brand_color: client.brand_color },
