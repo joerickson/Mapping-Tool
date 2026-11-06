@@ -47,26 +47,30 @@ export default function MoveClientDialog({ open, onClose, client, onMoved }: Pro
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const nameRef = useRef<HTMLInputElement>(null)
+  // Latest client/getToken, read at open time so background changes don't reset the form.
+  const latest = useRef({ client, getToken })
+  latest.current = { client, getToken }
 
   // Reset + load target accounts whenever the dialog opens.
   useEffect(() => {
     if (!open) return
+    const { client: c, getToken: gt } = latest.current
     setTargetId('')
     setConflict(false)
-    setNewName(client.name)
+    setNewName(c.name)
     setError(null)
     let cancelled = false
     ;(async () => {
       setLoadingAccounts(true)
       try {
-        const token = await getToken()
+        const token = await gt()
         const res = await fetch('/api/v1/accounts', {
           headers: { Authorization: `Bearer ${token}` },
         })
         if (!res.ok) throw new Error(`Failed to load accounts: ${res.status}`)
         const list = (await res.json()) as AccountOption[]
         if (!cancelled) {
-          setAccounts(list.filter((a) => a.id !== client.account_id))
+          setAccounts(list.filter((a) => a.id !== c.account_id && a.status === 'active'))
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err))
@@ -77,7 +81,7 @@ export default function MoveClientDialog({ open, onClose, client, onMoved }: Pro
     return () => {
       cancelled = true
     }
-  }, [open, client.id, client.name, client.account_id, getToken])
+  }, [open, client.id])
 
   // Focus the rename input when the conflict prompt appears.
   useEffect(() => {
@@ -112,6 +116,9 @@ export default function MoveClientDialog({ open, onClose, client, onMoved }: Pro
       const j = (await res.json().catch(() => ({}))) as Record<string, any>
       if (res.status === 409 && j.error === 'name_conflict') {
         setConflict(true)
+        setError(
+          `The target account already has a client named "${j.conflicting_name ?? newName}". Choose a different name.`,
+        )
         return
       }
       if (!res.ok) {
@@ -153,7 +160,15 @@ export default function MoveClientDialog({ open, onClose, client, onMoved }: Pro
 
         <div className="space-y-3">
           <FormField label="Target account">
-            <Select value={targetId} onValueChange={setTargetId} disabled={loadingAccounts || submitting}>
+            <Select
+              value={targetId}
+              onValueChange={(v) => {
+                setTargetId(v)
+                setConflict(false)
+                setNewName(client.name)
+                setError(null)
+              }} disabled={loadingAccounts || submitting}
+            >
               <SelectTrigger>
                 <SelectValue placeholder={loadingAccounts ? 'Loading…' : 'Select an account'} />
               </SelectTrigger>

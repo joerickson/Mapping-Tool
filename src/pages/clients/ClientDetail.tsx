@@ -246,7 +246,7 @@ export default function ClientDetailPage() {
                 </Link>
               </Button>
             )}
-            {isAdmin && !client.is_combined && client.account && (
+            {isAdmin && client.account && (
               <Button variant="ghost" onClick={() => setMoveOpen(true)}>
                 <ArrowRightLeft className="h-3.5 w-3.5" />
                 Move to another account
