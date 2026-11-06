@@ -1,4 +1,6 @@
 -- Atomic relocation of a client (and all client-scoped rows) to another account.
+-- Drift guard: tests/integration/move-table-coverage.test.ts asserts the table list
+-- here matches api/_lib/client-move-tables.ts and the live schema.
 
 CREATE TABLE IF NOT EXISTS client_account_moves (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -34,7 +34,7 @@ interface Props {
   open: boolean
   onClose: () => void
   client: { id: string; name: string; account_id: string }
-  onMoved?: (toAccountId: string) => void
+  onMoved?: (toAccountId: string) => void | Promise<void>
 }
 
 export default function MoveClientDialog({ open, onClose, client, onMoved }: Props) {
@@ -131,7 +131,7 @@ export default function MoveClientDialog({ open, onClose, client, onMoved }: Pro
         )
       }
       toast.success('Client moved', {
-        description: j.final_name ? `Now named "${j.final_name}" in the target account.` : undefined,
+        description: j.final_name && j.final_name !== client.name ? `Now named "${j.final_name}" in the target account.` : undefined,
       })
       if (typeof j.stragglers === 'number' && j.stragglers > 0) {
         toast.error('Some records were not moved', {
@@ -139,7 +139,13 @@ export default function MoveClientDialog({ open, onClose, client, onMoved }: Pro
           durationMs: 10000,
         })
       }
-      onMoved?.(targetId)
+      if (j.stragglers_check_incomplete === true) {
+        toast.error('Move verification incomplete', {
+          description: 'The post-move check for leftover records could not complete. Verify the client data in the target account.',
+          durationMs: 10000,
+        })
+      }
+      await onMoved?.(targetId)
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -167,7 +173,8 @@ export default function MoveClientDialog({ open, onClose, client, onMoved }: Pro
                 setConflict(false)
                 setNewName(client.name)
                 setError(null)
-              }} disabled={loadingAccounts || submitting}
+              }}
+              disabled={loadingAccounts || submitting}
             >
               <SelectTrigger>
                 <SelectValue placeholder={loadingAccounts ? 'Loading…' : 'Select an account'} />

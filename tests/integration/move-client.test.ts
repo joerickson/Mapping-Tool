@@ -161,6 +161,11 @@ async function run() {
   assert(bad.status === 400 && bad.json.error === 'invalid_target_account', `bad target should be 400 invalid_target_account, got ${bad.status} ${JSON.stringify(bad.json)}`)
   console.log('✓ invalid target')
 
+  // Nonexistent client
+  const nf = await move(randomUUID(), { target_account_id: B })
+  assert(nf.status === 404 && nf.json?.error === 'client_not_found', `nonexistent client should be 404 client_not_found, got ${nf.status} ${JSON.stringify(nf.json)}`)
+  console.log('✓ client_not_found')
+
   // Combined client
   const C = await mkAccount('C')
   const memberHome = await mkClient(C, `Member-Home ${suffix}`)
@@ -172,6 +177,12 @@ async function run() {
   assert(cm.status === 200 && cm.json.moved === true, `combined move should be 200, got ${cm.status} ${JSON.stringify(cm.json)}`)
   const getRes = await fetch(`${BASE_URL}/api/v1/clients/${combined}`, { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } })
   assert(getRes.ok, `GET combined client → ${getRes.status}`)
+  const getBody: any = await getRes.json().catch(() => null)
+  assert(!!getBody && getBody.id === combined, `GET combined body should be the combined client, got ${JSON.stringify(getBody)?.slice(0, 200)}`)
+  const slStats = getBody.stats ?? getBody.service_location_stats ?? getBody.sl_stats
+  assert(slStats !== undefined && slStats !== null, `combined GET should include member SL stats; keys: ${Object.keys(getBody).join(',')}`)
+  const slCount = typeof slStats === 'number' ? slStats : (slStats.service_location_count ?? slStats.service_locations ?? slStats.count ?? slStats.total)
+  assert(typeof slCount === 'number' && slCount >= 2, `member SL stats should resolve to >= 2 SLs after move, got ${JSON.stringify(slStats)}`)
   console.log('✓ combined client move + read')
 
   console.log('\nAll move-client assertions passed.')

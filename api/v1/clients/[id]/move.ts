@@ -1,17 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createAdminClient } from '../../../_lib/supabase.js'
 import { requireAdmin } from '../../../_lib/auth-roles.js'
-
-// Must mirror the table list in move_client_to_account (migration 20261106161317).
-const MOVED_TABLES = [
-  'service_locations', 'service_offerings', 'service_location_constraints',
-  'service_location_constraint_templates', 'account_operational_constraints',
-  'analysis_scenarios', 'analysis_chat_messages', 'portfolio_analyses',
-  'routing_templates', 'day_schedules', 'manual_trips',
-  'overnight_cluster_overrides', 'crew_vehicles', 'custom_field_definitions',
-  'service_line_pricing_config', 'property_edit_history',
-  'addon_cohort_assignments', 'upload_batches', 'schedule_assessments',
-] as const
+import { MOVED_ACCOUNT_SCOPED_TABLES } from '../../../_lib/client-move-tables.js'
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end()
@@ -53,7 +43,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     // Malformed uuid etc. (SQLSTATE 22P02)
     if (error.code === '22P02') return res.status(400).json({ error: 'invalid_uuid' })
-    return res.status(500).json({ error: error.message })
+    console.error('move_client_to_account failed:', error.message)
+    return res.status(500).json({ error: 'move_failed' })
   }
 
   const result = data as {
@@ -67,19 +58,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Post-commit straggler check: rows still carrying the old account_id for
   // this client (e.g. inserted by a concurrent writer). Surfaced, not an error.
   let stragglers = 0
+  let stragglersCheckIncomplete = false
   if (result.moved) {
     const counts = await Promise.all(
-      MOVED_TABLES.map(async (table) => {
+      MOVED_ACCOUNT_SCOPED_TABLES.map(async (table) => {
         const { count, error: cErr } = await db
           .from(table)
           .select('*', { count: 'exact', head: true })
           .eq('account_id', result.from_account_id)
           .eq('client_id', clientId)
-        return cErr ? 0 : count ?? 0
+        if (cErr) {
+          stragglersCheckIncomplete = true
+          return 0
+        }
+        return count ?? 0
       }),
     )
     stragglers = counts.reduce((a, b) => a + b, 0)
   }
 
-  return res.status(200).json({ ...result, stragglers })
+  return res.status(200).json({
+    ...result,
+    stragglers,
+    ...(stragglersCheckIncomplete ? { stragglers_check_incomplete: true } : {}),
+  })
 }
