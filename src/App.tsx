@@ -13,6 +13,7 @@ import MapPage from './pages/Map'
 import ServiceLocationPage from './pages/ServiceLocation'
 import PortfolioPage from './pages/Portfolio'
 import SharedPortfolioPage from './pages/SharedPortfolio'
+import SharedClientMapPage from './pages/SharedClientMap'
 import ParcelImportPage from './pages/admin/parcels/Import'
 import CountiesPage from './pages/admin/parcels/Counties'
 import FallbacksPage from './pages/admin/parcels/Fallbacks'
@@ -113,6 +114,7 @@ export default function App() {
 
           {/* Public share / embed routes — no auth required */}
           <Route path="/portfolio/:shareToken" element={<SharedPortfolioPage />} />
+          <Route path="/client-map/:shareToken" element={<SharedClientMapPage />} />
 
           {/* Protected app routes */}
           <Route path="/" element={<AuthGuard><Navigate to="/map" replace /></AuthGuard>} />
